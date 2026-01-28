@@ -1,0 +1,36 @@
+{
+  "hooks": {
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "command": "bd prime",
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "bd prime",
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:acid3.acidtests.org)",
+      "WebFetch(domain:www.acidtests.org)",
+      "WebFetch(domain:en.wikipedia.org)",
+      "WebFetch(domain:www.webstandards.org)",
+      "WebFetch(domain:chromium.googlesource.com)"
+    ]
+  }
+}
