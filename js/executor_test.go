@@ -1,0 +1,286 @@
+package js
+
+import (
+	"testing"
+
+	"github.com/AYColumbia/viberowser/dom"
+)
+
+func TestScriptExecutorBasic(t *testing.T) {
+	r := NewRuntime()
+	executor := NewScriptExecutor(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body>
+	<div id="test">Original</div>
+	<script>
+		document.getElementById('test').textContent = 'Modified';
+	</script>
+</body>
+</html>`)
+
+	executor.SetupDocument(doc)
+	errors := executor.ExecuteScripts(doc)
+
+	if len(errors) > 0 {
+		t.Fatalf("ExecuteScripts returned errors: %v", errors)
+	}
+
+	// Check that the script modified the DOM
+	el := doc.GetElementById("test")
+	if el == nil {
+		t.Fatal("Element not found")
+	}
+	if el.TextContent() != "Modified" {
+		t.Errorf("Expected 'Modified', got '%s'", el.TextContent())
+	}
+}
+
+func TestScriptExecutorMultipleScripts(t *testing.T) {
+	r := NewRuntime()
+	executor := NewScriptExecutor(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body>
+	<div id="test">0</div>
+	<script>
+		var counter = 1;
+	</script>
+	<script>
+		counter += 2;
+	</script>
+	<script>
+		document.getElementById('test').textContent = counter;
+	</script>
+</body>
+</html>`)
+
+	executor.SetupDocument(doc)
+	errors := executor.ExecuteScripts(doc)
+
+	if len(errors) > 0 {
+		t.Fatalf("ExecuteScripts returned errors: %v", errors)
+	}
+
+	el := doc.GetElementById("test")
+	if el.TextContent() != "3" {
+		t.Errorf("Expected '3', got '%s'", el.TextContent())
+	}
+}
+
+func TestScriptExecutorDOMContentLoaded(t *testing.T) {
+	r := NewRuntime()
+	executor := NewScriptExecutor(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body>
+	<div id="test">Original</div>
+	<script>
+		document.addEventListener('DOMContentLoaded', function() {
+			document.getElementById('test').textContent = 'Ready';
+		});
+	</script>
+</body>
+</html>`)
+
+	executor.SetupDocument(doc)
+	executor.ExecuteScripts(doc)
+
+	// Fire DOMContentLoaded
+	executor.DispatchDOMContentLoaded()
+
+	el := doc.GetElementById("test")
+	if el.TextContent() != "Ready" {
+		t.Errorf("Expected 'Ready', got '%s'", el.TextContent())
+	}
+}
+
+func TestScriptExecutorNonJSScripts(t *testing.T) {
+	r := NewRuntime()
+	executor := NewScriptExecutor(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body>
+	<script type="text/template">
+		This should not be executed
+		var x = undefined_function();
+	</script>
+</body>
+</html>`)
+
+	executor.SetupDocument(doc)
+	errors := executor.ExecuteScripts(doc)
+
+	// Should have no errors since the script type is not JavaScript
+	if len(errors) > 0 {
+		t.Errorf("Expected no errors, got: %v", errors)
+	}
+}
+
+func TestScriptExecutorEmptyScript(t *testing.T) {
+	r := NewRuntime()
+	executor := NewScriptExecutor(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body>
+	<script></script>
+	<script>   </script>
+</body>
+</html>`)
+
+	executor.SetupDocument(doc)
+	errors := executor.ExecuteScripts(doc)
+
+	if len(errors) > 0 {
+		t.Errorf("Expected no errors for empty scripts, got: %v", errors)
+	}
+}
+
+func TestScriptExecutorEventLoop(t *testing.T) {
+	r := NewRuntime()
+	executor := NewScriptExecutor(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body>
+	<div id="test">0</div>
+	<script>
+		setTimeout(function() {
+			document.getElementById('test').textContent = '1';
+		}, 0);
+	</script>
+</body>
+</html>`)
+
+	executor.SetupDocument(doc)
+	executor.ExecuteScripts(doc)
+
+	// Text should still be 0 before event loop
+	el := doc.GetElementById("test")
+	if el.TextContent() != "0" {
+		t.Errorf("Expected '0' before event loop, got '%s'", el.TextContent())
+	}
+
+	// Run event loop
+	executor.RunEventLoop()
+
+	// Now it should be 1
+	if el.TextContent() != "1" {
+		t.Errorf("Expected '1' after event loop, got '%s'", el.TextContent())
+	}
+}
+
+func TestScriptExecutorErrorRecovery(t *testing.T) {
+	r := NewRuntime()
+	executor := NewScriptExecutor(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body>
+	<div id="test">Original</div>
+	<script>
+		throw new Error('Script 1 fails');
+	</script>
+	<script>
+		document.getElementById('test').textContent = 'Script 2 ran';
+	</script>
+</body>
+</html>`)
+
+	executor.SetupDocument(doc)
+	errors := executor.ExecuteScripts(doc)
+
+	// Should have one error
+	if len(errors) != 1 {
+		t.Errorf("Expected 1 error, got %d", len(errors))
+	}
+
+	// But second script should still have run
+	el := doc.GetElementById("test")
+	if el.TextContent() != "Script 2 ran" {
+		t.Errorf("Expected 'Script 2 ran', got '%s'", el.TextContent())
+	}
+}
+
+func TestScriptExecutorCreateAndAppend(t *testing.T) {
+	r := NewRuntime()
+	executor := NewScriptExecutor(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body>
+	<div id="container"></div>
+	<script>
+		var container = document.getElementById('container');
+		for (var i = 0; i < 3; i++) {
+			var p = document.createElement('p');
+			p.textContent = 'Item ' + i;
+			container.appendChild(p);
+		}
+	</script>
+</body>
+</html>`)
+
+	executor.SetupDocument(doc)
+	executor.ExecuteScripts(doc)
+
+	container := doc.GetElementById("container")
+	if container == nil {
+		t.Fatal("Container not found")
+	}
+
+	children := container.GetElementsByTagName("p")
+	if children.Length() != 3 {
+		t.Errorf("Expected 3 children, got %d", children.Length())
+	}
+}
+
+func TestScriptExecutorWithEvents(t *testing.T) {
+	r := NewRuntime()
+	executor := NewScriptExecutor(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body>
+	<div id="test">0</div>
+</body>
+</html>`)
+
+	executor.SetupDocument(doc)
+
+	// First, bind the element and add event target support before adding listeners
+	el := doc.GetElementById("test")
+	jsEl := executor.DOMBinder().BindElement(el)
+	executor.EventBinder().BindEventTarget(jsEl)
+
+	// Now add the event listener and dispatch via JavaScript
+	_, err := r.Execute(`
+		var el = document.getElementById('test');
+		el.addEventListener('custom', function(e) {
+			el.textContent = e.detail.value;
+		});
+		var event = new CustomEvent('custom', { detail: { value: '42' } });
+		el.dispatchEvent(event);
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	if el.TextContent() != "42" {
+		t.Errorf("Expected '42', got '%s'", el.TextContent())
+	}
+}
