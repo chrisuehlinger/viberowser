@@ -32,16 +32,18 @@ go run .            # Run the main application
 
 ## Goal
 
-YOUR ULTIMATE GOAL is to build a web browser capable of passing the Acid3 rendering tests. If this project does not build a browser that passes the Acid3 rendering tests, then there is still work to be done. The fact that Acid3 is no longer used for testing modern browsers is irrelevant, your task is to build a web browser capable of passing the Acid3 rendering tests.
+YOUR ULTIMATE GOAL is to build a web browser capable of passing the Web Platform Tests (WPT). If this project does not build a browser that passes the Web Platform Tests, then there is still work to be done. The browser should also have a usable UI with tabs and a URL bar (even if those aren't part of the Web Platform Tests).
 
 Use `bd prime` to learn what work is available. Use `bd prime` after every compaction as well.
 
 If there are not many tasks left, but you sense we are still far from achieving our goal, create beads for the next several steps required and then begin on the first one. Make sure the description for each bead is quite thorough, remember that it may be another assistant who picks it up and they may not have all of the context you have.
 
-If a task seems particularly difficult, you may research online to gain additional understanding.
+If a task seems particularly difficult, you may research online to gain additional understanding. The Web Platform Tests can be found here: https://github.com/web-platform-tests/wpt
 
-DO NOT under any circumstances remove tests from the ACID3 suite.
+DO NOT under any circumstances remove tests from the WPT suite.
+
+DO NOT have the browser inject JavaScript code into pages you are rendering, unless it is 100% necessary to implement a feature.
 
 You are running in a Linux Devcontainer. You may use sudo to install any dependencies you need, just make sure to update .devcontainer/post-create.sh so that the next devcontainer has those dependencies as well.
 
-When you have finished a bead, make sure to make a commit with your work and push it. Then you can quit.
+When you have finished a bead, make sure to make a commit with your work and push it. Then you can quit (Do not try to take on another task, let the next worker do that).
