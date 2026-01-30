@@ -202,3 +202,14 @@ func (se *ScriptExecutor) Cleanup() {
 	se.eventBinder.ClearTargets()
 	se.runtime.ClearErrors()
 }
+
+// ExecuteExternalScript executes an external script with the given content.
+// The scriptURL is used for error reporting.
+func (se *ScriptExecutor) ExecuteExternalScript(content string, scriptURL string) error {
+	code := strings.TrimSpace(content)
+	if code == "" {
+		return nil
+	}
+
+	return se.runtime.ExecuteScript(code, scriptURL)
+}

@@ -73,6 +73,11 @@ func (st *StyleTree) AddStylesheet(css string) {
 	st.Resolver.AddAuthorStylesheet(ss)
 }
 
+// AddParsedStylesheet adds a pre-parsed stylesheet to the resolver.
+func (st *StyleTree) AddParsedStylesheet(ss *Stylesheet) {
+	st.Resolver.AddAuthorStylesheet(ss)
+}
+
 // buildStyledNode recursively builds a styled node from a DOM node.
 func (st *StyleTree) buildStyledNode(node *dom.Node, parentStyle *ComputedStyle) *StyledNode {
 	sn := &StyledNode{

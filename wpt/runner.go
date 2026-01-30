@@ -15,6 +15,7 @@ import (
 
 	"github.com/AYColumbia/viberowser/dom"
 	"github.com/AYColumbia/viberowser/js"
+	"github.com/AYColumbia/viberowser/network"
 )
 
 // TestResult represents the result of a WPT test.
@@ -47,21 +48,28 @@ type TestSuiteResult struct {
 
 // Runner handles running WPT tests against the browser.
 type Runner struct {
-	WPTPath      string          // Path to WPT repository
-	BaseURL      string          // Base URL for WPT server (e.g., http://localhost:8000)
+	WPTPath      string                   // Path to WPT repository
+	BaseURL      string                   // Base URL for WPT server (e.g., http://localhost:8000)
 	Results      []TestSuiteResult
-	Timeout      time.Duration   // Per-test timeout
+	Timeout      time.Duration            // Per-test timeout
 	httpClient   *http.Client
+	netClient    *network.Client          // Network client for resource loading
+	loader       *network.Loader          // Resource loader
 }
 
 // NewRunner creates a new WPT test runner.
 func NewRunner(wptPath string) *Runner {
+	netClient, _ := network.NewClient(network.WithTimeout(30 * time.Second))
+	loader := network.NewLoader(netClient, network.WithLocalPath(wptPath))
+
 	return &Runner{
 		WPTPath:    wptPath,
 		BaseURL:    "http://localhost:8000",
 		Results:    make([]TestSuiteResult, 0),
 		Timeout:    30 * time.Second,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
+		netClient:  netClient,
+		loader:     loader,
 	}
 }
 
@@ -120,6 +128,15 @@ func (r *Runner) RunTestFile(testPath string) TestSuiteResult {
 	// Load testharness.js if not embedded
 	if err := r.loadTestHarnessJS(ctx, runtime); err != nil {
 		result.Error = fmt.Sprintf("Failed to load testharness.js: %v", err)
+		result.HarnessStatus = "ERROR"
+		result.Duration = time.Since(start)
+		return result
+	}
+
+	// Load and execute external scripts
+	baseURL := r.BaseURL + "/" + strings.TrimPrefix(testPath, "/")
+	if err := r.loadExternalScripts(ctx, doc, executor, baseURL); err != nil {
+		result.Error = fmt.Sprintf("Failed to load external scripts: %v", err)
 		result.HarnessStatus = "ERROR"
 		result.Duration = time.Since(start)
 		return result
@@ -252,6 +269,25 @@ func (r *Runner) loadResource(ctx context.Context, resourcePath string) (string,
 	}
 
 	return "", fmt.Errorf("resource not found: %s", resourcePath)
+}
+
+// loadExternalScripts loads and executes external scripts in document order.
+func (r *Runner) loadExternalScripts(ctx context.Context, doc *dom.Document, executor *js.ScriptExecutor, baseURL string) error {
+	// Set base URL for loader
+	r.loader.SetBaseURL(baseURL)
+
+	// Create document loader
+	docLoader := network.NewDocumentLoader(r.loader)
+	loadedDoc := docLoader.LoadDocumentWithResources(ctx, doc, baseURL)
+
+	// Execute sync scripts in order
+	for _, script := range loadedDoc.GetSyncScripts() {
+		if err := executor.ExecuteExternalScript(script.Content, script.URL); err != nil {
+			return fmt.Errorf("error executing %s: %w", script.URL, err)
+		}
+	}
+
+	return nil
 }
 
 // RunTest runs a single WPT test (compatibility method).
