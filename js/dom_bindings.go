@@ -109,9 +109,10 @@ func toUint32(v goja.Value) uint32 {
 
 // DOMBinder provides methods to bind DOM objects to JavaScript.
 type DOMBinder struct {
-	runtime  *Runtime
-	nodeMap  map[*dom.Node]*goja.Object // Cache to return same JS object for same DOM node
-	document *dom.Document              // Current document for creating new nodes
+	runtime     *Runtime
+	eventBinder *EventBinder                // Event binder for adding EventTarget methods
+	nodeMap     map[*dom.Node]*goja.Object  // Cache to return same JS object for same DOM node
+	document    *dom.Document               // Current document for creating new nodes
 
 	// Style resolver for getComputedStyle
 	styleResolver *css.StyleResolver
@@ -2872,6 +2873,12 @@ func (b *DOMBinder) BindDocumentFragment(frag *dom.DocumentFragment) *goja.Objec
 func (b *DOMBinder) bindNodeProperties(jsObj *goja.Object, node *dom.Node) {
 	vm := b.runtime.vm
 
+	// Add EventTarget methods (addEventListener, removeEventListener, dispatchEvent)
+	// All Nodes are EventTargets per the DOM specification
+	if b.eventBinder != nil {
+		b.eventBinder.BindEventTarget(jsObj)
+	}
+
 	// Parent node properties
 	jsObj.DefineAccessorProperty("parentNode", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		parent := node.ParentNode()
@@ -4073,6 +4080,11 @@ func (b *DOMBinder) ClearCache() {
 // SetStyleResolver sets the style resolver for getComputedStyle.
 func (b *DOMBinder) SetStyleResolver(sr *css.StyleResolver) {
 	b.styleResolver = sr
+}
+
+// SetEventBinder sets the event binder for adding EventTarget methods to nodes.
+func (b *DOMBinder) SetEventBinder(eb *EventBinder) {
+	b.eventBinder = eb
 }
 
 // GetComputedStyle returns the computed style for an element.

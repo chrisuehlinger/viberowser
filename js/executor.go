@@ -22,6 +22,9 @@ func NewScriptExecutor(runtime *Runtime) *ScriptExecutor {
 	eventBinder := NewEventBinder(runtime)
 	eventBinder.SetupEventConstructors()
 
+	// Set the event binder on DOM binder so all nodes get EventTarget methods
+	domBinder.SetEventBinder(eventBinder)
+
 	return &ScriptExecutor{
 		runtime:       runtime,
 		domBinder:     domBinder,
