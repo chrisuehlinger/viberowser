@@ -124,6 +124,19 @@ func (r *Runner) RunTestFile(testPath string) TestSuiteResult {
 
 	// Create script executor and bind document
 	executor := js.NewScriptExecutor(runtime)
+
+	// Set up iframe content loader for loading iframe src content
+	// Use file:// URL if loading from local WPT path, otherwise use HTTP base URL
+	var iframeBaseURL string
+	if r.WPTPath != "" {
+		iframeBaseURL = "file://" + r.WPTPath
+	} else {
+		iframeBaseURL = r.BaseURL
+	}
+	executor.SetIframeContentLoader(func(src string) *dom.Document {
+		return r.loadIframeContent(ctx, src, iframeBaseURL)
+	})
+
 	executor.SetupDocument(doc)
 
 	// Set up style resolver for getComputedStyle
@@ -315,6 +328,88 @@ func (r *Runner) loadResource(ctx context.Context, resourcePath string) (string,
 	}
 
 	return "", fmt.Errorf("resource not found: %s", resourcePath)
+}
+
+// loadIframeContent loads the content for an iframe src URL and parses it as the appropriate document type.
+func (r *Runner) loadIframeContent(ctx context.Context, src, baseURL string) *dom.Document {
+	if src == "" || src == "about:blank" {
+		return nil
+	}
+
+	// Resolve the URL relative to baseURL
+	// baseURL is the WPT root directory (file:///path/to/wpt or http://host:port)
+	var fullURL string
+	if strings.HasPrefix(src, "/") {
+		// Absolute path - append to base URL directly
+		// baseURL is already the WPT root, so just append the absolute path
+		fullURL = strings.TrimSuffix(baseURL, "/") + src
+	} else if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") || strings.HasPrefix(src, "file://") {
+		fullURL = src
+	} else {
+		// Relative path - resolve against baseURL
+		parsedBase, err := url.Parse(baseURL)
+		if err != nil {
+			return nil
+		}
+		parsedSrc, err := parsedBase.Parse(src)
+		if err != nil {
+			return nil
+		}
+		fullURL = parsedSrc.String()
+	}
+
+	// Load the content
+	var content string
+	if strings.HasPrefix(fullURL, "file://") {
+		filePath := strings.TrimPrefix(fullURL, "file://")
+		data, readErr := os.ReadFile(filePath)
+		if readErr != nil {
+			return nil
+		}
+		content = string(data)
+	} else {
+		// HTTP request
+		req, reqErr := http.NewRequestWithContext(ctx, "GET", fullURL, nil)
+		if reqErr != nil {
+			return nil
+		}
+		resp, respErr := r.httpClient.Do(req)
+		if respErr != nil {
+			return nil
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil
+		}
+		data, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil
+		}
+		content = string(data)
+	}
+
+	// Determine document type based on URL extension
+	lowerSrc := strings.ToLower(src)
+	if strings.HasSuffix(lowerSrc, ".xml") {
+		doc, err := dom.ParseXML(content)
+		if err != nil {
+			return nil
+		}
+		return doc
+	} else if strings.HasSuffix(lowerSrc, ".xhtml") {
+		doc, err := dom.ParseXHTML(content)
+		if err != nil {
+			return nil
+		}
+		return doc
+	} else {
+		// Default to HTML parsing
+		doc, err := dom.ParseHTML(content)
+		if err != nil {
+			return nil
+		}
+		return doc
+	}
 }
 
 // loadAndExecuteScripts loads and executes all synchronous scripts in document order.

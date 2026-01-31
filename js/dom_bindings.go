@@ -109,11 +109,17 @@ func toUint32(v goja.Value) uint32 {
 }
 
 // DOMBinder provides methods to bind DOM objects to JavaScript.
+// IframeContentProvider is a callback interface for providing iframe content.
+// This allows the DOMBinder to get iframe contentWindow/contentDocument without
+// directly depending on ScriptExecutor.
+type IframeContentProvider func(iframe *dom.Element) (contentWindow goja.Value, contentDocument goja.Value)
+
 type DOMBinder struct {
-	runtime     *Runtime
-	eventBinder *EventBinder                // Event binder for adding EventTarget methods
-	nodeMap     map[*dom.Node]*goja.Object  // Cache to return same JS object for same DOM node
-	document    *dom.Document               // Current document for creating new nodes
+	runtime               *Runtime
+	eventBinder           *EventBinder                // Event binder for adding EventTarget methods
+	iframeContentProvider IframeContentProvider       // Callback for getting iframe content
+	nodeMap               map[*dom.Node]*goja.Object  // Cache to return same JS object for same DOM node
+	document              *dom.Document               // Current document for creating new nodes
 
 	// Style resolver for getComputedStyle
 	styleResolver *css.StyleResolver
@@ -2351,6 +2357,11 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		return goja.Undefined()
 	})
 
+	// Add iframe-specific properties (contentWindow, contentDocument, src)
+	if el.LocalName() == "iframe" {
+		b.bindIframeProperties(jsEl, el)
+	}
+
 	// Bind common node properties and methods
 	b.bindNodeProperties(jsEl, node)
 
@@ -2358,6 +2369,46 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 	b.nodeMap[node] = jsEl
 
 	return jsEl
+}
+
+// bindIframeProperties adds HTMLIFrameElement-specific properties.
+func (b *DOMBinder) bindIframeProperties(jsEl *goja.Object, el *dom.Element) {
+	vm := b.runtime.vm
+
+	// src attribute property
+	jsEl.DefineAccessorProperty("src", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		src := el.GetAttribute("src")
+		return vm.ToValue(src)
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("src", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// contentWindow property - returns the Window object for the iframe
+	jsEl.DefineAccessorProperty("contentWindow", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if b.iframeContentProvider == nil {
+			return goja.Null()
+		}
+		contentWindow, _ := b.iframeContentProvider(el)
+		if contentWindow == nil {
+			return goja.Null()
+		}
+		return contentWindow
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// contentDocument property - returns the Document for the iframe
+	jsEl.DefineAccessorProperty("contentDocument", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if b.iframeContentProvider == nil {
+			return goja.Null()
+		}
+		_, contentDocument := b.iframeContentProvider(el)
+		if contentDocument == nil {
+			return goja.Null()
+		}
+		return contentDocument
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 }
 
 // BindNode creates a JavaScript object from a DOM node.
@@ -4532,6 +4583,11 @@ func (b *DOMBinder) SetStyleResolver(sr *css.StyleResolver) {
 // SetEventBinder sets the event binder for adding EventTarget methods to nodes.
 func (b *DOMBinder) SetEventBinder(eb *EventBinder) {
 	b.eventBinder = eb
+}
+
+// SetIframeContentProvider sets the callback for providing iframe contentWindow/contentDocument.
+func (b *DOMBinder) SetIframeContentProvider(provider IframeContentProvider) {
+	b.iframeContentProvider = provider
 }
 
 // GetComputedStyle returns the computed style for an element.

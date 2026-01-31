@@ -8,12 +8,25 @@ import (
 	"github.com/dop251/goja"
 )
 
+// iframeContent holds the contentWindow and contentDocument for an iframe.
+type iframeContent struct {
+	window   goja.Value
+	document goja.Value
+	goDoc    *dom.Document // The Go DOM document for the iframe
+}
+
+// IframeContentLoader is a callback for loading iframe content.
+// It takes the iframe src URL and returns the loaded document, or nil if loading failed.
+type IframeContentLoader func(src string) *dom.Document
+
 // ScriptExecutor handles executing scripts in an HTML document.
 type ScriptExecutor struct {
-	runtime       *Runtime
-	domBinder     *DOMBinder
-	eventBinder   *EventBinder
-	iframeWindows map[*dom.Element]goja.Value // Cache of content windows per iframe element
+	runtime             *Runtime
+	domBinder           *DOMBinder
+	eventBinder         *EventBinder
+	iframeWindows       map[*dom.Element]goja.Value    // Cache of content windows per iframe element (legacy)
+	iframeContents      map[*dom.Element]*iframeContent // Cache of content windows/documents per iframe
+	iframeContentLoader IframeContentLoader             // Callback for loading iframe content
 }
 
 // NewScriptExecutor creates a new script executor.
@@ -25,12 +38,18 @@ func NewScriptExecutor(runtime *Runtime) *ScriptExecutor {
 	// Set the event binder on DOM binder so all nodes get EventTarget methods
 	domBinder.SetEventBinder(eventBinder)
 
-	return &ScriptExecutor{
-		runtime:       runtime,
-		domBinder:     domBinder,
-		eventBinder:   eventBinder,
-		iframeWindows: make(map[*dom.Element]goja.Value),
+	se := &ScriptExecutor{
+		runtime:        runtime,
+		domBinder:      domBinder,
+		eventBinder:    eventBinder,
+		iframeWindows:  make(map[*dom.Element]goja.Value),
+		iframeContents: make(map[*dom.Element]*iframeContent),
 	}
+
+	// Set the iframe content provider on DOM binder
+	domBinder.SetIframeContentProvider(se.getIframeContent)
+
+	return se
 }
 
 // Runtime returns the underlying JS runtime.
@@ -46,6 +65,12 @@ func (se *ScriptExecutor) DOMBinder() *DOMBinder {
 // EventBinder returns the event binder.
 func (se *ScriptExecutor) EventBinder() *EventBinder {
 	return se.eventBinder
+}
+
+// SetIframeContentLoader sets the callback for loading iframe content.
+// This allows external code (like the WPT runner) to provide iframe content loading.
+func (se *ScriptExecutor) SetIframeContentLoader(loader IframeContentLoader) {
+	se.iframeContentLoader = loader
 }
 
 // SetStyleResolver sets the style resolver for getComputedStyle.
@@ -180,13 +205,12 @@ func (se *ScriptExecutor) setupWindowFrames(doc *dom.Document, window *goja.Obje
 	}
 }
 
-// getIframeContentWindow returns a window-like object for an iframe element.
-// This window object has its own document for the iframe's content.
-// The content window is cached per iframe element to ensure identity.
-func (se *ScriptExecutor) getIframeContentWindow(iframe *dom.Element, parentDoc *dom.Document) goja.Value {
+// getIframeContent returns the contentWindow and contentDocument for an iframe element.
+// This is used by DOMBinder to provide iframe.contentWindow and iframe.contentDocument properties.
+func (se *ScriptExecutor) getIframeContent(iframe *dom.Element) (goja.Value, goja.Value) {
 	// Check cache first
-	if cachedWindow, ok := se.iframeWindows[iframe]; ok {
-		return cachedWindow
+	if cached, ok := se.iframeContents[iframe]; ok {
+		return cached.window, cached.document
 	}
 
 	vm := se.runtime.vm
@@ -200,17 +224,23 @@ func (se *ScriptExecutor) getIframeContentWindow(iframe *dom.Element, parentDoc 
 		src = "about:blank"
 	}
 
-	// Create a document for the iframe
-	// Create a minimal HTML document structure
-	iframeDoc := dom.NewDocument()
+	// Try to load iframe content using the loader
+	var iframeDoc *dom.Document
+	if se.iframeContentLoader != nil {
+		iframeDoc = se.iframeContentLoader(src)
+	}
 
-	// Create basic document structure: html > head + body
-	html := iframeDoc.CreateElement("html")
-	head := iframeDoc.CreateElement("head")
-	body := iframeDoc.CreateElement("body")
-	iframeDoc.AsNode().AppendChild(html.AsNode())
-	html.AsNode().AppendChild(head.AsNode())
-	html.AsNode().AppendChild(body.AsNode())
+	// If no loader or loading failed, create a minimal blank document
+	if iframeDoc == nil {
+		iframeDoc = dom.NewDocument()
+		// Create basic document structure: html > head + body
+		html := iframeDoc.CreateElement("html")
+		head := iframeDoc.CreateElement("head")
+		body := iframeDoc.CreateElement("body")
+		iframeDoc.AsNode().AppendChild(html.AsNode())
+		html.AsNode().AppendChild(head.AsNode())
+		html.AsNode().AppendChild(body.AsNode())
+	}
 
 	// Bind the iframe document to JavaScript
 	jsIframeDoc := se.domBinder.BindDocument(iframeDoc)
@@ -233,9 +263,40 @@ func (se *ScriptExecutor) getIframeContentWindow(iframe *dom.Element, parentDoc 
 	location.Set("href", src)
 	contentWindow.Set("location", location)
 
-	// Cache the content window for this iframe
+	// Copy DOM constructors from parent window so instanceof checks work
+	// These need to be available on every Window object in a browser
+	if parentWindowObj := parentWindow.ToObject(vm); parentWindowObj != nil {
+		constructorsToCopy := []string{
+			"Element", "Node", "Document", "DocumentType", "DocumentFragment",
+			"Text", "Comment", "CDATASection", "ProcessingInstruction",
+			"Attr", "HTMLElement", "HTMLDocument", "XMLDocument",
+			"CharacterData", "DOMException", "DOMTokenList", "NamedNodeMap",
+			"NodeList", "HTMLCollection",
+		}
+		for _, name := range constructorsToCopy {
+			if val := parentWindowObj.Get(name); val != nil && !goja.IsUndefined(val) {
+				contentWindow.Set(name, val)
+			}
+		}
+	}
+
+	// Cache both
+	se.iframeContents[iframe] = &iframeContent{
+		window:   contentWindow,
+		document: jsIframeDoc,
+		goDoc:    iframeDoc,
+	}
+	// Also cache in legacy map for compatibility
 	se.iframeWindows[iframe] = contentWindow
 
+	return contentWindow, jsIframeDoc
+}
+
+// getIframeContentWindow returns a window-like object for an iframe element.
+// This window object has its own document for the iframe's content.
+// The content window is cached per iframe element to ensure identity.
+func (se *ScriptExecutor) getIframeContentWindow(iframe *dom.Element, parentDoc *dom.Document) goja.Value {
+	contentWindow, _ := se.getIframeContent(iframe)
 	return contentWindow
 }
 

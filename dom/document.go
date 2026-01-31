@@ -1,6 +1,8 @@
 package dom
 
 import (
+	"encoding/xml"
+	"io"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -965,4 +967,133 @@ func (impl *DOMImplementation) CreateDocumentType(qualifiedName, publicId, syste
 // HasFeature returns true. Per spec, always returns true for compatibility.
 func (impl *DOMImplementation) HasFeature() bool {
 	return true
+}
+
+// ParseXML parses an XML string and returns a Document.
+// The returned document has content type "application/xml".
+func ParseXML(xmlContent string) (*Document, error) {
+	doc := NewDocument()
+	doc.AsNode().documentData.contentType = "application/xml"
+
+	decoder := xml.NewDecoder(strings.NewReader(xmlContent))
+
+	// Stack to track current parent node during parsing
+	var stack []*Node
+	stack = append(stack, doc.AsNode())
+
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		currentParent := stack[len(stack)-1]
+
+		switch t := token.(type) {
+		case xml.StartElement:
+			// Create element with proper namespace handling
+			var el *Element
+			if t.Name.Space != "" {
+				// Element has a namespace
+				qualifiedName := t.Name.Local
+				if prefix := findPrefixForNamespace(t, t.Name.Space); prefix != "" {
+					qualifiedName = prefix + ":" + t.Name.Local
+				}
+				el, _ = doc.CreateElementNSWithError(t.Name.Space, qualifiedName)
+			} else {
+				el = doc.CreateElement(t.Name.Local)
+			}
+
+			// Set attributes
+			for _, attr := range t.Attr {
+				if attr.Name.Space != "" {
+					// Namespaced attribute
+					qualifiedName := attr.Name.Local
+					if attr.Name.Space == "http://www.w3.org/2000/xmlns/" {
+						qualifiedName = "xmlns:" + attr.Name.Local
+					}
+					el.SetAttributeNS(attr.Name.Space, qualifiedName, attr.Value)
+				} else if attr.Name.Local == "xmlns" {
+					// Default namespace declaration
+					el.SetAttribute("xmlns", attr.Value)
+				} else {
+					el.SetAttribute(attr.Name.Local, attr.Value)
+				}
+			}
+
+			currentParent.AppendChild(el.AsNode())
+			stack = append(stack, el.AsNode())
+
+		case xml.EndElement:
+			// Pop from stack
+			if len(stack) > 1 {
+				stack = stack[:len(stack)-1]
+			}
+
+		case xml.CharData:
+			text := string(t)
+			// Only create text node if it has non-whitespace content or there's already content
+			if strings.TrimSpace(text) != "" || (currentParent.NodeType() == ElementNode && currentParent.firstChild != nil) {
+				textNode := doc.CreateTextNode(text)
+				currentParent.AppendChild(textNode)
+			}
+
+		case xml.Comment:
+			comment := doc.CreateComment(string(t))
+			currentParent.AppendChild(comment)
+
+		case xml.ProcInst:
+			// Processing instruction
+			pi := doc.CreateProcessingInstruction(t.Target, string(t.Inst))
+			currentParent.AppendChild(pi)
+
+		case xml.Directive:
+			// Handle DOCTYPE declaration
+			directive := string(t)
+			if strings.HasPrefix(strings.ToUpper(directive), "DOCTYPE") {
+				// Parse DOCTYPE - simplified parsing
+				parts := strings.Fields(directive)
+				if len(parts) >= 2 {
+					doctypeName := parts[1]
+					doctype := newNode(DocumentTypeNode, doctypeName, doc)
+					doctype.docTypeData = &docTypeData{
+						name: doctypeName,
+					}
+					currentParent.AppendChild(doctype)
+				}
+			}
+		}
+	}
+
+	return doc, nil
+}
+
+// findPrefixForNamespace looks for a namespace prefix in the element's attributes.
+func findPrefixForNamespace(el xml.StartElement, ns string) string {
+	for _, attr := range el.Attr {
+		if attr.Name.Space == "http://www.w3.org/2000/xmlns/" && attr.Value == ns {
+			return attr.Name.Local
+		}
+		if attr.Name.Local == "xmlns" && attr.Value == ns {
+			return "" // default namespace, no prefix
+		}
+	}
+	return ""
+}
+
+// ParseXHTML parses an XHTML string and returns a Document.
+// XHTML is parsed like XML but elements get the XHTML namespace.
+func ParseXHTML(xhtmlContent string) (*Document, error) {
+	doc, err := ParseXML(xhtmlContent)
+	if err != nil {
+		return nil, err
+	}
+
+	// Set content type to XHTML
+	doc.AsNode().documentData.contentType = "application/xhtml+xml"
+
+	return doc, nil
 }
