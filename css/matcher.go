@@ -8,10 +8,22 @@ import (
 	"github.com/AYColumbia/viberowser/dom"
 )
 
+// MatchContext holds context for selector matching.
+type MatchContext struct {
+	// ScopeElement is the element that :scope should match against.
+	// If nil, :scope matches the document root.
+	ScopeElement *dom.Element
+}
+
 // MatchElement tests if a selector matches an element.
 func (s *CSSSelector) MatchElement(el *dom.Element) bool {
+	return s.MatchElementWithContext(el, nil)
+}
+
+// MatchElementWithContext tests if a selector matches an element with a match context.
+func (s *CSSSelector) MatchElementWithContext(el *dom.Element, ctx *MatchContext) bool {
 	for _, cs := range s.ComplexSelectors {
-		if cs.MatchElement(el) {
+		if cs.MatchElementWithContext(el, ctx) {
 			return true
 		}
 	}
@@ -20,6 +32,11 @@ func (s *CSSSelector) MatchElement(el *dom.Element) bool {
 
 // MatchElement tests if a complex selector matches an element.
 func (cs *ComplexSelector) MatchElement(el *dom.Element) bool {
+	return cs.MatchElementWithContext(el, nil)
+}
+
+// MatchElementWithContext tests if a complex selector matches an element with context.
+func (cs *ComplexSelector) MatchElementWithContext(el *dom.Element, ctx *MatchContext) bool {
 	if len(cs.Compounds) == 0 {
 		return false
 	}
@@ -29,7 +46,7 @@ func (cs *ComplexSelector) MatchElement(el *dom.Element) bool {
 	currentEl := el
 
 	// Match the rightmost compound against the subject element
-	if !cs.Compounds[i].MatchElement(currentEl) {
+	if !cs.Compounds[i].MatchElementWithContext(currentEl, ctx) {
 		return false
 	}
 
@@ -43,7 +60,7 @@ func (cs *ComplexSelector) MatchElement(el *dom.Element) bool {
 			// Match any ancestor
 			matched := false
 			for ancestor := currentEl.AsNode().ParentElement(); ancestor != nil; ancestor = ancestor.AsNode().ParentElement() {
-				if cs.Compounds[i].MatchElement(ancestor) {
+				if cs.Compounds[i].MatchElementWithContext(ancestor, ctx) {
 					currentEl = ancestor
 					matched = true
 					break
@@ -56,7 +73,7 @@ func (cs *ComplexSelector) MatchElement(el *dom.Element) bool {
 		case CombinatorChild:
 			// Match direct parent
 			parent := currentEl.AsNode().ParentElement()
-			if parent == nil || !cs.Compounds[i].MatchElement(parent) {
+			if parent == nil || !cs.Compounds[i].MatchElementWithContext(parent, ctx) {
 				return false
 			}
 			currentEl = parent
@@ -64,7 +81,7 @@ func (cs *ComplexSelector) MatchElement(el *dom.Element) bool {
 		case CombinatorNextSibling:
 			// Match immediately preceding sibling
 			prev := currentEl.PreviousElementSibling()
-			if prev == nil || !cs.Compounds[i].MatchElement(prev) {
+			if prev == nil || !cs.Compounds[i].MatchElementWithContext(prev, ctx) {
 				return false
 			}
 			currentEl = prev
@@ -73,7 +90,7 @@ func (cs *ComplexSelector) MatchElement(el *dom.Element) bool {
 			// Match any preceding sibling
 			matched := false
 			for prev := currentEl.PreviousElementSibling(); prev != nil; prev = prev.PreviousElementSibling() {
-				if cs.Compounds[i].MatchElement(prev) {
+				if cs.Compounds[i].MatchElementWithContext(prev, ctx) {
 					currentEl = prev
 					matched = true
 					break
@@ -93,6 +110,11 @@ func (cs *ComplexSelector) MatchElement(el *dom.Element) bool {
 
 // MatchElement tests if a compound selector matches an element.
 func (c *CompoundSelector) MatchElement(el *dom.Element) bool {
+	return c.MatchElementWithContext(el, nil)
+}
+
+// MatchElementWithContext tests if a compound selector matches an element with context.
+func (c *CompoundSelector) MatchElementWithContext(el *dom.Element, ctx *MatchContext) bool {
 	// Type selector
 	if c.TypeSelector != nil {
 		if !matchTypeSelector(c.TypeSelector, el) {
@@ -123,7 +145,7 @@ func (c *CompoundSelector) MatchElement(el *dom.Element) bool {
 
 	// Pseudo-classes
 	for _, pc := range c.PseudoClasses {
-		if !matchPseudoClass(pc, el) {
+		if !matchPseudoClassWithContext(pc, el, ctx) {
 			return false
 		}
 	}
@@ -185,6 +207,10 @@ func matchAttributeSelector(attr *AttributeMatcher, el *dom.Element) bool {
 }
 
 func matchPseudoClass(pc *PseudoClassSelector, el *dom.Element) bool {
+	return matchPseudoClassWithContext(pc, el, nil)
+}
+
+func matchPseudoClassWithContext(pc *PseudoClassSelector, el *dom.Element, ctx *MatchContext) bool {
 	switch pc.Name {
 	case "root":
 		// Matches the root element of the document
@@ -196,13 +222,34 @@ func matchPseudoClass(pc *PseudoClassSelector, el *dom.Element) bool {
 		return !el.AsNode().HasChildNodes()
 
 	case "first-child":
-		return el.PreviousElementSibling() == nil
+		// :first-child matches an element that is the first element child of its parent
+		parent := el.AsNode().ParentNode()
+		if parent == nil {
+			return false
+		}
+		for child := parent.FirstChild(); child != nil; child = child.NextSibling() {
+			if child.NodeType() == dom.ElementNode {
+				return (*dom.Element)(child) == el
+			}
+		}
+		return false
 
 	case "last-child":
-		return el.NextElementSibling() == nil
+		// :last-child matches an element that is the last element child of its parent
+		parent := el.AsNode().ParentNode()
+		if parent == nil {
+			return false
+		}
+		for child := parent.LastChild(); child != nil; child = child.PreviousSibling() {
+			if child.NodeType() == dom.ElementNode {
+				return (*dom.Element)(child) == el
+			}
+		}
+		return false
 
 	case "only-child":
-		return el.PreviousElementSibling() == nil && el.NextElementSibling() == nil
+		return matchPseudoClassWithContext(&PseudoClassSelector{Name: "first-child"}, el, ctx) &&
+			matchPseudoClassWithContext(&PseudoClassSelector{Name: "last-child"}, el, ctx)
 
 	case "first-of-type":
 		tagName := el.LocalName()
@@ -250,20 +297,21 @@ func matchPseudoClass(pc *PseudoClassSelector, el *dom.Element) bool {
 
 	case "not":
 		if pc.Selector != nil {
-			return !pc.Selector.MatchElement(el)
+			return !pc.Selector.MatchElementWithContext(el, ctx)
 		}
 		return true
 
 	case "is", "where", "matches", "any":
 		if pc.Selector != nil {
-			return pc.Selector.MatchElement(el)
+			return pc.Selector.MatchElementWithContext(el, ctx)
 		}
 		return false
 
 	case "has":
 		if pc.Selector != nil {
-			// :has() matches if any descendant matches the relative selector
-			return hasMatchingDescendant(el, pc.Selector)
+			// :has() matches if any element matches the relative selector
+			// The selector inside :has() is a relative selector which may have a leading combinator
+			return matchHasSelector(el, pc.Selector, ctx)
 		}
 		return false
 
@@ -310,10 +358,20 @@ func matchPseudoClass(pc *PseudoClassSelector, el *dom.Element) bool {
 		return matchDir(pc.Argument, el)
 
 	case "scope":
-		// In querySelector context, matches the element being queried from
-		// Here we just match root
+		// :scope matches the element that the selector is being matched against
+		// In closest() context, this is the element closest was called on
+		if ctx != nil && ctx.ScopeElement != nil {
+			return el == ctx.ScopeElement
+		}
+		// Default to document root if no scope context
 		parent := el.AsNode().ParentNode()
 		return parent != nil && parent.NodeType() == dom.DocumentNode
+
+	case "invalid":
+		return isInvalid(el)
+
+	case "valid":
+		return isValid(el)
 
 	default:
 		// Unknown pseudo-class - don't match
@@ -426,16 +484,174 @@ func parseAnPlusB(s string) (int, int) {
 }
 
 func hasMatchingDescendant(el *dom.Element, sel *CSSSelector) bool {
+	return hasMatchingDescendantWithContext(el, sel, nil)
+}
+
+func hasMatchingDescendantWithContext(el *dom.Element, sel *CSSSelector, ctx *MatchContext) bool {
 	// Check children recursively
 	for child := el.FirstElementChild(); child != nil; child = child.NextElementSibling() {
-		if sel.MatchElement(child) {
+		if sel.MatchElementWithContext(child, ctx) {
 			return true
 		}
-		if hasMatchingDescendant(child, sel) {
+		if hasMatchingDescendantWithContext(child, sel, ctx) {
 			return true
 		}
 	}
 	return false
+}
+
+// matchHasSelector checks if any element matches the relative selector inside :has().
+// The selector may have a leading combinator that determines how to search.
+func matchHasSelector(subject *dom.Element, sel *CSSSelector, ctx *MatchContext) bool {
+	for _, cs := range sel.ComplexSelectors {
+		if matchHasComplexSelector(subject, cs, ctx) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchHasComplexSelector handles a single complex selector within :has().
+func matchHasComplexSelector(subject *dom.Element, cs *ComplexSelector, ctx *MatchContext) bool {
+	switch cs.LeadingCombinator {
+	case CombinatorChild:
+		// :has(> selector) - check direct children only
+		for child := subject.FirstElementChild(); child != nil; child = child.NextElementSibling() {
+			if matchRelativeSelector(child, cs, ctx) {
+				return true
+			}
+		}
+		return false
+
+	case CombinatorNextSibling:
+		// :has(+ selector) - check next sibling only
+		next := subject.NextElementSibling()
+		if next != nil && matchRelativeSelector(next, cs, ctx) {
+			return true
+		}
+		return false
+
+	case CombinatorSubsequentSibling:
+		// :has(~ selector) - check all following siblings
+		for next := subject.NextElementSibling(); next != nil; next = next.NextElementSibling() {
+			if matchRelativeSelector(next, cs, ctx) {
+				return true
+			}
+		}
+		return false
+
+	default:
+		// :has(selector) with no leading combinator or CombinatorDescendant - check all descendants
+		return hasMatchingDescendantForRelative(subject, cs, ctx)
+	}
+}
+
+// matchRelativeSelector checks if an element matches the compound selectors in a relative selector.
+func matchRelativeSelector(el *dom.Element, cs *ComplexSelector, ctx *MatchContext) bool {
+	if len(cs.Compounds) == 0 {
+		return false
+	}
+
+	// Start from the first compound (which is what the leading combinator points to)
+	i := 0
+	currentEl := el
+
+	// Match the first compound
+	if !cs.Compounds[i].MatchElementWithContext(currentEl, ctx) {
+		return false
+	}
+
+	// If there's only one compound, we matched
+	if len(cs.Compounds) == 1 {
+		return true
+	}
+
+	// Continue with remaining compounds (they have combinators between them)
+	for i < len(cs.Compounds)-1 {
+		combinator := cs.Compounds[i].Combinator
+		i++
+
+		switch combinator {
+		case CombinatorDescendant:
+			// Match any descendant
+			matched := false
+			descendants := getAllDescendants(currentEl)
+			for _, desc := range descendants {
+				if cs.Compounds[i].MatchElementWithContext(desc, ctx) {
+					currentEl = desc
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+
+		case CombinatorChild:
+			// Match any direct child
+			matched := false
+			for child := currentEl.FirstElementChild(); child != nil; child = child.NextElementSibling() {
+				if cs.Compounds[i].MatchElementWithContext(child, ctx) {
+					currentEl = child
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+
+		case CombinatorNextSibling:
+			// Match next sibling
+			next := currentEl.NextElementSibling()
+			if next == nil || !cs.Compounds[i].MatchElementWithContext(next, ctx) {
+				return false
+			}
+			currentEl = next
+
+		case CombinatorSubsequentSibling:
+			// Match any following sibling
+			matched := false
+			for next := currentEl.NextElementSibling(); next != nil; next = next.NextElementSibling() {
+				if cs.Compounds[i].MatchElementWithContext(next, ctx) {
+					currentEl = next
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+
+		default:
+			return false
+		}
+	}
+
+	return true
+}
+
+// hasMatchingDescendantForRelative checks descendants for a relative selector.
+func hasMatchingDescendantForRelative(el *dom.Element, cs *ComplexSelector, ctx *MatchContext) bool {
+	for child := el.FirstElementChild(); child != nil; child = child.NextElementSibling() {
+		if matchRelativeSelector(child, cs, ctx) {
+			return true
+		}
+		if hasMatchingDescendantForRelative(child, cs, ctx) {
+			return true
+		}
+	}
+	return false
+}
+
+// getAllDescendants returns all descendant elements.
+func getAllDescendants(el *dom.Element) []*dom.Element {
+	var result []*dom.Element
+	for child := el.FirstElementChild(); child != nil; child = child.NextElementSibling() {
+		result = append(result, child)
+		result = append(result, getAllDescendants(child)...)
+	}
+	return result
 }
 
 func isEnabled(el *dom.Element) bool {
@@ -511,6 +727,106 @@ func isLink(el *dom.Element) bool {
 
 func isVisited(el *dom.Element) bool {
 	// We don't track visited links for privacy reasons
+	return false
+}
+
+// isInvalid checks if an element matches the :invalid pseudo-class.
+// An element matches :invalid if it has constraints and fails constraint validation.
+func isInvalid(el *dom.Element) bool {
+	tagName := strings.ToLower(el.TagName())
+
+	switch tagName {
+	case "form":
+		// A form is invalid if any of its form controls are invalid
+		// Check descendants
+		for child := el.FirstElementChild(); child != nil; child = child.NextElementSibling() {
+			if isInvalid(child) {
+				return true
+			}
+			// Check nested children too
+			if hasInvalidDescendant(child) {
+				return true
+			}
+		}
+		return false
+
+	case "fieldset":
+		// A fieldset is invalid if any of its descendants are invalid
+		for child := el.FirstElementChild(); child != nil; child = child.NextElementSibling() {
+			if isInvalid(child) {
+				return true
+			}
+			if hasInvalidDescendant(child) {
+				return true
+			}
+		}
+		return false
+
+	case "input":
+		// Check required attribute
+		if el.HasAttribute("required") {
+			value := el.GetAttribute("value")
+			if value == "" {
+				return true
+			}
+		}
+		return false
+
+	case "select":
+		// Select is invalid if required and no option is selected
+		if el.HasAttribute("required") {
+			// Check if any option has selected attribute
+			hasSelected := false
+			for child := el.FirstElementChild(); child != nil; child = child.NextElementSibling() {
+				if strings.ToLower(child.TagName()) == "option" {
+					if child.HasAttribute("selected") {
+						hasSelected = true
+						break
+					}
+				}
+			}
+			if !hasSelected {
+				return true
+			}
+		}
+		return false
+
+	case "textarea":
+		// Textarea is invalid if required and empty
+		if el.HasAttribute("required") {
+			// TextContent would be the value
+			text := el.AsNode().TextContent()
+			if text == "" {
+				return true
+			}
+		}
+		return false
+	}
+
+	return false
+}
+
+func hasInvalidDescendant(el *dom.Element) bool {
+	for child := el.FirstElementChild(); child != nil; child = child.NextElementSibling() {
+		if isInvalid(child) {
+			return true
+		}
+		if hasInvalidDescendant(child) {
+			return true
+		}
+	}
+	return false
+}
+
+// isValid checks if an element matches the :valid pseudo-class.
+func isValid(el *dom.Element) bool {
+	tagName := strings.ToLower(el.TagName())
+
+	// Only form-associated elements can be :valid
+	switch tagName {
+	case "form", "fieldset", "input", "select", "textarea":
+		return !isInvalid(el)
+	}
 	return false
 }
 

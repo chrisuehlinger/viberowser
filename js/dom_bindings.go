@@ -1770,7 +1770,14 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 			return vm.ToValue(false)
 		}
 		selector := call.Arguments[0].String()
-		return vm.ToValue(el.Matches(selector))
+		// Use CSS selector matcher for proper pseudo-class support
+		parsed, err := css.ParseSelector(selector)
+		if err != nil {
+			return vm.ToValue(false)
+		}
+		// For matches(), scope is the element itself
+		ctx := &css.MatchContext{ScopeElement: el}
+		return vm.ToValue(parsed.MatchElementWithContext(el, ctx))
 	})
 
 	jsEl.Set("closest", func(call goja.FunctionCall) goja.Value {
@@ -1778,11 +1785,25 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 			return goja.Null()
 		}
 		selector := call.Arguments[0].String()
-		found := el.Closest(selector)
-		if found == nil {
+		// Parse the selector once
+		parsed, err := css.ParseSelector(selector)
+		if err != nil {
 			return goja.Null()
 		}
-		return b.BindElement(found)
+		// For closest(), scope is the element closest was called on
+		ctx := &css.MatchContext{ScopeElement: el}
+		// Walk up the tree
+		for current := el; current != nil; {
+			if parsed.MatchElementWithContext(current, ctx) {
+				return b.BindElement(current)
+			}
+			parent := current.AsNode().ParentNode()
+			if parent == nil || parent.NodeType() != dom.ElementNode {
+				break
+			}
+			current = (*dom.Element)(parent)
+		}
+		return goja.Null()
 	})
 
 	// ParentNode mixin properties

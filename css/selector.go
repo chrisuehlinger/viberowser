@@ -12,7 +12,8 @@ type CSSSelector struct {
 
 // ComplexSelector is a chain of compound selectors separated by combinators.
 type ComplexSelector struct {
-	Compounds []*CompoundSelector
+	Compounds          []*CompoundSelector
+	LeadingCombinator  CombinatorType // For relative selectors (in :has())
 }
 
 // CompoundSelector is a sequence of simple selectors.
@@ -158,6 +159,131 @@ func (p *SelectorParser) parseSelector() (*CSSSelector, error) {
 	}
 
 	return selector, nil
+}
+
+// parseRelativeSelector parses a relative selector (used in :has()).
+// A relative selector can optionally start with a combinator.
+func (p *SelectorParser) parseRelativeSelector() (*CSSSelector, error) {
+	selector := &CSSSelector{}
+
+	p.skipWhitespace()
+
+	for {
+		complex, err := p.parseRelativeComplexSelector()
+		if err != nil {
+			return nil, err
+		}
+		if complex != nil {
+			selector.ComplexSelectors = append(selector.ComplexSelectors, complex)
+		}
+
+		p.skipWhitespace()
+
+		if p.current().Type == TokenComma {
+			p.consume()
+			p.skipWhitespace()
+			continue
+		}
+
+		break
+	}
+
+	return selector, nil
+}
+
+// parseRelativeComplexSelector parses a relative complex selector.
+// It can start with an optional combinator.
+func (p *SelectorParser) parseRelativeComplexSelector() (*ComplexSelector, error) {
+	complex := &ComplexSelector{}
+
+	// Check for leading combinator
+	leadingCombinator := CombinatorDescendant // Default for :has() is descendant
+	tok := p.current()
+	if tok.Type == TokenDelim {
+		switch tok.Delim {
+		case '>':
+			p.consume()
+			leadingCombinator = CombinatorChild
+			p.skipWhitespace()
+		case '+':
+			p.consume()
+			leadingCombinator = CombinatorNextSibling
+			p.skipWhitespace()
+		case '~':
+			p.consume()
+			leadingCombinator = CombinatorSubsequentSibling
+			p.skipWhitespace()
+		}
+	}
+
+	// Parse the rest like a normal complex selector
+	for {
+		compound, err := p.parseCompoundSelector()
+		if err != nil {
+			return nil, err
+		}
+		if compound == nil {
+			break
+		}
+
+		complex.Compounds = append(complex.Compounds, compound)
+
+		// Check for combinator
+		hadWhitespace := p.skipWhitespace()
+
+		tok := p.current()
+		switch tok.Type {
+		case TokenDelim:
+			switch tok.Delim {
+			case '>':
+				p.consume()
+				compound.Combinator = CombinatorChild
+				p.skipWhitespace()
+			case '+':
+				p.consume()
+				compound.Combinator = CombinatorNextSibling
+				p.skipWhitespace()
+			case '~':
+				p.consume()
+				compound.Combinator = CombinatorSubsequentSibling
+				p.skipWhitespace()
+			case '|':
+				if p.peek(1).Type == TokenDelim && p.peek(1).Delim == '|' {
+					p.consume()
+					p.consume()
+					compound.Combinator = CombinatorColumn
+					p.skipWhitespace()
+				} else {
+					goto done
+				}
+			default:
+				if hadWhitespace {
+					compound.Combinator = CombinatorDescendant
+				} else {
+					goto done
+				}
+			}
+		case TokenEOF, TokenComma, TokenOpenCurly:
+			goto done
+		default:
+			if hadWhitespace {
+				compound.Combinator = CombinatorDescendant
+			} else {
+				goto done
+			}
+		}
+	}
+
+done:
+	if len(complex.Compounds) == 0 {
+		return nil, nil
+	}
+
+	// Store the leading combinator info
+	// We need to mark this complex selector as relative with a specific combinator
+	complex.LeadingCombinator = leadingCombinator
+
+	return complex, nil
 }
 
 // parseComplexSelector parses a complex selector.
@@ -517,7 +643,7 @@ func (p *SelectorParser) parsePseudoClass() (*PseudoClassSelector, error) {
 
 		// Check if this is a selector-taking pseudo-class
 		switch pc.Name {
-		case "not", "is", "where", "has":
+		case "not", "is", "where":
 			// Parse selector argument
 			var tokens []Token
 			depth := 1
@@ -539,6 +665,29 @@ func (p *SelectorParser) parsePseudoClass() (*PseudoClassSelector, error) {
 			}
 			subParser := &SelectorParser{tokens: tokens, pos: 0}
 			selector, _ := subParser.parseSelector()
+			pc.Selector = selector
+		case "has":
+			// Parse relative selector argument - allows leading combinators
+			var tokens []Token
+			depth := 1
+			for {
+				tok := p.current()
+				if tok.Type == TokenEOF {
+					break
+				}
+				if tok.Type == TokenOpenParen {
+					depth++
+				} else if tok.Type == TokenCloseParen {
+					depth--
+					if depth == 0 {
+						p.consume()
+						break
+					}
+				}
+				tokens = append(tokens, p.consume())
+			}
+			subParser := &SelectorParser{tokens: tokens, pos: 0}
+			selector, _ := subParser.parseRelativeSelector()
 			pc.Selector = selector
 		default:
 			// Consume until closing paren
