@@ -131,6 +131,12 @@ func (et *EventTarget) DispatchEvent(vm *goja.Runtime, event *goja.Object, phase
 		listeners = append(capturingListeners, bubblingListeners...)
 	}
 
+	// Get currentTarget for 'this' binding
+	currentTarget := event.Get("currentTarget")
+	if currentTarget == nil || goja.IsUndefined(currentTarget) {
+		currentTarget = goja.Undefined()
+	}
+
 	for _, l := range listeners {
 		// Check phase - only filter by capture/non-capture for non-target phases
 		if phase == EventPhaseCapturing && !l.options.capture {
@@ -140,8 +146,9 @@ func (et *EventTarget) DispatchEvent(vm *goja.Runtime, event *goja.Object, phase
 			continue
 		}
 
-		// Call the listener
-		l.callback(goja.Undefined(), event)
+		// Call the listener with currentTarget as 'this'
+		// Per DOM spec, the 'this' value for event listeners is the currentTarget
+		l.callback(currentTarget, event)
 
 		// Check for stopImmediatePropagation
 		if stopImmediate := event.Get("_stopImmediate"); stopImmediate != nil && stopImmediate.ToBoolean() {

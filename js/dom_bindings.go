@@ -336,6 +336,9 @@ type DOMBinder struct {
 	treeWalkerProto              *goja.Object
 	shadowRootProto              *goja.Object
 	shadowRootCache              map[*dom.ShadowRoot]*goja.Object
+
+	// Event handler storage: maps JS object -> event type -> handler function
+	eventHandlers                map[*goja.Object]map[string]goja.Value
 }
 
 // NewDOMBinder creates a new DOM binder for the given runtime.
@@ -353,6 +356,7 @@ func NewDOMBinder(runtime *Runtime) *DOMBinder {
 		attrCache:              make(map[*dom.Attr]*goja.Object),
 		rangeCache:             make(map[*dom.Range]*goja.Object),
 		shadowRootCache:        make(map[*dom.ShadowRoot]*goja.Object),
+		eventHandlers:          make(map[*goja.Object]map[string]goja.Value),
 	}
 	b.setupPrototypes()
 	return b
@@ -563,6 +567,21 @@ func (b *DOMBinder) setupPrototypes() {
 	elementConstructorObj.Set("prototype", b.elementProto)
 	b.elementProto.Set("constructor", elementConstructorObj)
 	vm.Set("Element", elementConstructorObj)
+
+	// Set Symbol.unscopables for Element prototype per DOM spec
+	// https://dom.spec.whatwg.org/#interface-element
+	// These methods should not shadow window properties when used in 'with' statements
+	_, _ = vm.RunString(`
+		Element.prototype[Symbol.unscopables] = {
+			slot: true,
+			before: true,
+			after: true,
+			replaceWith: true,
+			remove: true,
+			prepend: true,
+			append: true
+		};
+	`)
 
 	// Create HTMLElement prototype (extends Element)
 	b.htmlElementProto = vm.NewObject()
@@ -2876,6 +2895,52 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		}
 		name := call.Arguments[0].String()
 		value := call.Arguments[1].String()
+
+		// Check if this is an event handler content attribute
+		lowerName := strings.ToLower(name)
+		if strings.HasPrefix(lowerName, "on") && len(lowerName) > 2 {
+			// Check if it's a known event handler attribute
+			for _, attr := range eventHandlerAttributes {
+				if lowerName == attr {
+					// Create an event handler function per HTML spec
+					// The handler should:
+					// 1. Have 'this' bound to the element (handled in event dispatch)
+					// 2. Have a scope chain including the element (respecting @@unscopables)
+					//
+					// Per HTML spec (https://html.spec.whatwg.org/multipage/webappapis.html#getting-the-current-value-of-the-event-handler):
+					// For regular elements, the scope chain is: element
+					// For body/frameset elements, the scope chain is: element, then document
+					// Note: form owner is not included for simplicity
+					//
+					// Since goja's with statement automatically respects Symbol.unscopables,
+					// unscopable properties (like prepend, append, remove, etc.) won't be
+					// found in the element scope, allowing them to fall through to global scope
+					handlerCode := fmt.Sprintf(`(function(__handler_el__) {
+						return function(event) {
+							with (__handler_el__) {
+								%s
+							}
+						};
+					})`, value)
+
+					handlerFactory, err := vm.RunString(handlerCode)
+					if err == nil {
+						// Call the factory with the element to bind it
+						factory, _ := goja.AssertFunction(handlerFactory)
+						if factory != nil {
+							handlerVal, callErr := factory(goja.Undefined(), jsEl)
+							if callErr == nil {
+								// Set the event handler via the property
+								jsEl.Set(attr, handlerVal)
+							}
+						}
+					}
+					// Still set the attribute on the element
+					break
+				}
+			}
+		}
+
 		if err := el.SetAttributeWithError(name, value); err != nil {
 			if domErr, ok := err.(*dom.DOMError); ok {
 				b.throwDOMError(vm, domErr)
@@ -3537,6 +3602,12 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 
 	// Bind common node properties and methods
 	b.bindNodeProperties(jsEl, node)
+
+	// Add event handler IDL attributes (onclick, onload, etc.)
+	// Only for HTML elements, per spec
+	if ns == dom.HTMLNamespace {
+		b.bindEventHandlerAttributes(jsEl)
+	}
 
 	// Cache the binding
 	b.nodeMap[node] = jsEl
@@ -8642,4 +8713,107 @@ func (b *DOMBinder) BindDOMRectList(list *dom.DOMRectList) goja.Value {
 	}
 
 	return jsList
+}
+
+// Event handler attribute names (GlobalEventHandlers + WindowEventHandlers + DocumentAndElementEventHandlers)
+var eventHandlerAttributes = []string{
+	// GlobalEventHandlers
+	"onabort", "onauxclick", "onbeforeinput", "onbeforetoggle", "onblur", "oncancel",
+	"oncanplay", "oncanplaythrough", "onchange", "onclick", "onclose", "oncontextlost",
+	"oncontextmenu", "oncontextrestored", "oncopy", "oncuechange", "oncut", "ondblclick",
+	"ondrag", "ondragend", "ondragenter", "ondragleave", "ondragover", "ondragstart",
+	"ondrop", "ondurationchange", "onemptied", "onended", "onerror", "onfocus",
+	"onformdata", "ongotpointercapture", "oninput", "oninvalid", "onkeydown", "onkeypress",
+	"onkeyup", "onload", "onloadeddata", "onloadedmetadata", "onloadstart",
+	"onlostpointercapture", "onmousedown", "onmouseenter", "onmouseleave", "onmousemove",
+	"onmouseout", "onmouseover", "onmouseup", "onpaste", "onpause", "onplay", "onplaying",
+	"onpointercancel", "onpointerdown", "onpointerenter", "onpointerleave", "onpointermove",
+	"onpointerout", "onpointerover", "onpointerup", "onprogress", "onratechange", "onreset",
+	"onresize", "onscroll", "onscrollend", "onsecuritypolicyviolation", "onseeked",
+	"onseeking", "onselect", "onslotchange", "onstalled", "onsubmit", "onsuspend",
+	"ontimeupdate", "ontoggle", "onvolumechange", "onwaiting", "onwebkitanimationend",
+	"onwebkitanimationiteration", "onwebkitanimationstart", "onwebkittransitionend",
+	"onwheel",
+	// WindowEventHandlers (subset that applies to elements via body/frameset)
+	"onafterprint", "onbeforeprint", "onbeforeunload", "onhashchange", "onlanguagechange",
+	"onmessage", "onmessageerror", "onoffline", "ononline", "onpagehide", "onpageshow",
+	"onpopstate", "onrejectionhandled", "onstorage", "onunhandledrejection", "onunload",
+}
+
+// bindEventHandlerAttributes adds event handler IDL attributes (onclick, onload, etc.) to a JS object.
+// This implements the HTML spec's event handler content attributes and IDL attributes.
+func (b *DOMBinder) bindEventHandlerAttributes(jsObj *goja.Object) {
+	vm := b.runtime.vm
+
+	// Initialize handler storage for this object
+	if _, exists := b.eventHandlers[jsObj]; !exists {
+		b.eventHandlers[jsObj] = make(map[string]goja.Value)
+	}
+
+	for _, attrName := range eventHandlerAttributes {
+		eventType := strings.TrimPrefix(attrName, "on")
+		attrNameCopy := attrName
+		eventTypeCopy := eventType
+
+		// Define getter and setter for the event handler property
+		jsObj.DefineAccessorProperty(attrNameCopy,
+			// Getter
+			vm.ToValue(func(call goja.FunctionCall) goja.Value {
+				handlers := b.eventHandlers[jsObj]
+				if handlers == nil {
+					return goja.Null()
+				}
+				handler, exists := handlers[eventTypeCopy]
+				if !exists {
+					return goja.Null()
+				}
+				return handler
+			}),
+			// Setter
+			vm.ToValue(func(call goja.FunctionCall) goja.Value {
+				handlers := b.eventHandlers[jsObj]
+				if handlers == nil {
+					handlers = make(map[string]goja.Value)
+					b.eventHandlers[jsObj] = handlers
+				}
+
+				// Remove old handler if exists
+				if oldHandler, exists := handlers[eventTypeCopy]; exists && oldHandler != nil && !goja.IsNull(oldHandler) {
+					// Remove the old event listener
+					if b.eventBinder != nil {
+						target := b.eventBinder.GetOrCreateTarget(jsObj)
+						target.RemoveEventListener(eventTypeCopy, oldHandler, false)
+					}
+				}
+
+				if len(call.Arguments) == 0 || goja.IsNull(call.Arguments[0]) || goja.IsUndefined(call.Arguments[0]) {
+					// Clear the handler
+					delete(handlers, eventTypeCopy)
+					return goja.Undefined()
+				}
+
+				newHandler := call.Arguments[0]
+
+				// Check if the value is callable
+				callable, ok := goja.AssertFunction(newHandler)
+				if !ok {
+					// Per spec, non-function values are ignored (handler set to null)
+					delete(handlers, eventTypeCopy)
+					return goja.Undefined()
+				}
+
+				// Store the handler
+				handlers[eventTypeCopy] = newHandler
+
+				// Add as event listener
+				if b.eventBinder != nil {
+					target := b.eventBinder.GetOrCreateTarget(jsObj)
+					target.AddEventListener(eventTypeCopy, callable, newHandler, listenerOptions{})
+				}
+
+				return goja.Undefined()
+			}),
+			goja.FLAG_FALSE, goja.FLAG_TRUE,
+		)
+	}
 }
