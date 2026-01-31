@@ -2,7 +2,14 @@ package dom
 
 import (
 	"strings"
+	"unsafe"
 )
+
+// unsafePointer returns an unsafe.Pointer for a node.
+// Used for consistent ordering of disconnected nodes.
+func unsafePointer(n *Node) unsafe.Pointer {
+	return unsafe.Pointer(n)
+}
 
 // Node represents a node in the DOM tree. It is the base interface from which
 // Document, Element, Text, Comment, and other node types inherit.
@@ -1065,6 +1072,11 @@ func (n *Node) CompareDocumentPosition(other *Node) uint16 {
 	root1 := n.GetRootNode()
 	root2 := other.GetRootNode()
 	if root1 != root2 {
+		// For disconnected nodes, we need to provide a consistent ordering.
+		// Use pointer comparison for consistency.
+		if uintptr(unsafePointer(n)) < uintptr(unsafePointer(other)) {
+			return DocumentPositionDisconnected | DocumentPositionImplementationSpecific | DocumentPositionFollowing
+		}
 		return DocumentPositionDisconnected | DocumentPositionImplementationSpecific | DocumentPositionPreceding
 	}
 
@@ -1076,9 +1088,74 @@ func (n *Node) CompareDocumentPosition(other *Node) uint16 {
 		return DocumentPositionContains | DocumentPositionPreceding
 	}
 
-	// Find the document order by traversing
-	// This is a simplified implementation
-	return DocumentPositionPreceding // Placeholder
+	// Neither node contains the other, so we need to find their relative
+	// position in tree order (pre-order depth-first traversal).
+	// Find the common ancestor and compare positions.
+	if n.precedesInTreeOrder(other) {
+		return DocumentPositionFollowing
+	}
+	return DocumentPositionPreceding
+}
+
+// precedesInTreeOrder returns true if n comes before other in tree order
+// (pre-order depth-first traversal). This assumes both nodes are in the
+// same tree and neither contains the other.
+func (n *Node) precedesInTreeOrder(other *Node) bool {
+	// Build the ancestor chains for both nodes
+	var nAncestors []*Node
+	for node := n; node != nil; node = node.parentNode {
+		nAncestors = append(nAncestors, node)
+	}
+
+	var otherAncestors []*Node
+	for node := other; node != nil; node = node.parentNode {
+		otherAncestors = append(otherAncestors, node)
+	}
+
+	// Find the common ancestor by walking from the roots
+	// The chains are in child-to-root order, so reverse iterate
+	nLen := len(nAncestors)
+	otherLen := len(otherAncestors)
+
+	// Find where the ancestor chains diverge
+	minLen := nLen
+	if otherLen < minLen {
+		minLen = otherLen
+	}
+
+	divergePoint := 0
+	for i := 0; i < minLen; i++ {
+		nIdx := nLen - 1 - i
+		otherIdx := otherLen - 1 - i
+		if nAncestors[nIdx] != otherAncestors[otherIdx] {
+			break
+		}
+		divergePoint = i + 1
+	}
+
+	// Get the children of the common ancestor that lead to each node
+	var nChild, otherChild *Node
+	if divergePoint < nLen {
+		nChild = nAncestors[nLen-1-divergePoint]
+	}
+	if divergePoint < otherLen {
+		otherChild = otherAncestors[otherLen-1-divergePoint]
+	}
+
+	// Compare sibling order
+	// Find which child comes first among the common ancestor's children
+	commonAncestor := nAncestors[nLen-divergePoint]
+	for child := commonAncestor.firstChild; child != nil; child = child.nextSibling {
+		if child == nChild {
+			return true // n's branch comes first
+		}
+		if child == otherChild {
+			return false // other's branch comes first
+		}
+	}
+
+	// This shouldn't happen if both nodes are in the same tree
+	return false
 }
 
 // IsSameNode returns true if this node is the same node as the given node.
