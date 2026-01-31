@@ -295,6 +295,8 @@ func (n *Node) collectTextContent(sb *strings.Builder) {
 
 // SetTextContent sets the text content of the node.
 // For elements and document fragments, this replaces all children with a single text node.
+// Per the DOM spec, this operation generates a single mutation record containing
+// all removed nodes and the added text node (if any).
 func (n *Node) SetTextContent(value string) {
 	switch n.nodeType {
 	case DocumentNode, DocumentTypeNode:
@@ -303,16 +305,128 @@ func (n *Node) SetTextContent(value string) {
 	case TextNode, CommentNode, ProcessingInstructionNode, CDATASectionNode:
 		n.SetNodeValue(value)
 	default:
-		// Remove all children
-		for n.firstChild != nil {
-			n.RemoveChild(n.firstChild)
+		// Collect all children to remove
+		var removedNodes []*Node
+		for child := n.firstChild; child != nil; child = child.nextSibling {
+			removedNodes = append(removedNodes, child)
 		}
-		// Add a new text node if value is not empty
+
+		// Capture sibling info before modifications (there are no previous siblings since we're replacing all)
+		var prevSib *Node // nil since we're removing from the beginning
+		var nextSib *Node // nil since we're removing everything
+
+		// Remove all children without individual notifications
+		for n.firstChild != nil {
+			n.removeChildInternal(n.firstChild)
+		}
+
+		// Create and add a new text node if value is not empty
+		var addedNodes []*Node
 		if value != "" {
 			textNode := n.ownerDoc.CreateTextNode(value)
-			n.AppendChild(textNode)
+			n.insertBeforeInternal(textNode, nil)
+			addedNodes = append(addedNodes, textNode)
+		}
+
+		// Send a single mutation notification for the entire operation
+		if len(removedNodes) > 0 || len(addedNodes) > 0 {
+			notifyChildListMutation(n, addedNodes, removedNodes, prevSib, nextSib)
 		}
 	}
+}
+
+// replaceChildrenImpl implements the ParentNode.replaceChildren() algorithm.
+// Per DOM spec, this generates a single mutation record for the parent containing
+// all removed children and all added nodes. Nodes that are moved from other parents
+// generate separate removal records for those parents.
+func (n *Node) replaceChildrenImpl(items []interface{}) error {
+	doc := n.ownerDoc
+	if doc == nil && n.nodeType == DocumentNode {
+		doc = (*Document)(n)
+	}
+	if doc == nil {
+		return nil
+	}
+
+	// Step 1: Convert items into nodes (creating text nodes for strings)
+	var nodesToAdd []*Node
+	for _, item := range items {
+		switch v := item.(type) {
+		case *Node:
+			nodesToAdd = append(nodesToAdd, v)
+		case *Element:
+			nodesToAdd = append(nodesToAdd, v.AsNode())
+		case string:
+			nodesToAdd = append(nodesToAdd, doc.CreateTextNode(v))
+		}
+	}
+
+	// Step 2: Validate the insertion BEFORE any mutations
+	// Create a temporary fragment if we have multiple nodes to validate
+	if len(nodesToAdd) > 0 {
+		if len(nodesToAdd) == 1 {
+			if err := n.validatePreInsertion(nodesToAdd[0], nil); err != nil {
+				return err
+			}
+		} else {
+			// Validate each node individually
+			for _, node := range nodesToAdd {
+				if err := n.validatePreInsertion(node, nil); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	// Step 3: Remove nodes from their current parents (with individual notifications)
+	// This must happen before we collect removedNodes from this parent
+	for _, node := range nodesToAdd {
+		if node.parentNode != nil && node.parentNode != n {
+			// Capture sibling info for the removal notification
+			nodePrevSib := node.prevSibling
+			nodeNextSib := node.nextSibling
+			oldParent := node.parentNode
+
+			// Remove from old parent
+			oldParent.removeChildInternal(node)
+
+			// Notify about the removal from the old position
+			notifyChildListMutation(oldParent, nil, []*Node{node}, nodePrevSib, nodeNextSib)
+		}
+	}
+
+	// Step 4: Collect all children to remove from this parent
+	var removedNodes []*Node
+	for child := n.firstChild; child != nil; child = child.nextSibling {
+		// Don't add nodes that are being re-added
+		isBeingAdded := false
+		for _, node := range nodesToAdd {
+			if child == node {
+				isBeingAdded = true
+				break
+			}
+		}
+		if !isBeingAdded {
+			removedNodes = append(removedNodes, child)
+		}
+	}
+
+	// Step 5: Remove all children from this parent (without notifications)
+	for n.firstChild != nil {
+		n.removeChildInternal(n.firstChild)
+	}
+
+	// Step 6: Insert all new nodes (without notifications)
+	for _, node := range nodesToAdd {
+		n.insertBeforeInternal(node, nil)
+	}
+
+	// Step 7: Send a single mutation notification for this parent
+	if len(removedNodes) > 0 || len(nodesToAdd) > 0 {
+		notifyChildListMutation(n, nodesToAdd, removedNodes, nil, nil)
+	}
+
+	return nil
 }
 
 // AppendChild adds a node to the end of the list of children of this node.
@@ -839,10 +953,6 @@ func (n *Node) ReplaceChildWithError(newChild, oldChild *Node) (*Node, error) {
 		return oldChild, nil
 	}
 
-	// Capture sibling info before any modifications for mutation notification
-	prevSib := oldChild.prevSibling
-	nextSib := oldChild.nextSibling
-
 	// Get the next sibling of oldChild before any tree modifications
 	referenceChild := oldChild.nextSibling
 
@@ -854,6 +964,10 @@ func (n *Node) ReplaceChildWithError(newChild, oldChild *Node) (*Node, error) {
 
 	// Handle DocumentFragment: insert all its children
 	if newChild.nodeType == DocumentFragmentNode {
+		// Capture sibling info before any modifications for mutation notification
+		prevSib := oldChild.prevSibling
+		nextSib := oldChild.nextSibling
+
 		// Collect all children first
 		var children []*Node
 		for child := newChild.firstChild; child != nil; child = child.nextSibling {
@@ -875,10 +989,27 @@ func (n *Node) ReplaceChildWithError(newChild, oldChild *Node) (*Node, error) {
 	}
 
 	// For non-DocumentFragment nodes:
-	// If newChild is already in the tree (same or different parent), remove it first
+	// If newChild is already in the tree, we need to remove it first.
+	// Per DOM spec, if the newChild has a parent, we generate a separate
+	// mutation record for its removal from the original position.
 	if newChild.parentNode != nil {
-		newChild.parentNode.removeChildInternal(newChild)
+		// Capture sibling info for the removal notification
+		newChildPrevSib := newChild.prevSibling
+		newChildNextSib := newChild.nextSibling
+		oldParent := newChild.parentNode
+
+		// Remove newChild from its current position
+		oldParent.removeChildInternal(newChild)
+
+		// Notify about the removal from the old position
+		notifyChildListMutation(oldParent, nil, []*Node{newChild}, newChildPrevSib, newChildNextSib)
 	}
+
+	// Capture sibling info for the replacement notification AFTER removing newChild.
+	// This ensures we capture the correct siblings reflecting the tree state
+	// after the source removal but before the target replacement.
+	prevSib := oldChild.prevSibling
+	nextSib := oldChild.nextSibling
 
 	// Remove the old child from its parent
 	n.removeChildInternal(oldChild)

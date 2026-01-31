@@ -252,13 +252,32 @@ func (mo *MutationObserver) queueRecord(record MutationRecord) {
 	mo.pendingRecords = append(mo.pendingRecords, record)
 
 	// Schedule callback if not already scheduled
-	if !mo.isScheduled && mo.eventLoop != nil {
+	if !mo.isScheduled {
 		mo.isScheduled = true
-		// Create the callback wrapper that will be called as a microtask
-		wrapper := func(this goja.Value, args ...goja.Value) (goja.Value, error) {
-			return mo.deliverRecords()
+		// Use Promise.resolve().then() to schedule the callback as a microtask.
+		// This integrates with goja's internal Promise job queue so that
+		// mutation callbacks run when await Promise.resolve() is called.
+		deliverFunc := mo.vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			mo.deliverRecords()
+			return goja.Undefined()
+		})
+
+		// Get Promise constructor and call Promise.resolve().then(deliverFunc)
+		promiseVal := mo.vm.Get("Promise")
+		if promiseVal != nil && !goja.IsUndefined(promiseVal) {
+			promiseObj := promiseVal.ToObject(mo.vm)
+			resolveMethod, _ := goja.AssertFunction(promiseObj.Get("resolve"))
+			if resolveMethod != nil {
+				resolved, _ := resolveMethod(promiseObj)
+				if resolved != nil && !goja.IsUndefined(resolved) {
+					resolvedObj := resolved.ToObject(mo.vm)
+					thenMethod, _ := goja.AssertFunction(resolvedObj.Get("then"))
+					if thenMethod != nil {
+						thenMethod(resolvedObj, deliverFunc)
+					}
+				}
+			}
 		}
-		mo.eventLoop.queueMicrotask(goja.Callable(wrapper), nil)
 	}
 }
 

@@ -647,32 +647,10 @@ func (d *Document) ReplaceChildren(nodes ...interface{}) {
 // Returns an error if any validation fails (e.g., HierarchyRequestError).
 // Implements the ParentNode.replaceChildren() algorithm from the DOM spec.
 // Per spec, validation happens BEFORE any children are removed.
+// Per spec, this generates a single mutation record for the parent containing
+// all removed children and all added nodes.
 func (d *Document) ReplaceChildrenWithError(nodes ...interface{}) error {
-	// Step 1: Convert nodes/strings into a single node (or document fragment)
-	var node *Node
-	if len(nodes) > 0 {
-		node = d.AsNode().convertNodesToFragment(nodes)
-	}
-
-	// Step 2: Validate the insertion BEFORE removing any children
-	// This ensures we throw HierarchyRequestError before any mutation
-	if node != nil {
-		if err := d.AsNode().validatePreInsertion(node, nil); err != nil {
-			return err
-		}
-	}
-
-	// Step 3: Remove all existing children
-	for d.AsNode().firstChild != nil {
-		d.AsNode().RemoveChild(d.AsNode().firstChild)
-	}
-
-	// Step 4: Insert the new node(s)
-	if node != nil {
-		d.AsNode().AppendChild(node)
-	}
-
-	return nil
+	return d.AsNode().replaceChildrenImpl(nodes)
 }
 
 // ImportNode imports a node from another document.
