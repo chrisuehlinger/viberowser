@@ -19,6 +19,7 @@ type Range struct {
 }
 
 // NewRange creates a new Range with both boundary points set to the document.
+// The Range is automatically registered for live mutation tracking.
 func NewRange(doc *Document) *Range {
 	r := &Range{
 		startContainer: doc.AsNode(),
@@ -27,6 +28,8 @@ func NewRange(doc *Document) *Range {
 		endOffset:      0,
 		ownerDocument:  doc,
 	}
+	// Register this range for live mutation tracking
+	registerRange(r)
 	return r
 }
 
@@ -581,14 +584,18 @@ func (r *Range) SurroundContents(newParent *Node) error {
 }
 
 // CloneRange returns a copy of this range.
+// The cloned Range is also registered for live mutation tracking.
 func (r *Range) CloneRange() *Range {
-	return &Range{
+	clone := &Range{
 		startContainer: r.startContainer,
 		startOffset:    r.startOffset,
 		endContainer:   r.endContainer,
 		endOffset:      r.endOffset,
 		ownerDocument:  r.ownerDocument,
 	}
+	// Register the cloned range for live mutation tracking
+	registerRange(clone)
+	return clone
 }
 
 // Detach is a no-op per the current DOM specification.

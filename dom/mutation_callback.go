@@ -21,9 +21,20 @@ type MutationCallback interface {
 	)
 
 	// OnCharacterDataMutation is called when character data is changed.
+	// This is typically called for full data replacement (e.g., setting nodeValue).
 	OnCharacterDataMutation(
 		target *Node,
 		oldValue string,
+	)
+
+	// OnReplaceData is called when the "replace data" algorithm is invoked.
+	// This provides the specific offset, count, and replacement data needed
+	// for precise Range boundary point adjustments per the DOM spec.
+	OnReplaceData(
+		target *Node,
+		offset int,
+		count int,
+		data string,
 	)
 }
 
@@ -101,5 +112,33 @@ func notifyCharacterDataMutation(
 	callbacks := mutationCallbacks[target.ownerDoc]
 	for _, cb := range callbacks {
 		cb.OnCharacterDataMutation(target, oldValue)
+	}
+}
+
+// notifyReplaceData notifies all registered callbacks about a "replace data" operation.
+// This is used for insertData, deleteData, replaceData, and substringData operations.
+func notifyReplaceData(
+	target *Node,
+	offset int,
+	count int,
+	data string,
+) {
+	NotifyReplaceData(target, offset, count, data)
+}
+
+// NotifyReplaceData notifies all registered callbacks about a "replace data" operation.
+// This is exported for use by JavaScript bindings that need to trigger range mutations.
+func NotifyReplaceData(
+	target *Node,
+	offset int,
+	count int,
+	data string,
+) {
+	if target == nil || target.ownerDoc == nil {
+		return
+	}
+	callbacks := mutationCallbacks[target.ownerDoc]
+	for _, cb := range callbacks {
+		cb.OnReplaceData(target, offset, count, data)
 	}
 }

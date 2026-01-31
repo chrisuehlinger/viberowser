@@ -499,3 +499,212 @@ func TestRange_IntersectsNode(t *testing.T) {
 		t.Error("Range should not intersect span4 (completely after range)")
 	}
 }
+
+// Tests for Range live mutation tracking
+
+func TestRange_MutationAppendChild(t *testing.T) {
+	// Test that Range boundary points update when appendChild moves a node
+	doc := NewDocument()
+	div := doc.CreateElement("div")
+	doc.AsNode().AppendChild(div.AsNode())
+
+	// Create children: [span0, span1, span2]
+	span0 := doc.CreateElement("span")
+	span1 := doc.CreateElement("span")
+	span2 := doc.CreateElement("span")
+	div.AsNode().AppendChild(span0.AsNode())
+	div.AsNode().AppendChild(span1.AsNode())
+	div.AsNode().AppendChild(span2.AsNode())
+
+	// Create a range from (div, 0) to (div, 2)
+	r := doc.CreateRange()
+	r.SetStart(div.AsNode(), 0)
+	r.SetEnd(div.AsNode(), 2)
+
+	// Before: div has [span0, span1, span2], range is (div, 0) to (div, 2)
+	if r.StartOffset() != 0 {
+		t.Errorf("Initial start offset should be 0, got %d", r.StartOffset())
+	}
+	if r.EndOffset() != 2 {
+		t.Errorf("Initial end offset should be 2, got %d", r.EndOffset())
+	}
+
+	// Move span1 to the end (removes from index 1, appends at end)
+	div.AsNode().AppendChild(span1.AsNode())
+
+	// After moving span1 from index 1 to end:
+	// First, span1 is removed from index 1 (end offset 2 > 1, so becomes 1)
+	// Then, span1 is inserted at index 2 (end offset 1 is not > 2, so stays 1)
+	// Result: range should be (div, 0) to (div, 1)
+	if r.StartOffset() != 0 {
+		t.Errorf("After move, start offset should be 0, got %d", r.StartOffset())
+	}
+	if r.EndOffset() != 1 {
+		t.Errorf("After move, end offset should be 1, got %d", r.EndOffset())
+	}
+}
+
+func TestRange_MutationRemoveChild(t *testing.T) {
+	// Test that Range boundary points update when removeChild removes a node
+	doc := NewDocument()
+	div := doc.CreateElement("div")
+	doc.AsNode().AppendChild(div.AsNode())
+
+	// Create children: [span0, span1, span2]
+	span0 := doc.CreateElement("span")
+	span1 := doc.CreateElement("span")
+	span2 := doc.CreateElement("span")
+	div.AsNode().AppendChild(span0.AsNode())
+	div.AsNode().AppendChild(span1.AsNode())
+	div.AsNode().AppendChild(span2.AsNode())
+
+	// Create a range with end at (div, 2)
+	r := doc.CreateRange()
+	r.SetStart(div.AsNode(), 0)
+	r.SetEnd(div.AsNode(), 2)
+
+	// Remove span0 (index 0)
+	div.AsNode().RemoveChild(span0.AsNode())
+
+	// End offset 2 > removed index 0, so end offset becomes 1
+	if r.EndOffset() != 1 {
+		t.Errorf("After removing span0, end offset should be 1, got %d", r.EndOffset())
+	}
+}
+
+func TestRange_MutationInsertBefore(t *testing.T) {
+	// Test that Range boundary points update when insertBefore adds a node
+	doc := NewDocument()
+	div := doc.CreateElement("div")
+	doc.AsNode().AppendChild(div.AsNode())
+
+	// Create children: [span0, span1]
+	span0 := doc.CreateElement("span")
+	span1 := doc.CreateElement("span")
+	div.AsNode().AppendChild(span0.AsNode())
+	div.AsNode().AppendChild(span1.AsNode())
+
+	// Create a range with start/end at (div, 1)
+	r := doc.CreateRange()
+	r.SetStart(div.AsNode(), 1)
+	r.SetEnd(div.AsNode(), 2)
+
+	// Insert a new span before span1 (at index 1)
+	newSpan := doc.CreateElement("span")
+	div.AsNode().InsertBefore(newSpan.AsNode(), span1.AsNode())
+
+	// Start offset 1 > new index 1? No (1 is not > 1), so stays 1
+	// End offset 2 > new index 1? Yes, so becomes 3
+	if r.StartOffset() != 1 {
+		t.Errorf("After insert, start offset should still be 1, got %d", r.StartOffset())
+	}
+	if r.EndOffset() != 3 {
+		t.Errorf("After insert, end offset should be 3, got %d", r.EndOffset())
+	}
+}
+
+func TestRange_MutationRemoveContainingNode(t *testing.T) {
+	// Test that Range updates when the node containing the boundary point is removed
+	doc := NewDocument()
+	div := doc.CreateElement("div")
+	doc.AsNode().AppendChild(div.AsNode())
+
+	span := doc.CreateElement("span")
+	div.AsNode().AppendChild(span.AsNode())
+
+	text := doc.CreateTextNode("Hello")
+	span.AsNode().AppendChild(text)
+
+	// Create a range inside the text node
+	r := doc.CreateRange()
+	r.SetStart(text, 2)
+	r.SetEnd(text, 4)
+
+	// Remove the span (which contains the text node)
+	div.AsNode().RemoveChild(span.AsNode())
+
+	// Range should be updated to (div, 0) since span was at index 0
+	if r.StartContainer() != div.AsNode() {
+		t.Error("After removing containing node, start container should be div")
+	}
+	if r.StartOffset() != 0 {
+		t.Errorf("After removing containing node, start offset should be 0, got %d", r.StartOffset())
+	}
+	if r.EndContainer() != div.AsNode() {
+		t.Error("After removing containing node, end container should be div")
+	}
+	if r.EndOffset() != 0 {
+		t.Errorf("After removing containing node, end offset should be 0, got %d", r.EndOffset())
+	}
+}
+
+func TestRange_MutationCharacterData(t *testing.T) {
+	// Test that Range updates when character data changes
+	doc := NewDocument()
+	div := doc.CreateElement("div")
+	doc.AsNode().AppendChild(div.AsNode())
+
+	text := doc.CreateTextNode("Hello World")
+	div.AsNode().AppendChild(text)
+
+	// Create a range in the text node from 6 to 11 ("World")
+	r := doc.CreateRange()
+	r.SetStart(text, 6)
+	r.SetEnd(text, 11)
+
+	// Change the text content to something shorter
+	text.SetNodeValue("Hi")
+
+	// Per DOM spec "replace data" algorithm for full replacement (offset=0, count=oldLength):
+	// - For offsets > 0 and <= oldLength, set offset to 0 (the replacement offset)
+	// - Start offset 6 is in range (0, 11], so becomes 0
+	// - End offset 11 is in range (0, 11], so becomes 0
+	if r.StartOffset() != 0 {
+		t.Errorf("After text change, start offset should be 0, got %d", r.StartOffset())
+	}
+	if r.EndOffset() != 0 {
+		t.Errorf("After text change, end offset should be 0, got %d", r.EndOffset())
+	}
+}
+
+func TestRange_MutationMoveWithinParent(t *testing.T) {
+	// Test the specific case from WPT: testDiv.appendChild(testDiv.lastChild)
+	// when range is set to (lastChild, 0)
+	doc := NewDocument()
+	div := doc.CreateElement("div")
+	doc.AsNode().AppendChild(div.AsNode())
+
+	// Create children: [span0, span1, comment]
+	span0 := doc.CreateElement("span")
+	span1 := doc.CreateElement("span")
+	comment := doc.CreateComment("test comment")
+	div.AsNode().AppendChild(span0.AsNode())
+	div.AsNode().AppendChild(span1.AsNode())
+	div.AsNode().AppendChild(comment)
+
+	// Create range at (comment, 0) - on the lastChild
+	r := doc.CreateRange()
+	r.SetStart(comment, 0)
+	r.SetEnd(comment, 0)
+
+	if r.StartContainer() != comment {
+		t.Errorf("Initial startContainer should be comment, got %v", r.StartContainer().NodeName())
+	}
+
+	// Move the lastChild to the end (appendChild moves it)
+	div.AsNode().AppendChild(comment)
+
+	// Per DOM spec: when a node is removed, ranges with boundary points on that node
+	// should be updated to (parent, oldIndex). The comment was at index 2.
+	// After removal from index 2, it's reinserted at the end (still index 2 since same count).
+	// But during the removal, the range should have been updated to (div, 2).
+	// Then during insertion at index 2, offset 2 is NOT > 2, so no change.
+	// Final: (div, 2)
+
+	if r.StartContainer() != div.AsNode() {
+		t.Errorf("After move, startContainer should be div, got %v (nodeName: %s)", r.StartContainer(), r.StartContainer().NodeName())
+	}
+	if r.StartOffset() != 2 {
+		t.Errorf("After move, startOffset should be 2, got %d", r.StartOffset())
+	}
+}

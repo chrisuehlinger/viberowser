@@ -166,6 +166,8 @@ func (n *Node) SetNodeValue(value string) {
 			*n.textData = value
 		}
 		n.nodeValue = &value
+		// Notify as a full replacement (offset=0, count=oldLength)
+		NotifyReplaceData(n, 0, len(oldValue), value)
 		notifyCharacterDataMutation(n, oldValue)
 	case CommentNode:
 		if n.commentData != nil {
@@ -173,12 +175,16 @@ func (n *Node) SetNodeValue(value string) {
 			*n.commentData = value
 		}
 		n.nodeValue = &value
+		// Notify as a full replacement (offset=0, count=oldLength)
+		NotifyReplaceData(n, 0, len(oldValue), value)
 		notifyCharacterDataMutation(n, oldValue)
 	case ProcessingInstructionNode:
 		if n.nodeValue != nil {
 			oldValue = *n.nodeValue
 		}
 		n.nodeValue = &value
+		// Notify as a full replacement (offset=0, count=oldLength)
+		NotifyReplaceData(n, 0, len(oldValue), value)
 		notifyCharacterDataMutation(n, oldValue)
 	}
 	// For other node types, this is a no-op per the spec
@@ -744,17 +750,18 @@ func (n *Node) insertBefore(newChild, refChild *Node) *Node {
 		return newChild
 	}
 
-	// Get sibling info before any modifications for mutation notification
+	// Remove from current parent if necessary (this will trigger its own mutation notification)
+	if newChild.parentNode != nil {
+		newChild.parentNode.RemoveChild(newChild)
+	}
+
+	// Get sibling info AFTER removal for mutation notification
+	// This is important when moving a node within the same parent
 	var prevSib *Node
 	if refChild != nil {
 		prevSib = refChild.prevSibling
 	} else {
 		prevSib = n.lastChild
-	}
-
-	// Remove from current parent if necessary (this will trigger its own mutation notification)
-	if newChild.parentNode != nil {
-		newChild.parentNode.RemoveChild(newChild)
 	}
 
 	// Set the new parent
@@ -966,11 +973,6 @@ func (n *Node) ReplaceChildWithError(newChild, oldChild *Node) (*Node, error) {
 		return nil, err
 	}
 
-	// If replacing a node with itself, do nothing (just return the node)
-	if newChild == oldChild {
-		return oldChild, nil
-	}
-
 	// Get the next sibling of oldChild before any tree modifications
 	referenceChild := oldChild.nextSibling
 
@@ -978,6 +980,30 @@ func (n *Node) ReplaceChildWithError(newChild, oldChild *Node) (*Node, error) {
 	// After removing newChild, referenceChild would become invalid
 	if referenceChild == newChild {
 		referenceChild = newChild.nextSibling
+	}
+
+	// Special case: replacing a node with itself
+	// Per DOM spec, this should still trigger remove + insert mutations
+	// https://dom.spec.whatwg.org/#concept-node-replace
+	if newChild == oldChild {
+		// Capture sibling info before removal
+		prevSib := oldChild.prevSibling
+		nextSib := oldChild.nextSibling
+
+		// Remove the node
+		n.removeChildInternal(oldChild)
+
+		// Notify about removal
+		notifyChildListMutation(n, nil, []*Node{oldChild}, prevSib, nextSib)
+
+		// Insert it back at the same position
+		n.insertBeforeInternal(newChild, referenceChild)
+
+		// Notify about insertion - prevSib and nextSib reflect state after removal
+		// but before insertion, which is what the mutation callback expects
+		notifyChildListMutation(n, []*Node{newChild}, nil, prevSib, nextSib)
+
+		return oldChild, nil
 	}
 
 	// Handle DocumentFragment: insert all its children

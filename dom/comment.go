@@ -48,7 +48,9 @@ func (c *Comment) SubstringData(offset, count int) string {
 
 // AppendData appends a string to the comment.
 func (c *Comment) AppendData(data string) {
-	c.SetData(c.Data() + data)
+	current := c.Data()
+	offset := len(current)
+	c.replaceDataInternal(offset, 0, data)
 }
 
 // InsertData inserts a string at the given offset.
@@ -60,7 +62,7 @@ func (c *Comment) InsertData(offset int, data string) {
 	if offset > len(current) {
 		offset = len(current)
 	}
-	c.SetData(current[:offset] + data + current[offset:])
+	c.replaceDataInternal(offset, 0, data)
 }
 
 // DeleteData deletes characters starting at the given offset.
@@ -69,11 +71,13 @@ func (c *Comment) DeleteData(offset, count int) {
 	if offset < 0 || offset >= len(current) {
 		return
 	}
-	end := offset + count
-	if end > len(current) {
-		end = len(current)
+	if count < 0 {
+		count = 0
 	}
-	c.SetData(current[:offset] + current[end:])
+	if offset+count > len(current) {
+		count = len(current) - offset
+	}
+	c.replaceDataInternal(offset, count, "")
 }
 
 // ReplaceData replaces characters starting at the given offset.
@@ -82,11 +86,27 @@ func (c *Comment) ReplaceData(offset, count int, data string) {
 	if offset < 0 || offset > len(current) {
 		return
 	}
+	if count < 0 {
+		count = 0
+	}
+	if offset+count > len(current) {
+		count = len(current) - offset
+	}
+	c.replaceDataInternal(offset, count, data)
+}
+
+// replaceDataInternal implements the DOM "replace data" algorithm.
+func (c *Comment) replaceDataInternal(offset, count int, data string) {
+	current := c.Data()
 	end := offset + count
 	if end > len(current) {
 		end = len(current)
 	}
-	c.SetData(current[:offset] + data + current[end:])
+
+	notifyReplaceData(c.AsNode(), offset, count, data)
+
+	newValue := current[:offset] + data + current[end:]
+	c.AsNode().nodeValue = &newValue
 }
 
 // CloneNode clones this comment node.

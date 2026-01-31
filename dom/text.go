@@ -63,11 +63,15 @@ func (t *Text) SubstringData(offset, count int) string {
 }
 
 // AppendData appends a string to the text.
+// This is equivalent to insertData(length, data).
 func (t *Text) AppendData(data string) {
-	t.SetData(t.Data() + data)
+	current := t.Data()
+	offset := len(current)
+	t.replaceDataInternal(offset, 0, data)
 }
 
 // InsertData inserts a string at the given offset.
+// This is equivalent to replaceData(offset, 0, data).
 func (t *Text) InsertData(offset int, data string) {
 	current := t.Data()
 	if offset < 0 {
@@ -76,20 +80,24 @@ func (t *Text) InsertData(offset int, data string) {
 	if offset > len(current) {
 		offset = len(current)
 	}
-	t.SetData(current[:offset] + data + current[offset:])
+	t.replaceDataInternal(offset, 0, data)
 }
 
 // DeleteData deletes characters starting at the given offset.
+// This is equivalent to replaceData(offset, count, "").
 func (t *Text) DeleteData(offset, count int) {
 	current := t.Data()
 	if offset < 0 || offset >= len(current) {
 		return
 	}
-	end := offset + count
-	if end > len(current) {
-		end = len(current)
+	if count < 0 {
+		count = 0
 	}
-	t.SetData(current[:offset] + current[end:])
+	// Clamp count to not exceed available characters
+	if offset+count > len(current) {
+		count = len(current) - offset
+	}
+	t.replaceDataInternal(offset, count, "")
 }
 
 // ReplaceData replaces characters starting at the given offset.
@@ -98,11 +106,32 @@ func (t *Text) ReplaceData(offset, count int, data string) {
 	if offset < 0 || offset > len(current) {
 		return
 	}
+	if count < 0 {
+		count = 0
+	}
+	// Clamp count to not exceed available characters
+	if offset+count > len(current) {
+		count = len(current) - offset
+	}
+	t.replaceDataInternal(offset, count, data)
+}
+
+// replaceDataInternal implements the DOM "replace data" algorithm.
+// It updates the data and notifies mutation callbacks with the specific offset/count/data.
+func (t *Text) replaceDataInternal(offset, count int, data string) {
+	current := t.Data()
 	end := offset + count
 	if end > len(current) {
 		end = len(current)
 	}
-	t.SetData(current[:offset] + data + current[end:])
+
+	// Notify ReplaceData mutation BEFORE changing the data
+	// This allows handlers to use the original data if needed
+	notifyReplaceData(t.AsNode(), offset, count, data)
+
+	// Update the data
+	newValue := current[:offset] + data + current[end:]
+	t.AsNode().nodeValue = &newValue
 }
 
 // SplitText splits this text node at the given offset.

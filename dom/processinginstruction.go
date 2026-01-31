@@ -61,7 +61,9 @@ func (pi *ProcessingInstruction) SubstringData(offset, count int) string {
 
 // AppendData appends a string to the data.
 func (pi *ProcessingInstruction) AppendData(data string) {
-	pi.SetData(pi.Data() + data)
+	current := pi.Data()
+	offset := len(current)
+	pi.replaceDataInternal(offset, 0, data)
 }
 
 // InsertData inserts a string at the given offset.
@@ -73,7 +75,7 @@ func (pi *ProcessingInstruction) InsertData(offset int, data string) {
 	if offset > len(current) {
 		offset = len(current)
 	}
-	pi.SetData(current[:offset] + data + current[offset:])
+	pi.replaceDataInternal(offset, 0, data)
 }
 
 // DeleteData deletes characters starting at the given offset.
@@ -82,11 +84,13 @@ func (pi *ProcessingInstruction) DeleteData(offset, count int) {
 	if offset < 0 || offset >= len(current) {
 		return
 	}
-	end := offset + count
-	if end > len(current) {
-		end = len(current)
+	if count < 0 {
+		count = 0
 	}
-	pi.SetData(current[:offset] + current[end:])
+	if offset+count > len(current) {
+		count = len(current) - offset
+	}
+	pi.replaceDataInternal(offset, count, "")
 }
 
 // ReplaceData replaces characters starting at the given offset.
@@ -95,11 +99,27 @@ func (pi *ProcessingInstruction) ReplaceData(offset, count int, data string) {
 	if offset < 0 || offset > len(current) {
 		return
 	}
+	if count < 0 {
+		count = 0
+	}
+	if offset+count > len(current) {
+		count = len(current) - offset
+	}
+	pi.replaceDataInternal(offset, count, data)
+}
+
+// replaceDataInternal implements the DOM "replace data" algorithm.
+func (pi *ProcessingInstruction) replaceDataInternal(offset, count int, data string) {
+	current := pi.Data()
 	end := offset + count
 	if end > len(current) {
 		end = len(current)
 	}
-	pi.SetData(current[:offset] + data + current[end:])
+
+	notifyReplaceData(pi.AsNode(), offset, count, data)
+
+	newValue := current[:offset] + data + current[end:]
+	pi.AsNode().nodeValue = &newValue
 }
 
 // CloneNode clones this processing instruction node.
