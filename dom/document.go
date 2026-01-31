@@ -240,10 +240,12 @@ func (d *Document) CreateElement(tagName string) *Element {
 // CreateElementWithError creates a new element with the given tag name.
 // Returns an InvalidCharacterError if the tag name is not a valid XML Name.
 // Per DOM spec: https://dom.spec.whatwg.org/#dom-document-createelement
+// Note: Browsers are more permissive than strict XML 1.0, so we use permissive validation.
 func (d *Document) CreateElementWithError(tagName string) (*Element, error) {
 	// Per DOM spec step 1: If localName does not match the Name production,
 	// throw an InvalidCharacterError DOMException.
-	if !isValidXMLName(tagName) {
+	// Note: We use permissive validation to match browser behavior.
+	if !isValidXMLNamePermissive(tagName) {
 		return nil, ErrInvalidCharacter("The string contains invalid characters.")
 	}
 

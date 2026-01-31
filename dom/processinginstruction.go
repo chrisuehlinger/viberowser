@@ -194,10 +194,8 @@ func NewProcessingInstructionNode(target, data string) *Node {
 	return node
 }
 
-// isValidXMLName checks if a string is a valid XML name.
-// Per XML spec, names must start with a letter, underscore, or colon,
-// and can contain letters, digits, hyphens, underscores, colons, and periods.
-// Note: DOM validation is more permissive than strict XML 1.0 to match browser behavior.
+// isValidXMLName checks if a string is a valid XML name per XML 1.0 spec.
+// Names must start with a NameStartChar and contain only NameChars.
 func isValidXMLName(name string) bool {
 	if name == "" {
 		return false
@@ -205,14 +203,14 @@ func isValidXMLName(name string) bool {
 
 	runes := []rune(name)
 
-	// Check first character - must be valid start char
+	// Check first character - must be valid NameStartChar
 	if !isXMLNameStartChar(runes[0]) {
 		return false
 	}
 
-	// Check remaining characters - more permissive than strict XML 1.0
+	// Check remaining characters - must be valid NameChar
 	for _, ch := range runes[1:] {
-		if !isXMLNameCharPermissive(ch) {
+		if !isXMLNameChar(ch) {
 			return false
 		}
 	}
@@ -220,39 +218,35 @@ func isValidXMLName(name string) bool {
 	return true
 }
 
-// isXMLNameCharPermissive checks if a rune is valid in the middle/end of an XML name.
-// This is more permissive than strict XML 1.0 to match browser behavior.
-// Characters that are definitely invalid anywhere: space, >, tab, newline
-func isXMLNameCharPermissive(ch rune) bool {
-	// Definitely invalid anywhere
-	if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '>' {
-		return false
-	}
-	// Everything else is allowed in middle/end of name per browser behavior
-	return true
-}
-
-// isXMLNameStartChar checks if a rune is a valid XML name start character.
-// This is more permissive than strict XML 1.0 to match browser behavior.
+// isXMLNameStartChar checks if a rune is a valid XML Name start character.
+// Per XML 1.0 spec:
+// NameStartChar ::= ":" | [A-Z] | "_" | [a-z] | [#xC0-#xD6] | [#xD8-#xF6] |
+//
+//	[#xF8-#x2FF] | [#x370-#x37D] | [#x37F-#x1FFF] | [#x200C-#x200D] |
+//	[#x2070-#x218F] | [#x2C00-#x2FEF] | [#x3001-#xD7FF] | [#xF900-#xFDCF] |
+//	[#xFDF0-#xFFFD] | [#x10000-#xEFFFF]
 func isXMLNameStartChar(ch rune) bool {
-	// Definitely invalid start characters - based on WPT tests
-	if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' ||
-		ch == '<' || ch == '>' || ch == '}' || ch == '{' ||
-		ch == '-' || ch == '.' || ch == '^' ||
-		ch == '~' || ch == '\'' || ch == '!' || ch == '@' ||
-		ch == '#' || ch == '$' || ch == '%' || ch == '&' ||
-		ch == '*' || ch == '(' || ch == ')' || ch == '+' ||
-		ch == '=' || ch == '[' || ch == ']' || ch == '\\' ||
-		ch == '/' || ch == ';' || ch == '`' || ch == ',' ||
-		ch == '"' ||
-		(ch >= '0' && ch <= '9') {
-		return false
-	}
-	// Everything else is allowed as start character per browser behavior
-	return true
+	return ch == ':' ||
+		(ch >= 'A' && ch <= 'Z') ||
+		ch == '_' ||
+		(ch >= 'a' && ch <= 'z') ||
+		(ch >= 0xC0 && ch <= 0xD6) ||
+		(ch >= 0xD8 && ch <= 0xF6) ||
+		(ch >= 0xF8 && ch <= 0x2FF) ||
+		(ch >= 0x370 && ch <= 0x37D) ||
+		(ch >= 0x37F && ch <= 0x1FFF) ||
+		(ch >= 0x200C && ch <= 0x200D) ||
+		(ch >= 0x2070 && ch <= 0x218F) ||
+		(ch >= 0x2C00 && ch <= 0x2FEF) ||
+		(ch >= 0x3001 && ch <= 0xD7FF) ||
+		(ch >= 0xF900 && ch <= 0xFDCF) ||
+		(ch >= 0xFDF0 && ch <= 0xFFFD) ||
+		(ch >= 0x10000 && ch <= 0xEFFFF)
 }
 
-// isXMLNameChar checks if a rune is a valid XML name character.
+// isXMLNameChar checks if a rune is a valid XML Name character.
+// Per XML 1.0 spec:
+// NameChar ::= NameStartChar | "-" | "." | [0-9] | #xB7 | [#x0300-#x036F] | [#x203F-#x2040]
 func isXMLNameChar(ch rune) bool {
 	return isXMLNameStartChar(ch) ||
 		ch == '-' ||
@@ -261,6 +255,54 @@ func isXMLNameChar(ch rune) bool {
 		ch == 0xB7 ||
 		(ch >= 0x0300 && ch <= 0x036F) ||
 		(ch >= 0x203F && ch <= 0x2040)
+}
+
+// isXMLNameCharPermissive checks if a rune is valid in an XML name using permissive rules.
+// This allows characters that browsers accept but strict XML 1.0 doesn't.
+func isXMLNameCharPermissive(ch rune) bool {
+	// Definitely invalid anywhere in a name
+	if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '>' {
+		return false
+	}
+	return true
+}
+
+// isXMLNameStartCharPermissive checks if a rune is valid at the start of an XML name
+// using permissive rules. Browsers reject certain chars at start but allow them elsewhere.
+func isXMLNameStartCharPermissive(ch rune) bool {
+	// Invalid at start of name (based on WPT tests)
+	if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' ||
+		ch == '<' || ch == '>' || ch == '}' ||
+		ch == '-' || ch == '.' ||
+		(ch >= '0' && ch <= '9') {
+		return false
+	}
+	return true
+}
+
+// isValidXMLNamePermissive checks if a string is a valid XML name using permissive rules.
+// This is used for createElement which browsers implement more permissively than strict XML.
+// Based on WPT test: dom/nodes/Document-createElement.html
+func isValidXMLNamePermissive(name string) bool {
+	if name == "" {
+		return false
+	}
+
+	runes := []rune(name)
+
+	// Check first character using permissive rules
+	if !isXMLNameStartCharPermissive(runes[0]) {
+		return false
+	}
+
+	// Check remaining characters
+	for _, ch := range runes[1:] {
+		if !isXMLNameCharPermissive(ch) {
+			return false
+		}
+	}
+
+	return true
 }
 
 // xmlNamePattern is a regex for valid XML names (simplified)
@@ -287,11 +329,11 @@ func ValidateProcessingInstructionData(data string) error {
 // isXMLNCNameStartChar checks if a rune is a valid NCName start character (no colon).
 // This is more permissive than strict XML 1.0 to match browser behavior.
 func isXMLNCNameStartChar(ch rune) bool {
-	// Same as NameStartChar but also excludes colon
+	// Same as permissive NameStartChar but also excludes colon
 	if ch == ':' {
 		return false
 	}
-	return isXMLNameStartChar(ch)
+	return isXMLNameStartCharPermissive(ch)
 }
 
 // isXMLNCNameChar checks if a rune is a valid NCName character (no colon).
@@ -457,8 +499,8 @@ func ValidateQualifiedNameWithNamespace(qualifiedName string, hasNamespace bool)
 			}
 		}
 	} else {
-		// No colon: must be valid XML Name
-		if !isValidXMLName(qualifiedName) {
+		// No colon: must be valid XML Name (using permissive rules to match browser behavior)
+		if !isValidXMLNamePermissive(qualifiedName) {
 			return ErrInvalidCharacter("The qualified name is not a valid XML name.")
 		}
 		// Also check it's not just ":"
@@ -483,8 +525,8 @@ func isValidNamePermissive(name string) bool {
 
 	runes := []rune(name)
 
-	// First character must be valid start char
-	if !isXMLNameStartChar(runes[0]) {
+	// First character - use permissive start char rules
+	if !isXMLNameStartCharPermissive(runes[0]) {
 		return false
 	}
 
