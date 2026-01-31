@@ -3427,6 +3427,19 @@ func (b *DOMBinder) getGoNode(obj *goja.Object) *dom.Node {
 	return nil
 }
 
+// getGoAttr extracts a Go Attr from a JavaScript Attr object.
+func (b *DOMBinder) getGoAttr(obj *goja.Object) *dom.Attr {
+	if obj == nil {
+		return nil
+	}
+	if v := obj.Get("_goAttr"); v != nil && !goja.IsUndefined(v) && !goja.IsNull(v) {
+		if attr, ok := v.Export().(*dom.Attr); ok {
+			return attr
+		}
+	}
+	return nil
+}
+
 // BindNodeList creates a JavaScript NodeList object.
 // The object is cached so that the same DOM NodeList returns the same JS object.
 func (b *DOMBinder) BindNodeList(nodeList *dom.NodeList) *goja.Object {
@@ -4247,6 +4260,19 @@ func (b *DOMBinder) BindAttr(attr *dom.Attr) *goja.Object {
 		}
 		return b.BindElement(owner)
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// isSameNode - returns true if the given node is the same as this one
+	jsAttr.Set("isSameNode", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 || goja.IsNull(call.Arguments[0]) {
+			return vm.ToValue(false)
+		}
+		otherObj := call.Arguments[0].ToObject(vm)
+		otherAttr := b.getGoAttr(otherObj)
+		if otherAttr == nil {
+			return vm.ToValue(false)
+		}
+		return vm.ToValue(attr == otherAttr)
+	})
 
 	return jsAttr
 }
