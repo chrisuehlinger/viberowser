@@ -268,15 +268,70 @@ func isXMLNameCharPermissive(ch rune) bool {
 }
 
 // isXMLNameStartCharPermissive checks if a rune is valid at the start of an XML name
-// using permissive rules. Browsers reject certain chars at start but allow them elsewhere.
+// using permissive rules. Used for createElement which is very lenient.
 func isXMLNameStartCharPermissive(ch rune) bool {
-	// Invalid at start of name (based on WPT tests)
+	// Invalid at start of name (based on WPT tests for createElement)
 	if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' ||
 		ch == '<' || ch == '>' || ch == '}' ||
 		ch == '-' || ch == '.' ||
 		(ch >= '0' && ch <= '9') {
 		return false
 	}
+	return true
+}
+
+// isXMLNameStartCharForNS checks if a rune is valid at the start of an XML name
+// for createElementNS. This is stricter than the permissive version.
+// Based on WPT test: dom/nodes/Document-createElementNS.html
+func isXMLNameStartCharForNS(ch rune) bool {
+	// Invalid at start of name for createElementNS (per WPT tests)
+	// Includes more characters than the permissive version
+	if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' ||
+		ch == '<' || ch == '>' || ch == '}' || ch == '{' ||
+		ch == '-' || ch == '.' || ch == '^' ||
+		ch == '~' || ch == '\'' || ch == '!' || ch == '@' ||
+		ch == '#' || ch == '$' || ch == '%' || ch == '&' ||
+		ch == '*' || ch == '(' || ch == ')' || ch == '+' ||
+		ch == '=' || ch == '[' || ch == ']' || ch == '\\' ||
+		ch == '/' || ch == ';' || ch == '`' || ch == ',' ||
+		ch == '"' ||
+		(ch >= '0' && ch <= '9') {
+		return false
+	}
+	return true
+}
+
+// isXMLNameCharForNS checks if a rune is valid in an XML name for createElementNS.
+// This is used for characters after the first in localName.
+func isXMLNameCharForNS(ch rune) bool {
+	// Definitely invalid anywhere in a name
+	if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '>' {
+		return false
+	}
+	return true
+}
+
+// isValidLocalNameForNS checks if a string is valid as a local name in createElementNS.
+// This is stricter than the permissive validation used for createElement.
+func isValidLocalNameForNS(name string) bool {
+	if name == "" {
+		return false
+	}
+
+	runes := []rune(name)
+
+	// First character must pass the stricter check
+	if !isXMLNameStartCharForNS(runes[0]) {
+		return false
+	}
+
+	// Remaining characters
+	for _, ch := range runes[1:] {
+		if !isXMLNameCharForNS(ch) {
+			return false
+		}
+	}
+
 	return true
 }
 
@@ -499,8 +554,8 @@ func ValidateQualifiedNameWithNamespace(qualifiedName string, hasNamespace bool)
 			}
 		}
 	} else {
-		// No colon: must be valid XML Name (using permissive rules to match browser behavior)
-		if !isValidXMLNamePermissive(qualifiedName) {
+		// No colon: must be valid XML Name for createElementNS (stricter than createElement)
+		if !isValidNamePermissive(qualifiedName) {
 			return ErrInvalidCharacter("The qualified name is not a valid XML name.")
 		}
 		// Also check it's not just ":"
@@ -516,8 +571,8 @@ func ValidateQualifiedNameWithNamespace(qualifiedName string, hasNamespace bool)
 	return nil
 }
 
-// isValidNamePermissive checks if a name is valid with permissive rules.
-// This is used for localName when a namespace is provided.
+// isValidNamePermissive checks if a name is valid for createElementNS.
+// This uses stricter rules than createElement, rejecting more special characters.
 func isValidNamePermissive(name string) bool {
 	if name == "" {
 		return false
@@ -525,14 +580,14 @@ func isValidNamePermissive(name string) bool {
 
 	runes := []rune(name)
 
-	// First character - use permissive start char rules
-	if !isXMLNameStartCharPermissive(runes[0]) {
+	// First character - use stricter NS start char rules
+	if !isXMLNameStartCharForNS(runes[0]) {
 		return false
 	}
 
-	// Remaining chars - only reject definitely invalid characters
+	// Remaining chars - use NS char rules
 	for _, ch := range runes[1:] {
-		if !isXMLNameCharPermissive(ch) {
+		if !isXMLNameCharForNS(ch) {
 			return false
 		}
 	}
