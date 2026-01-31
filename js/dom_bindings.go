@@ -4274,6 +4274,18 @@ func (b *DOMBinder) BindAttr(attr *dom.Attr) *goja.Object {
 		return vm.ToValue(attr == otherAttr)
 	})
 
+	// cloneNode - clones the attribute (deep param is ignored for Attr)
+	jsAttr.Set("cloneNode", func(call goja.FunctionCall) goja.Value {
+		cloned := attr.CloneNode(false)
+		if cloned == nil {
+			return goja.Null()
+		}
+		// cloned is *dom.Node, need to get the Attr from it
+		// For now, create a new Attr with the same properties
+		clonedAttr := dom.NewAttr(attr.LocalName(), attr.Value())
+		return b.BindAttr(clonedAttr)
+	})
+
 	return jsAttr
 }
 
