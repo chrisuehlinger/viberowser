@@ -1423,6 +1423,20 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 		return b.BindHTMLCollection(collection)
 	})
 
+	jsDoc.Set("getElementsByTagNameNS", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			return b.createEmptyHTMLCollection()
+		}
+		// First arg is namespace (can be null for no namespace, or "*" for any)
+		var namespaceURI string
+		if !goja.IsNull(call.Arguments[0]) {
+			namespaceURI = call.Arguments[0].String()
+		}
+		localName := call.Arguments[1].String()
+		collection := doc.GetElementsByTagNameNS(namespaceURI, localName)
+		return b.BindHTMLCollection(collection)
+	})
+
 	jsDoc.Set("getElementsByClassName", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
 			return b.createEmptyHTMLCollection()
@@ -1885,6 +1899,20 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 		}
 		tagName := call.Arguments[0].String()
 		collection := doc.GetElementsByTagName(tagName)
+		return b.BindHTMLCollection(collection)
+	})
+
+	jsDoc.Set("getElementsByTagNameNS", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			return b.createEmptyHTMLCollection()
+		}
+		// First arg is namespace (can be null for no namespace, or "*" for any)
+		var namespaceURI string
+		if !goja.IsNull(call.Arguments[0]) {
+			namespaceURI = call.Arguments[0].String()
+		}
+		localName := call.Arguments[1].String()
+		collection := doc.GetElementsByTagNameNS(namespaceURI, localName)
 		return b.BindHTMLCollection(collection)
 	})
 
@@ -2725,6 +2753,20 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		}
 		tagName := call.Arguments[0].String()
 		collection := el.GetElementsByTagName(tagName)
+		return b.BindHTMLCollection(collection)
+	})
+
+	jsEl.Set("getElementsByTagNameNS", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			return b.createEmptyHTMLCollection()
+		}
+		// First arg is namespace (can be null for no namespace, or "*" for any)
+		var namespaceURI string
+		if !goja.IsNull(call.Arguments[0]) {
+			namespaceURI = call.Arguments[0].String()
+		}
+		localName := call.Arguments[1].String()
+		collection := el.GetElementsByTagNameNS(namespaceURI, localName)
 		return b.BindHTMLCollection(collection)
 	})
 
