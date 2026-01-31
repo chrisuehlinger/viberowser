@@ -975,7 +975,17 @@ func convertHTMLTree(src *html.Node, parent *Node, doc *Document) {
 			parent.AppendChild(node)
 			// Process children
 			if c.Type == html.ElementNode {
-				convertHTMLTree(c, node, doc)
+				el := (*Element)(node)
+				// Per HTML spec, template element children go into the template contents
+				// instead of being direct children of the template element
+				if el.LocalName() == "template" && el.NamespaceURI() == HTMLNamespace {
+					// Get or create the template content DocumentFragment
+					content := el.TemplateContent()
+					// Convert children into the template content
+					convertHTMLTree(c, content.AsNode(), doc)
+				} else {
+					convertHTMLTree(c, node, doc)
+				}
 			}
 		}
 	}

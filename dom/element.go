@@ -1431,3 +1431,36 @@ func (e *Element) canAttachShadow() bool {
 
 	return validHosts[localName]
 }
+
+// TemplateContent returns the template content DocumentFragment for template elements.
+// Returns nil for non-template elements.
+// Per HTML spec, this creates the template contents DocumentFragment on first access if needed.
+func (e *Element) TemplateContent() *DocumentFragment {
+	// Only template elements have template contents
+	if e.LocalName() != "template" || e.NamespaceURI() != HTMLNamespace {
+		return nil
+	}
+
+	if e.AsNode().elementData == nil {
+		e.AsNode().elementData = &elementData{}
+	}
+
+	// Create template contents lazily if not already created
+	if e.AsNode().elementData.templateContent == nil {
+		// Per spec, template contents is owned by the template element's node document
+		doc := e.AsNode().ownerDoc
+		node := newNode(DocumentFragmentNode, "#document-fragment", doc)
+		e.AsNode().elementData.templateContent = (*DocumentFragment)(node)
+	}
+
+	return e.AsNode().elementData.templateContent
+}
+
+// SetTemplateContent sets the template content DocumentFragment for template elements.
+// This is used during HTML parsing to set up template contents.
+func (e *Element) SetTemplateContent(content *DocumentFragment) {
+	if e.AsNode().elementData == nil {
+		e.AsNode().elementData = &elementData{}
+	}
+	e.AsNode().elementData.templateContent = content
+}

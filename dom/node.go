@@ -79,6 +79,9 @@ type elementData struct {
 
 	// Shadow DOM support: the shadow root attached to this element (if any)
 	shadowRoot *ShadowRoot
+
+	// Template contents: for <template> elements, the DocumentFragment that holds the content
+	templateContent *DocumentFragment
 }
 
 // documentData holds data specific to Document nodes.

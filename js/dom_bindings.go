@@ -3595,6 +3595,11 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		b.bindIframeProperties(jsEl, el)
 	}
 
+	// Add template-specific properties (content)
+	if el.LocalName() == "template" && ns == dom.HTMLNamespace {
+		b.bindTemplateProperties(jsEl, el)
+	}
+
 	// Add anchor-specific properties (href with URL encoding)
 	if el.LocalName() == "a" && ns == dom.HTMLNamespace {
 		b.bindAnchorProperties(jsEl, el)
@@ -3652,6 +3657,21 @@ func (b *DOMBinder) bindIframeProperties(jsEl *goja.Object, el *dom.Element) {
 			return goja.Null()
 		}
 		return contentDocument
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+}
+
+// bindTemplateProperties adds HTMLTemplateElement-specific properties.
+func (b *DOMBinder) bindTemplateProperties(jsEl *goja.Object, el *dom.Element) {
+	vm := b.runtime.vm
+
+	// content property - returns the template's DocumentFragment containing its contents
+	// Per HTML spec: https://html.spec.whatwg.org/multipage/scripting.html#the-template-element
+	jsEl.DefineAccessorProperty("content", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		content := el.TemplateContent()
+		if content == nil {
+			return goja.Null()
+		}
+		return b.BindDocumentFragment(content)
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 }
 
