@@ -9,13 +9,31 @@ import (
 // Document represents the entire HTML document.
 type Document Node
 
-// NewDocument creates a new empty Document.
+// HTML namespace URI
+const HTMLNamespace = "http://www.w3.org/1999/xhtml"
+
+// NewDocument creates a new empty HTML Document.
 func NewDocument() *Document {
 	node := newNode(DocumentNode, "#document", nil)
-	node.documentData = &documentData{}
+	node.documentData = &documentData{
+		contentType: "text/html",
+	}
 	doc := (*Document)(node)
 	node.ownerDoc = doc
 	return doc
+}
+
+// IsHTML returns true if this is an HTML document.
+func (d *Document) IsHTML() bool {
+	return d.AsNode().documentData.contentType == "text/html"
+}
+
+// ContentType returns the MIME type of the document.
+func (d *Document) ContentType() string {
+	if d.AsNode().documentData.contentType == "" {
+		return "text/html" // Default to HTML for backwards compatibility
+	}
+	return d.AsNode().documentData.contentType
 }
 
 // AsNode returns the underlying Node.
@@ -129,15 +147,23 @@ func (d *Document) SetTitle(title string) {
 }
 
 // CreateElement creates a new element with the given tag name.
+// For HTML documents, the element is created in the HTML namespace.
 func (d *Document) CreateElement(tagName string) *Element {
 	// For HTML documents, tag names are lowercased for storage but uppercased for TagName
 	localName := strings.ToLower(tagName)
 	upperTagName := strings.ToUpper(tagName)
 
+	// Determine namespace based on document type
+	namespace := ""
+	if d.IsHTML() {
+		namespace = HTMLNamespace
+	}
+
 	node := newNode(ElementNode, upperTagName, d)
 	node.elementData = &elementData{
-		localName: localName,
-		tagName:   upperTagName,
+		localName:    localName,
+		tagName:      upperTagName,
+		namespaceURI: namespace,
 	}
 	node.elementData.attributes = newNamedNodeMap((*Element)(node))
 

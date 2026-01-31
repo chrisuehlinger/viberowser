@@ -42,8 +42,9 @@ type elementData struct {
 
 // documentData holds data specific to Document nodes.
 type documentData struct {
-	doctype        *Node // DocumentType node
-	documentElement *Node // root Element
+	doctype         *Node  // DocumentType node
+	documentElement *Node  // root Element
+	contentType     string // The content type (MIME type) of the document
 }
 
 // docTypeData holds data specific to DocumentType nodes.

@@ -1,9 +1,17 @@
 package js
 
 import (
+	"unicode/utf16"
+
 	"github.com/AYColumbia/viberowser/dom"
 	"github.com/dop251/goja"
 )
+
+// utf16Length returns the length of a string in UTF-16 code units.
+// This matches JavaScript's String.length behavior.
+func utf16Length(s string) int {
+	return len(utf16.Encode([]rune(s)))
+}
 
 // DOMBinder provides methods to bind DOM objects to JavaScript.
 type DOMBinder struct {
@@ -72,8 +80,9 @@ func (b *DOMBinder) setupPrototypes() {
 	b.textProto.SetPrototype(b.characterDataProto)
 	textConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
 		// Text can be constructed with new Text() or new Text(data)
+		// Per spec, undefined is treated as missing (empty string)
 		data := ""
-		if len(call.Arguments) > 0 {
+		if len(call.Arguments) > 0 && !goja.IsUndefined(call.Arguments[0]) {
 			data = call.Arguments[0].String()
 		}
 		// Create text node using document if available, otherwise detached
@@ -95,8 +104,9 @@ func (b *DOMBinder) setupPrototypes() {
 	b.commentProto.SetPrototype(b.characterDataProto)
 	commentConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
 		// Comment can be constructed with new Comment() or new Comment(data)
+		// Per spec, undefined is treated as missing (empty string)
 		data := ""
-		if len(call.Arguments) > 0 {
+		if len(call.Arguments) > 0 && !goja.IsUndefined(call.Arguments[0]) {
 			data = call.Arguments[0].String()
 		}
 		// Create comment node using document if available, otherwise detached
@@ -434,6 +444,14 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 			return goja.Null()
 		}
 		return vm.ToValue(ns)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsEl.DefineAccessorProperty("prefix", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		prefix := el.Prefix()
+		if prefix == "" {
+			return goja.Null()
+		}
+		return vm.ToValue(prefix)
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	jsEl.DefineAccessorProperty("id", vm.ToValue(func(call goja.FunctionCall) goja.Value {
@@ -846,11 +864,16 @@ func (b *DOMBinder) BindTextNode(node *dom.Node, proto *goja.Object) *goja.Objec
 	jsNode.Set("nodeName", "#text")
 
 	// CharacterData properties
+	// Per spec, setting data/nodeValue/textContent to null should result in empty string
 	jsNode.DefineAccessorProperty("data", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		return vm.ToValue(node.NodeValue())
 	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) > 0 {
-			node.SetNodeValue(call.Arguments[0].String())
+			val := ""
+			if !goja.IsNull(call.Arguments[0]) {
+				val = call.Arguments[0].String()
+			}
+			node.SetNodeValue(val)
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
@@ -859,7 +882,11 @@ func (b *DOMBinder) BindTextNode(node *dom.Node, proto *goja.Object) *goja.Objec
 		return vm.ToValue(node.NodeValue())
 	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) > 0 {
-			node.SetNodeValue(call.Arguments[0].String())
+			val := ""
+			if !goja.IsNull(call.Arguments[0]) {
+				val = call.Arguments[0].String()
+			}
+			node.SetNodeValue(val)
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
@@ -868,13 +895,18 @@ func (b *DOMBinder) BindTextNode(node *dom.Node, proto *goja.Object) *goja.Objec
 		return vm.ToValue(node.TextContent())
 	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) > 0 {
-			node.SetTextContent(call.Arguments[0].String())
+			val := ""
+			if !goja.IsNull(call.Arguments[0]) {
+				val = call.Arguments[0].String()
+			}
+			node.SetTextContent(val)
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	jsNode.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
-		return vm.ToValue(len(node.NodeValue()))
+		// Return length in UTF-16 code units per the CharacterData spec
+		return vm.ToValue(utf16Length(node.NodeValue()))
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	// ChildNode mixin methods
@@ -915,11 +947,16 @@ func (b *DOMBinder) BindCommentNode(node *dom.Node, proto *goja.Object) *goja.Ob
 	jsNode.Set("nodeName", "#comment")
 
 	// CharacterData properties
+	// Per spec, setting data/nodeValue/textContent to null should result in empty string
 	jsNode.DefineAccessorProperty("data", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		return vm.ToValue(node.NodeValue())
 	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) > 0 {
-			node.SetNodeValue(call.Arguments[0].String())
+			val := ""
+			if !goja.IsNull(call.Arguments[0]) {
+				val = call.Arguments[0].String()
+			}
+			node.SetNodeValue(val)
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
@@ -928,7 +965,11 @@ func (b *DOMBinder) BindCommentNode(node *dom.Node, proto *goja.Object) *goja.Ob
 		return vm.ToValue(node.NodeValue())
 	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) > 0 {
-			node.SetNodeValue(call.Arguments[0].String())
+			val := ""
+			if !goja.IsNull(call.Arguments[0]) {
+				val = call.Arguments[0].String()
+			}
+			node.SetNodeValue(val)
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
@@ -937,13 +978,18 @@ func (b *DOMBinder) BindCommentNode(node *dom.Node, proto *goja.Object) *goja.Ob
 		return vm.ToValue(node.TextContent())
 	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) > 0 {
-			node.SetTextContent(call.Arguments[0].String())
+			val := ""
+			if !goja.IsNull(call.Arguments[0]) {
+				val = call.Arguments[0].String()
+			}
+			node.SetTextContent(val)
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	jsNode.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
-		return vm.ToValue(len(node.NodeValue()))
+		// Return length in UTF-16 code units per the CharacterData spec
+		return vm.ToValue(utf16Length(node.NodeValue()))
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	// ChildNode mixin methods
