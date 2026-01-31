@@ -24,13 +24,15 @@ type MutationRecord struct {
 
 // MutationObserverOptions holds the options for observing mutations.
 type MutationObserverOptions struct {
-	ChildList             bool     // Observe child list changes
-	Attributes            bool     // Observe attribute changes
-	CharacterData         bool     // Observe character data changes
-	Subtree               bool     // Observe descendants too
-	AttributeOldValue     bool     // Record old attribute values
-	CharacterDataOldValue bool     // Record old character data values
-	AttributeFilter       []string // Only observe specific attributes
+	ChildList                   bool     // Observe child list changes
+	Attributes                  bool     // Observe attribute changes
+	CharacterData               bool     // Observe character data changes
+	Subtree                     bool     // Observe descendants too
+	AttributeOldValue           bool     // Record old attribute values
+	CharacterDataOldValue       bool     // Record old character data values
+	AttributeFilter             []string // Only observe specific attributes
+	attributesExplicitlySet     bool     // Was attributes explicitly set in the options?
+	characterDataExplicitlySet  bool     // Was characterData explicitly set in the options?
 }
 
 // MutationObserver observes DOM mutations and calls a callback when they occur.
@@ -276,8 +278,11 @@ func (mo *MutationObserver) deliverRecords() (goja.Value, error) {
 	jsRecords := mo.vm.NewArray()
 	for i, record := range records {
 		jsRecord := mo.createJSRecord(record)
-		jsRecords.Set(fmt.Sprintf("%d", i), jsRecord)
+		// Use integer index for proper array behavior
+		jsRecords.Set(fmt.Sprintf("%d", i), mo.vm.ToValue(jsRecord))
 	}
+	// Ensure length is set for Array.isArray() to work
+	jsRecords.Set("length", len(records))
 
 	// Call the callback with `this` set to the observer and passing (records, observer) as args
 	_, err := mo.callback(mo.jsObserver, jsRecords, mo.jsObserver)
@@ -364,24 +369,42 @@ func (mo *MutationObserver) observe(target *dom.Node, options *MutationObserverO
 		return fmt.Errorf("target is null")
 	}
 
-	// Validate options per spec
-	if !options.ChildList && !options.Attributes && !options.CharacterData {
-		return fmt.Errorf("The options object must set at least one of 'attributes', 'characterData', or 'childList' to true")
+	// Validate and apply implicit settings per spec
+	// https://dom.spec.whatwg.org/#dom-mutationobserver-observe
+
+	// If attributeOldValue is true and attributes is explicitly false, throw
+	if options.AttributeOldValue && options.attributesExplicitlySet && !options.Attributes {
+		return fmt.Errorf("The options object may not set 'attributeOldValue' to true when 'attributes' is false")
 	}
 
-	if options.AttributeOldValue && !options.Attributes {
-		// Per spec, if attributeOldValue is true, attributes is implicitly true
+	// If attributeFilter is present and attributes is explicitly false, throw
+	if len(options.AttributeFilter) > 0 && options.attributesExplicitlySet && !options.Attributes {
+		return fmt.Errorf("The options object may not set 'attributeFilter' when 'attributes' is false")
+	}
+
+	// If characterDataOldValue is true and characterData is explicitly false, throw
+	if options.CharacterDataOldValue && options.characterDataExplicitlySet && !options.CharacterData {
+		return fmt.Errorf("The options object may not set 'characterDataOldValue' to true when 'characterData' is false")
+	}
+
+	// If attributeOldValue is true but attributes is not set, implicitly enable attributes
+	if options.AttributeOldValue && !options.attributesExplicitlySet {
 		options.Attributes = true
 	}
 
-	if options.CharacterDataOldValue && !options.CharacterData {
-		// Per spec, if characterDataOldValue is true, characterData is implicitly true
+	// If characterDataOldValue is true but characterData is not set, implicitly enable characterData
+	if options.CharacterDataOldValue && !options.characterDataExplicitlySet {
 		options.CharacterData = true
 	}
 
-	if len(options.AttributeFilter) > 0 && !options.Attributes {
-		// Per spec, if attributeFilter is present, attributes is implicitly true
+	// If attributeFilter is present but attributes is not set, implicitly enable attributes
+	if len(options.AttributeFilter) > 0 && !options.attributesExplicitlySet {
 		options.Attributes = true
+	}
+
+	// Now check if at least one observation type is enabled
+	if !options.ChildList && !options.Attributes && !options.CharacterData {
+		return fmt.Errorf("The options object must set at least one of 'attributes', 'characterData', or 'childList' to true")
 	}
 
 	mo.mu.Lock()
@@ -428,13 +451,8 @@ func (mo *MutationObserver) bindObserverMethods(jsObserver *goja.Object) {
 		}
 
 		targetObj := targetArg.ToObject(vm)
-		goNodeVal := targetObj.Get("_goNode")
-		if goNodeVal == nil || goja.IsUndefined(goNodeVal) {
-			panic(vm.NewTypeError("Failed to execute 'observe' on 'MutationObserver': parameter 1 is not of type 'Node'"))
-		}
-
-		target, ok := goNodeVal.Export().(*dom.Node)
-		if !ok || target == nil {
+		target := mo.domBinder.getGoNode(targetObj)
+		if target == nil {
 			panic(vm.NewTypeError("Failed to execute 'observe' on 'MutationObserver': parameter 1 is not of type 'Node'"))
 		}
 
@@ -449,9 +467,11 @@ func (mo *MutationObserver) bindObserverMethods(jsObserver *goja.Object) {
 				}
 				if v := optionsObj.Get("attributes"); v != nil && !goja.IsUndefined(v) {
 					options.Attributes = v.ToBoolean()
+					options.attributesExplicitlySet = true
 				}
 				if v := optionsObj.Get("characterData"); v != nil && !goja.IsUndefined(v) {
 					options.CharacterData = v.ToBoolean()
+					options.characterDataExplicitlySet = true
 				}
 				if v := optionsObj.Get("subtree"); v != nil && !goja.IsUndefined(v) {
 					options.Subtree = v.ToBoolean()
