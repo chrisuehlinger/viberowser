@@ -74,6 +74,8 @@ func (nm *NamedNodeMap) SetNamedItemNS(attr *Node) *Attr {
 }
 
 // setAttr is the internal method to add or replace an attribute.
+// Per the DOM spec, attributes are identified by namespace + localName,
+// not by qualified name.
 func (nm *NamedNodeMap) setAttr(attr *Attr) *Attr {
 	if attr == nil {
 		return nil
@@ -81,9 +83,9 @@ func (nm *NamedNodeMap) setAttr(attr *Attr) *Attr {
 
 	attr.ownerElement = nm.ownerElement
 
-	// Check if an attribute with this name already exists
+	// Check if an attribute with this namespace + localName already exists
 	for i, existing := range nm.attrs {
-		if existing.name == attr.name {
+		if existing.namespaceURI == attr.namespaceURI && existing.localName == attr.localName {
 			nm.attrs[i] = attr
 			existing.ownerElement = nil
 			return existing
@@ -162,6 +164,11 @@ func (nm *NamedNodeMap) Names() []string {
 		names[i] = attr.name
 	}
 	return names
+}
+
+// OwnerElement returns the element that owns this NamedNodeMap.
+func (nm *NamedNodeMap) OwnerElement() *Element {
+	return nm.ownerElement
 }
 
 // Clone creates a deep copy of this NamedNodeMap.

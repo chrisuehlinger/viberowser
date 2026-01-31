@@ -136,10 +136,13 @@ type DOMBinder struct {
 	domImplementationProto       *goja.Object
 	htmlCollectionProto          *goja.Object
 	nodeListProto                *goja.Object
+	namedNodeMapProto            *goja.Object
+	attrProto                    *goja.Object
 	cssStyleDeclarationProto     *goja.Object
 	domImplementationCache       map[*dom.DOMImplementation]*goja.Object
 	styleDeclarationCache        map[*dom.CSSStyleDeclaration]*goja.Object
 	htmlCollectionMap            map[*goja.Object]*dom.HTMLCollection
+	namedNodeMapMap              map[*goja.Object]*dom.NamedNodeMap
 	nodeListCache                map[*dom.NodeList]*goja.Object
 	domTokenListCache            map[*dom.DOMTokenList]*goja.Object
 }
@@ -152,6 +155,7 @@ func NewDOMBinder(runtime *Runtime) *DOMBinder {
 		domImplementationCache: make(map[*dom.DOMImplementation]*goja.Object),
 		styleDeclarationCache:  make(map[*dom.CSSStyleDeclaration]*goja.Object),
 		htmlCollectionMap:      make(map[*goja.Object]*dom.HTMLCollection),
+		namedNodeMapMap:        make(map[*goja.Object]*dom.NamedNodeMap),
 		htmlElementProtoMap:    make(map[string]*goja.Object),
 		nodeListCache:          make(map[*dom.NodeList]*goja.Object),
 		domTokenListCache:      make(map[*dom.DOMTokenList]*goja.Object),
@@ -512,6 +516,183 @@ func (b *DOMBinder) setupPrototypes() {
 	nodeListConstructorObj.Set("prototype", b.nodeListProto)
 	b.nodeListProto.Set("constructor", nodeListConstructorObj)
 	vm.Set("NodeList", nodeListConstructorObj)
+
+	// Create NamedNodeMap prototype with methods
+	b.namedNodeMapProto = vm.NewObject()
+	namedNodeMapConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		panic(vm.NewTypeError("Illegal constructor"))
+	})
+	namedNodeMapConstructorObj := namedNodeMapConstructor.ToObject(vm)
+	namedNodeMapConstructorObj.Set("prototype", b.namedNodeMapProto)
+	b.namedNodeMapProto.Set("constructor", namedNodeMapConstructorObj)
+
+	// Helper to get NamedNodeMap from this object
+	getNamedNodeMap := func(thisObj *goja.Object) *dom.NamedNodeMap {
+		if thisObj == nil {
+			return nil
+		}
+		return b.namedNodeMapMap[thisObj]
+	}
+
+	// Add length getter to prototype
+	b.namedNodeMapProto.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		nnm := getNamedNodeMap(call.This.ToObject(vm))
+		if nnm == nil {
+			return vm.ToValue(0)
+		}
+		return vm.ToValue(nnm.Length())
+	}), nil, goja.FLAG_TRUE, goja.FLAG_FALSE)
+
+	// Add item method to prototype
+	b.namedNodeMapProto.Set("item", func(call goja.FunctionCall) goja.Value {
+		nnm := getNamedNodeMap(call.This.ToObject(vm))
+		if nnm == nil {
+			return goja.Null()
+		}
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		index := int(call.Arguments[0].ToInteger())
+		attr := nnm.Item(index)
+		if attr == nil {
+			return goja.Null()
+		}
+		return b.BindAttr(attr)
+	})
+
+	// Add getNamedItem method to prototype
+	b.namedNodeMapProto.Set("getNamedItem", func(call goja.FunctionCall) goja.Value {
+		nnm := getNamedNodeMap(call.This.ToObject(vm))
+		if nnm == nil {
+			return goja.Null()
+		}
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		name := call.Arguments[0].String()
+		attr := nnm.GetNamedItem(name)
+		if attr == nil {
+			return goja.Null()
+		}
+		return b.BindAttr(attr)
+	})
+
+	// Add getNamedItemNS method to prototype
+	b.namedNodeMapProto.Set("getNamedItemNS", func(call goja.FunctionCall) goja.Value {
+		nnm := getNamedNodeMap(call.This.ToObject(vm))
+		if nnm == nil {
+			return goja.Null()
+		}
+		if len(call.Arguments) < 2 {
+			return goja.Null()
+		}
+		ns := ""
+		if !goja.IsNull(call.Arguments[0]) {
+			ns = call.Arguments[0].String()
+		}
+		localName := call.Arguments[1].String()
+		attr := nnm.GetNamedItemNS(ns, localName)
+		if attr == nil {
+			return goja.Null()
+		}
+		return b.BindAttr(attr)
+	})
+
+	// Add setNamedItem method to prototype
+	b.namedNodeMapProto.Set("setNamedItem", func(call goja.FunctionCall) goja.Value {
+		nnm := getNamedNodeMap(call.This.ToObject(vm))
+		if nnm == nil {
+			return goja.Null()
+		}
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		jsAttr := call.Arguments[0].ToObject(vm)
+		goAttr := b.extractAttr(jsAttr)
+		if goAttr == nil {
+			return goja.Null()
+		}
+		oldAttr := nnm.SetAttr(goAttr)
+		if oldAttr == nil {
+			return goja.Null()
+		}
+		return b.BindAttr(oldAttr)
+	})
+
+	// Add setNamedItemNS method to prototype
+	b.namedNodeMapProto.Set("setNamedItemNS", func(call goja.FunctionCall) goja.Value {
+		nnm := getNamedNodeMap(call.This.ToObject(vm))
+		if nnm == nil {
+			return goja.Null()
+		}
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		jsAttr := call.Arguments[0].ToObject(vm)
+		goAttr := b.extractAttr(jsAttr)
+		if goAttr == nil {
+			return goja.Null()
+		}
+		oldAttr := nnm.SetAttr(goAttr)
+		if oldAttr == nil {
+			return goja.Null()
+		}
+		return b.BindAttr(oldAttr)
+	})
+
+	// Add removeNamedItem method to prototype
+	b.namedNodeMapProto.Set("removeNamedItem", func(call goja.FunctionCall) goja.Value {
+		nnm := getNamedNodeMap(call.This.ToObject(vm))
+		if nnm == nil {
+			return goja.Null()
+		}
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		name := call.Arguments[0].String()
+		attr := nnm.RemoveNamedItem(name)
+		if attr == nil {
+			return goja.Null()
+		}
+		return b.BindAttr(attr)
+	})
+
+	// Add removeNamedItemNS method to prototype
+	b.namedNodeMapProto.Set("removeNamedItemNS", func(call goja.FunctionCall) goja.Value {
+		nnm := getNamedNodeMap(call.This.ToObject(vm))
+		if nnm == nil {
+			return goja.Null()
+		}
+		if len(call.Arguments) < 2 {
+			return goja.Null()
+		}
+		ns := ""
+		if !goja.IsNull(call.Arguments[0]) {
+			ns = call.Arguments[0].String()
+		}
+		localName := call.Arguments[1].String()
+		attr := nnm.RemoveNamedItemNS(ns, localName)
+		if attr == nil {
+			return goja.Null()
+		}
+		return b.BindAttr(attr)
+	})
+
+	vm.Set("NamedNodeMap", namedNodeMapConstructorObj)
+
+	// Create Attr prototype and constructor
+	// Attr inherits from Node in the DOM, but we'll set it up as a simple prototype
+	b.attrProto = vm.NewObject()
+	attrConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		panic(vm.NewTypeError("Illegal constructor"))
+	})
+	attrConstructorObj := attrConstructor.ToObject(vm)
+	attrConstructorObj.Set("prototype", b.attrProto)
+	b.attrProto.Set("constructor", attrConstructorObj)
+
+	// Add Attr properties to prototype (read-only getters)
+	// The actual values are set per-instance in BindAttr
+	vm.Set("Attr", attrConstructorObj)
 }
 
 // htmlElementTypeMap maps lowercase HTML tag names to their constructor names.
@@ -4517,6 +4698,11 @@ func (b *DOMBinder) BindAttr(attr *dom.Attr) *goja.Object {
 	vm := b.runtime.vm
 	jsAttr := vm.NewObject()
 
+	// Set prototype so instanceof Attr works
+	if b.attrProto != nil {
+		jsAttr.SetPrototype(b.attrProto)
+	}
+
 	// Store reference to Go Attr for extraction
 	jsAttr.Set("_goAttr", attr)
 
@@ -4894,6 +5080,8 @@ func camelToKebab(s string) string {
 
 // BindNamedNodeMap creates a JavaScript object from a DOM NamedNodeMap.
 // The NamedNodeMap is array-like with indexed access and methods like item(), getNamedItem().
+// Per the WebIDL spec, only numeric indices and named properties are own properties,
+// while methods like item() and getNamedItem() are on the prototype.
 func (b *DOMBinder) BindNamedNodeMap(nnm *dom.NamedNodeMap) *goja.Object {
 	if nnm == nil {
 		return nil
@@ -4902,127 +5090,148 @@ func (b *DOMBinder) BindNamedNodeMap(nnm *dom.NamedNodeMap) *goja.Object {
 	vm := b.runtime.vm
 	jsMap := vm.NewObject()
 
-	// Length property
-	jsMap.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
-		return vm.ToValue(nnm.Length())
-	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	// Set prototype for instanceof and method access
+	if b.namedNodeMapProto != nil {
+		jsMap.SetPrototype(b.namedNodeMapProto)
+	}
 
-	// item(index) method
-	jsMap.Set("item", func(call goja.FunctionCall) goja.Value {
-		if len(call.Arguments) < 1 {
-			return goja.Null()
-		}
-		index := int(call.Arguments[0].ToInteger())
-		attr := nnm.Item(index)
-		if attr == nil {
-			return goja.Null()
-		}
-		return b.BindAttr(attr)
+	// Register the NamedNodeMap in our internal map for prototype methods
+	b.namedNodeMapMap[jsMap] = nnm
+
+	// Create a proxy to control property enumeration
+	// Per WPT:
+	// - Enumerable own properties: only numeric indices (e.g., ["0", "1"])
+	// - Object.getOwnPropertyNames: numeric indices + named properties (attribute names)
+	// - Named properties: for HTML elements in HTML docs, only lowercase names
+	proxy := vm.NewProxy(jsMap, &goja.ProxyTrapConfig{
+		// Get handles property access for numeric indices and named properties
+		Get: func(target *goja.Object, property string, receiver goja.Value) (value goja.Value) {
+			// Try numeric index first
+			if idx, isNum := parseNumericIndex(property); isNum {
+				if idx >= 0 && idx < nnm.Length() {
+					attr := nnm.Item(idx)
+					if attr != nil {
+						return b.BindAttr(attr)
+					}
+				}
+				return goja.Undefined()
+			}
+
+			// Try named property (attribute name)
+			attr := nnm.GetNamedItem(property)
+			if attr != nil {
+				return b.BindAttr(attr)
+			}
+
+			// Fall back to prototype chain (for methods like item, getNamedItem, etc.)
+			return target.Get(property)
+		},
+
+		// OwnKeys returns only numeric indices and named attribute properties
+		OwnKeys: func(target *goja.Object) *goja.Object {
+			keys := make([]interface{}, 0)
+
+			// Add numeric indices
+			for i := 0; i < nnm.Length(); i++ {
+				keys = append(keys, vm.ToValue(i).String())
+			}
+
+			// Add named properties (attribute names)
+			// For HTML elements in HTML documents, only lowercase names are exposed
+			seen := make(map[string]bool)
+			ownerEl := nnm.OwnerElement()
+			isHTMLElement := ownerEl != nil && ownerEl.NamespaceURI() == dom.HTMLNamespace
+			isHTMLDoc := ownerEl != nil && ownerEl.AsNode().OwnerDocument() != nil && ownerEl.AsNode().OwnerDocument().ContentType() == "text/html"
+
+			for i := 0; i < nnm.Length(); i++ {
+				attr := nnm.Item(i)
+				if attr == nil {
+					continue
+				}
+				name := attr.Name()
+
+				// Skip if already seen
+				if seen[name] {
+					continue
+				}
+
+				// For HTML elements in HTML documents, only expose lowercase names
+				if isHTMLElement && isHTMLDoc {
+					if !isLowercase(name) {
+						continue
+					}
+				}
+
+				seen[name] = true
+				keys = append(keys, name)
+			}
+
+			return vm.ToValue(keys).ToObject(vm)
+		},
+
+		// GetOwnPropertyDescriptor returns descriptors for own properties
+		GetOwnPropertyDescriptor: func(target *goja.Object, prop string) goja.PropertyDescriptor {
+			// Check numeric index
+			if idx, isNum := parseNumericIndex(prop); isNum && idx >= 0 && idx < nnm.Length() {
+				attr := nnm.Item(idx)
+				if attr != nil {
+					return goja.PropertyDescriptor{
+						Value:        b.BindAttr(attr),
+						Writable:     goja.FLAG_FALSE,
+						Enumerable:   goja.FLAG_TRUE, // Numeric indices are enumerable
+						Configurable: goja.FLAG_TRUE,
+					}
+				}
+			}
+
+			// Check named property
+			attr := nnm.GetNamedItem(prop)
+			if attr != nil {
+				return goja.PropertyDescriptor{
+					Value:        b.BindAttr(attr),
+					Writable:     goja.FLAG_FALSE,
+					Enumerable:   goja.FLAG_FALSE, // Named properties are NOT enumerable
+					Configurable: goja.FLAG_TRUE,
+				}
+			}
+
+			// Return empty for non-existent properties
+			return goja.PropertyDescriptor{}
+		},
 	})
 
-	// getNamedItem(name) method
-	jsMap.Set("getNamedItem", func(call goja.FunctionCall) goja.Value {
-		if len(call.Arguments) < 1 {
-			return goja.Null()
-		}
-		name := call.Arguments[0].String()
-		attr := nnm.GetNamedItem(name)
-		if attr == nil {
-			return goja.Null()
-		}
-		return b.BindAttr(attr)
-	})
-
-	// getNamedItemNS(namespaceURI, localName) method
-	jsMap.Set("getNamedItemNS", func(call goja.FunctionCall) goja.Value {
-		if len(call.Arguments) < 2 {
-			return goja.Null()
-		}
-		ns := ""
-		if !goja.IsNull(call.Arguments[0]) {
-			ns = call.Arguments[0].String()
-		}
-		localName := call.Arguments[1].String()
-		attr := nnm.GetNamedItemNS(ns, localName)
-		if attr == nil {
-			return goja.Null()
-		}
-		return b.BindAttr(attr)
-	})
-
-	// setNamedItem(attr) method
-	jsMap.Set("setNamedItem", func(call goja.FunctionCall) goja.Value {
-		if len(call.Arguments) < 1 {
-			return goja.Null()
-		}
-		// Extract the Go Attr from the JS object
-		jsAttr := call.Arguments[0].ToObject(vm)
-		goAttr := b.extractAttr(jsAttr)
-		if goAttr == nil {
-			return goja.Null()
-		}
-		oldAttr := nnm.SetAttr(goAttr)
-		if oldAttr == nil {
-			return goja.Null()
-		}
-		return b.BindAttr(oldAttr)
-	})
-
-	// removeNamedItem(name) method
-	jsMap.Set("removeNamedItem", func(call goja.FunctionCall) goja.Value {
-		if len(call.Arguments) < 1 {
-			return goja.Null()
-		}
-		name := call.Arguments[0].String()
-		attr := nnm.RemoveNamedItem(name)
-		if attr == nil {
-			return goja.Null()
-		}
-		return b.BindAttr(attr)
-	})
-
-	// removeNamedItemNS(namespaceURI, localName) method
-	jsMap.Set("removeNamedItemNS", func(call goja.FunctionCall) goja.Value {
-		if len(call.Arguments) < 2 {
-			return goja.Null()
-		}
-		ns := ""
-		if !goja.IsNull(call.Arguments[0]) {
-			ns = call.Arguments[0].String()
-		}
-		localName := call.Arguments[1].String()
-		attr := nnm.RemoveNamedItemNS(ns, localName)
-		if attr == nil {
-			return goja.Null()
-		}
-		return b.BindAttr(attr)
-	})
-
-	// Add indexed access using a Proxy-like approach
-	// Set numeric indices for current attributes
-	b.updateNamedNodeMapIndices(jsMap, nnm)
-
-	return jsMap
+	return vm.ToValue(proxy).ToObject(vm)
 }
 
-// updateNamedNodeMapIndices updates the numeric indices of a NamedNodeMap JS object.
-// This needs to be called dynamically since attributes can change.
-func (b *DOMBinder) updateNamedNodeMapIndices(jsMap *goja.Object, nnm *dom.NamedNodeMap) {
-	vm := b.runtime.vm
-	for i := 0; i < nnm.Length(); i++ {
-		attr := nnm.Item(i)
-		if attr != nil {
-			// Create a closure that captures the index
-			idx := i
-			jsMap.DefineAccessorProperty(vm.ToValue(idx).String(), vm.ToValue(func(call goja.FunctionCall) goja.Value {
-				a := nnm.Item(idx)
-				if a == nil {
-					return goja.Undefined()
-				}
-				return b.BindAttr(a)
-			}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+// parseNumericIndex parses a string as a numeric index.
+// Returns the index and true if it's a valid non-negative integer.
+func parseNumericIndex(s string) (int, bool) {
+	if len(s) == 0 {
+		return 0, false
+	}
+	// Check for leading zeros (invalid except for "0")
+	if len(s) > 1 && s[0] == '0' {
+		return 0, false
+	}
+	n := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n, true
+}
+
+// isLowercase returns true if the string contains only lowercase ASCII letters,
+// digits, and allowed characters like '-' and ':'.
+func isLowercase(s string) bool {
+	for _, c := range s {
+		if c >= 'A' && c <= 'Z' {
+			return false
 		}
 	}
+	return true
 }
 
 // extractAttr extracts a Go *dom.Attr from a JavaScript Attr object.
