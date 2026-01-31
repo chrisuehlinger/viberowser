@@ -120,6 +120,7 @@ type DOMBinder struct {
 	iframeContentProvider IframeContentProvider       // Callback for getting iframe content
 	nodeMap               map[*dom.Node]*goja.Object  // Cache to return same JS object for same DOM node
 	document              *dom.Document               // Current document for creating new nodes
+	globalDocumentSet     bool                        // Track if global document has been set
 
 	// Style resolver for getComputedStyle
 	styleResolver *css.StyleResolver
@@ -1168,8 +1169,11 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 		jsDoc.SetPrototype(b.documentProto)
 	}
 
-	// Store current document for creating new nodes
-	b.document = doc
+	// Store the first document for creating new nodes via constructors (new Text(), etc.)
+	// Only set this once so iframe documents don't replace it.
+	if b.document == nil {
+		b.document = doc
+	}
 
 	// Store reference to the Go document
 	jsDoc.Set("_goDoc", doc)
@@ -1537,8 +1541,13 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 	b.bindNodeProperties(jsDoc, doc.AsNode())
 
 	// Set document on runtime without mutex (we're already in runtime context)
-	// Note: Only set global document for the first/main document
-	b.runtime.setDocumentDirect(jsDoc)
+	// Only set the global document once - the first document bound becomes the global one.
+	// Subsequent documents (e.g., iframe documents accessed via ownerDocument) should not
+	// replace the global document.
+	if !b.globalDocumentSet {
+		b.runtime.setDocumentDirect(jsDoc)
+		b.globalDocumentSet = true
+	}
 	return jsDoc
 }
 

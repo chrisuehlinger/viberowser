@@ -14,6 +14,38 @@ type Document Node
 // HTML namespace URI
 const HTMLNamespace = "http://www.w3.org/1999/xhtml"
 
+// toASCIILowercase converts ASCII letters A-Z to lowercase a-z.
+// Non-ASCII characters and other characters are left unchanged.
+// This implements the "ASCII lowercase" algorithm from the DOM spec.
+func toASCIILowercase(s string) string {
+	var result []byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' {
+			result = append(result, c+32) // 'a' - 'A' = 32
+		} else {
+			result = append(result, c)
+		}
+	}
+	return string(result)
+}
+
+// toASCIIUppercase converts ASCII letters a-z to uppercase A-Z.
+// Non-ASCII characters and other characters are left unchanged.
+// This implements the "ASCII uppercase" algorithm from the DOM spec.
+func toASCIIUppercase(s string) string {
+	var result []byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'a' && c <= 'z' {
+			result = append(result, c-32) // 'A' - 'a' = -32
+		} else {
+			result = append(result, c)
+		}
+	}
+	return string(result)
+}
+
 // NewDocument creates a new empty HTML Document.
 func NewDocument() *Document {
 	node := newNode(DocumentNode, "#document", nil)
@@ -215,10 +247,12 @@ func (d *Document) CreateElementWithError(tagName string) (*Element, error) {
 	var localName, resultTagName string
 	// Per DOM spec step 2: "If context object is an HTML document, let localName be converted to ASCII lowercase."
 	// Only true HTML documents (text/html) should lowercase. XHTML documents preserve case.
+	// IMPORTANT: The spec requires ASCII lowercase/uppercase only - Unicode case conversion
+	// would incorrectly transform characters like the Kelvin sign (U+212A) or Turkish letters.
 	if d.IsHTML() {
-		// For HTML documents, tag names are lowercased for storage but uppercased for TagName
-		localName = strings.ToLower(tagName)
-		resultTagName = strings.ToUpper(tagName)
+		// For HTML documents, tag names are ASCII lowercased for storage but ASCII uppercased for TagName
+		localName = toASCIILowercase(tagName)
+		resultTagName = toASCIIUppercase(tagName)
 	} else {
 		// For XML/XHTML documents, preserve case exactly
 		localName = tagName
@@ -251,10 +285,10 @@ func (d *Document) CreateElementNSWithError(namespaceURI, qualifiedName string) 
 		return nil, err
 	}
 
-	// For HTML namespace, tagName is uppercase. For other namespaces, preserve case.
+	// For HTML namespace, tagName is ASCII uppercase. For other namespaces, preserve case.
 	tagName := qualifiedName
 	if namespace == HTMLNamespace {
-		tagName = strings.ToUpper(qualifiedName)
+		tagName = toASCIIUppercase(qualifiedName)
 	}
 
 	node := newNode(ElementNode, qualifiedName, d)
