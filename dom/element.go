@@ -21,9 +21,11 @@ func (e *Element) NodeType() NodeType {
 	return ElementNode
 }
 
-// NodeName returns the tag name in uppercase.
+// NodeName returns the tag name.
+// For HTML namespace elements, this returns the uppercase version (same as tagName).
+// For other namespaces (SVG, MathML), the original case is preserved.
 func (e *Element) NodeName() string {
-	return e.AsNode().nodeName
+	return e.TagName()
 }
 
 // TagName returns the tag name in uppercase (for HTML elements).

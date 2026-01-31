@@ -174,12 +174,18 @@ func (d *Document) CreateElement(tagName string) *Element {
 func (d *Document) CreateElementNS(namespaceURI, qualifiedName string) *Element {
 	prefix, localName := parseQualifiedName(qualifiedName)
 
+	// For HTML namespace, tagName is uppercase. For other namespaces, preserve case.
+	tagName := qualifiedName
+	if namespaceURI == "http://www.w3.org/1999/xhtml" {
+		tagName = strings.ToUpper(qualifiedName)
+	}
+
 	node := newNode(ElementNode, qualifiedName, d)
 	node.elementData = &elementData{
 		localName:    localName,
 		namespaceURI: namespaceURI,
 		prefix:       prefix,
-		tagName:      strings.ToUpper(qualifiedName),
+		tagName:      tagName,
 	}
 	node.elementData.attributes = newNamedNodeMap((*Element)(node))
 
