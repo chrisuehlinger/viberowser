@@ -3987,6 +3987,8 @@ func (b *DOMBinder) initEventObject(event *goja.Object) {
 	// Internal flags for event dispatch
 	event.Set("_initialized", false)
 	event.Set("_dispatch", false)
+	event.Set("_stopPropagation", false)
+	event.Set("_stopImmediate", false)
 
 	// Methods
 	event.Set("preventDefault", func(call goja.FunctionCall) goja.Value {
@@ -4010,6 +4012,45 @@ func (b *DOMBinder) initEventObject(event *goja.Object) {
 	event.Set("composedPath", func(call goja.FunctionCall) goja.Value {
 		return vm.ToValue([]interface{}{})
 	})
+
+	// cancelBubble - legacy property that maps to stop propagation flag
+	// Per DOM spec: getter returns stop propagation flag, setter can only set it to true
+	event.DefineAccessorProperty("cancelBubble",
+		vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			stopProp := event.Get("_stopPropagation")
+			if stopProp != nil {
+				return vm.ToValue(stopProp.ToBoolean())
+			}
+			return vm.ToValue(false)
+		}),
+		vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			if len(call.Arguments) > 0 && call.Arguments[0].ToBoolean() {
+				event.Set("_stopPropagation", true)
+			}
+			return goja.Undefined()
+		}),
+		goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// returnValue - legacy property that is the inverse of defaultPrevented
+	// Per DOM spec: getter returns !defaultPrevented, setter calls preventDefault() when set to false
+	event.DefineAccessorProperty("returnValue",
+		vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			defaultPrevented := event.Get("defaultPrevented")
+			if defaultPrevented != nil {
+				return vm.ToValue(!defaultPrevented.ToBoolean())
+			}
+			return vm.ToValue(true)
+		}),
+		vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			if len(call.Arguments) > 0 && !call.Arguments[0].ToBoolean() {
+				// Setting returnValue to false is equivalent to calling preventDefault()
+				if event.Get("cancelable").ToBoolean() {
+					event.Set("defaultPrevented", true)
+				}
+			}
+			return goja.Undefined()
+		}),
+		goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	// initEvent(type, bubbles, cancelable) - legacy method to initialize an event
 	// Per DOM spec, this must be called on events created via createEvent() before dispatch

@@ -288,8 +288,10 @@ func (eb *EventBinder) BindEventTarget(obj *goja.Object) {
 		target := eb.GetOrCreateTarget(obj)
 		result := target.DispatchEvent(vm, event, EventPhaseAtTarget)
 
-		// Clear dispatch flag
+		// Clear dispatch flag and stop propagation flag after dispatch
 		event.Set("_dispatch", false)
+		event.Set("_stopPropagation", false)
+		event.Set("_stopImmediate", false)
 
 		return vm.ToValue(result)
 	})
@@ -358,6 +360,45 @@ func (eb *EventBinder) CreateEvent(eventType string, options map[string]interfac
 		// Return the path of targets
 		return vm.ToValue([]interface{}{})
 	})
+
+	// cancelBubble - legacy property that maps to stop propagation flag
+	// Per DOM spec: getter returns stop propagation flag, setter can only set it to true
+	event.DefineAccessorProperty("cancelBubble",
+		vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			stopProp := event.Get("_stopPropagation")
+			if stopProp != nil {
+				return vm.ToValue(stopProp.ToBoolean())
+			}
+			return vm.ToValue(false)
+		}),
+		vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			if len(call.Arguments) > 0 && call.Arguments[0].ToBoolean() {
+				event.Set("_stopPropagation", true)
+			}
+			return goja.Undefined()
+		}),
+		goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// returnValue - legacy property that is the inverse of defaultPrevented
+	// Per DOM spec: getter returns !defaultPrevented, setter calls preventDefault() when set to false
+	event.DefineAccessorProperty("returnValue",
+		vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			defaultPrevented := event.Get("defaultPrevented")
+			if defaultPrevented != nil {
+				return vm.ToValue(!defaultPrevented.ToBoolean())
+			}
+			return vm.ToValue(true)
+		}),
+		vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			if len(call.Arguments) > 0 && !call.Arguments[0].ToBoolean() {
+				// Setting returnValue to false is equivalent to calling preventDefault()
+				if event.Get("cancelable").ToBoolean() {
+					event.Set("defaultPrevented", true)
+				}
+			}
+			return goja.Undefined()
+		}),
+		goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	// initEvent(type, bubbles, cancelable) - legacy method
 	event.Set("initEvent", func(call goja.FunctionCall) goja.Value {
