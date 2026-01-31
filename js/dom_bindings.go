@@ -2,6 +2,7 @@ package js
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"unicode/utf16"
 
@@ -420,8 +421,8 @@ func (b *DOMBinder) setupPrototypes() {
 	b.documentProto = vm.NewObject()
 	b.documentProto.SetPrototype(b.nodeProto)
 	documentConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
-		// Per DOM spec, new Document() creates a new Document
-		doc := dom.NewDocument()
+		// Per DOM spec, new Document() creates a document with contentType "application/xml"
+		doc := dom.NewXMLDocument()
 		return b.bindDocumentInternal(doc)
 	})
 	documentConstructorObj := documentConstructor.ToObject(vm)
@@ -1642,7 +1643,13 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 		if goNode == nil {
 			return goja.Null()
 		}
-		adopted := doc.AdoptNode(goNode)
+		adopted, err := doc.AdoptNodeWithError(goNode)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("NotSupportedError", err.Error()))
+		}
 		if adopted == nil {
 			return goja.Null()
 		}
@@ -2121,7 +2128,13 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 		if goNode == nil {
 			return goja.Null()
 		}
-		adopted := doc.AdoptNode(goNode)
+		adopted, err := doc.AdoptNodeWithError(goNode)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("NotSupportedError", err.Error()))
+		}
 		if adopted == nil {
 			return goja.Null()
 		}
@@ -2394,13 +2407,15 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 	jsEl := vm.NewObject()
 
 	// Set prototype for instanceof to work
-	// Use specific HTML element prototype for HTML elements
+	// Use specific HTML element prototype for HTML elements in HTML documents
 	ns := el.NamespaceURI()
-	if ns == "" || ns == dom.HTMLNamespace {
+	ownerDoc := el.AsNode().OwnerDocument()
+	isHTMLDoc := ownerDoc != nil && ownerDoc.IsHTML()
+	if ns == dom.HTMLNamespace || (ns == "" && isHTMLDoc) {
 		// HTML element - use specific HTML element prototype
 		jsEl.SetPrototype(b.getHTMLElementPrototype(el.LocalName()))
 	} else if b.elementProto != nil {
-		// Non-HTML element (like SVG) - use generic Element prototype
+		// Non-HTML element (like SVG) or element in XML document - use generic Element prototype
 		jsEl.SetPrototype(b.elementProto)
 	}
 
@@ -3142,6 +3157,11 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		b.bindIframeProperties(jsEl, el)
 	}
 
+	// Add anchor-specific properties (href with URL encoding)
+	if el.LocalName() == "a" && (ns == dom.HTMLNamespace || (ns == "" && isHTMLDoc)) {
+		b.bindAnchorProperties(jsEl, el)
+	}
+
 	// Bind common node properties and methods
 	b.bindNodeProperties(jsEl, node)
 
@@ -3189,6 +3209,53 @@ func (b *DOMBinder) bindIframeProperties(jsEl *goja.Object, el *dom.Element) {
 		}
 		return contentDocument
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+}
+
+// encodeURLForHref encodes non-ASCII characters in a URL per WHATWG URL spec.
+func encodeURLForHref(urlStr string) string {
+	parsed, err := url.Parse(urlStr)
+	if err != nil {
+		return urlStr
+	}
+
+	// Encode non-ASCII characters in each component
+	// The query string needs special handling - Go's url.Parse preserves non-ASCII chars
+	if parsed.RawQuery != "" {
+		// Encode non-ASCII characters in the query string
+		encoded := ""
+		for _, r := range parsed.RawQuery {
+			if r > 127 {
+				// Encode non-ASCII as UTF-8 percent-encoded
+				encoded += url.QueryEscape(string(r))
+			} else {
+				encoded += string(r)
+			}
+		}
+		parsed.RawQuery = encoded
+	}
+
+	return parsed.String()
+}
+
+// bindAnchorProperties adds HTMLAnchorElement-specific properties with proper URL encoding.
+func (b *DOMBinder) bindAnchorProperties(jsEl *goja.Object, el *dom.Element) {
+	vm := b.runtime.vm
+
+	// href property with URL encoding per WHATWG URL spec
+	jsEl.DefineAccessorProperty("href", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		href := el.GetAttribute("href")
+		if href == "" {
+			return vm.ToValue("")
+		}
+		return vm.ToValue(encodeURLForHref(href))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			hrefVal := call.Arguments[0].String()
+			// Store the URL as-is; encoding happens in the getter
+			el.SetAttribute("href", hrefVal)
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
 }
 
 // BindNode creates a JavaScript object from a DOM node.

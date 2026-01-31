@@ -57,6 +57,18 @@ func NewDocument() *Document {
 	return doc
 }
 
+// NewXMLDocument creates a new empty XML Document (for new Document() constructor).
+// Per DOM spec, the Document() constructor creates a document with contentType "application/xml".
+func NewXMLDocument() *Document {
+	node := newNode(DocumentNode, "#document", nil)
+	node.documentData = &documentData{
+		contentType: "application/xml",
+	}
+	doc := (*Document)(node)
+	node.ownerDoc = doc
+	return doc
+}
+
 // IsHTML returns true if this is an HTML document.
 func (d *Document) IsHTML() bool {
 	return d.AsNode().documentData.contentType == "text/html"
@@ -668,8 +680,20 @@ func (d *Document) ImportNode(node *Node, deep bool) *Node {
 
 // AdoptNode adopts a node from another document.
 func (d *Document) AdoptNode(node *Node) *Node {
+	result, _ := d.AdoptNodeWithError(node)
+	return result
+}
+
+// AdoptNodeWithError adopts a node from another document, returning an error
+// if the node cannot be adopted (e.g., Document nodes cannot be adopted).
+func (d *Document) AdoptNodeWithError(node *Node) (*Node, error) {
 	if node == nil {
-		return nil
+		return nil, nil
+	}
+
+	// Per DOM spec, Document nodes cannot be adopted
+	if node.nodeType == DocumentNode {
+		return nil, ErrNotSupported("Document nodes cannot be adopted")
 	}
 
 	// Remove from current parent
@@ -678,7 +702,7 @@ func (d *Document) AdoptNode(node *Node) *Node {
 	}
 
 	d.adoptNode(node)
-	return node
+	return node, nil
 }
 
 func (d *Document) adoptNode(node *Node) {
