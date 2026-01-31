@@ -124,3 +124,30 @@ func (a *Attr) CloneNode(deep bool) *Node {
 	}
 	return node
 }
+
+// LookupNamespaceURI returns the namespace URI for the given prefix.
+// For Attr nodes, this delegates to the owner element if connected.
+// Disconnected Attrs have no namespace context and return empty for all prefixes.
+func (a *Attr) LookupNamespaceURI(prefix string) string {
+	// If connected to an element, delegate to the element
+	// (which will handle the special xml/xmlns prefixes)
+	if a.ownerElement != nil {
+		return (*Node)(a.ownerElement).LookupNamespaceURI(prefix)
+	}
+	// Disconnected attrs have no namespace context
+	return ""
+}
+
+// IsDefaultNamespace returns true if the given namespace URI is the default namespace.
+func (a *Attr) IsDefaultNamespace(namespaceURI string) bool {
+	defaultNS := a.LookupNamespaceURI("")
+	return defaultNS == namespaceURI
+}
+
+// LookupPrefix returns the prefix associated with a given namespace URI.
+func (a *Attr) LookupPrefix(namespaceURI string) string {
+	if a.ownerElement != nil {
+		return (*Node)(a.ownerElement).LookupPrefix(namespaceURI)
+	}
+	return ""
+}

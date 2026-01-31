@@ -840,8 +840,27 @@ func (n *Node) LookupNamespaceURI(prefix string) string {
 
 func (n *Node) lookupNamespaceURI(prefix string) string {
 	switch n.nodeType {
+	case DocumentNode:
+		// Document delegates to its document element (first child element)
+		for child := n.firstChild; child != nil; child = child.nextSibling {
+			if child.nodeType == ElementNode {
+				return child.lookupNamespaceURI(prefix)
+			}
+		}
+		return ""
+
 	case ElementNode:
+		// Handle special prefixes only for Element nodes (per DOM spec)
+		// These are always available when you reach an Element context
+		if prefix == "xml" {
+			return "http://www.w3.org/XML/1998/namespace"
+		}
+		if prefix == "xmlns" {
+			return "http://www.w3.org/2000/xmlns/"
+		}
+
 		if n.elementData != nil {
+			// Check if the element's namespace matches the prefix
 			if n.elementData.prefix == prefix && n.elementData.namespaceURI != "" {
 				return n.elementData.namespaceURI
 			}
@@ -857,8 +876,21 @@ func (n *Node) lookupNamespaceURI(prefix string) string {
 				}
 			}
 		}
+		// Element continues to parent for further lookup,
+		// but only if parent is another Element (not Document, DocumentFragment, etc.)
+		if n.parentNode != nil && n.parentNode.nodeType == ElementNode {
+			return n.parentNode.lookupNamespaceURI(prefix)
+		}
+		return ""
+
+	case DocumentTypeNode, DocumentFragmentNode:
+		// These nodes cannot have namespaces, return empty
+		return ""
 	}
-	if n.parentNode != nil {
+
+	// For other nodes (Text, Comment, etc.), delegate to parent Element only
+	// If the parent is Document, we don't inherit namespace from document's element
+	if n.parentNode != nil && n.parentNode.nodeType == ElementNode {
 		return n.parentNode.lookupNamespaceURI(prefix)
 	}
 	return ""

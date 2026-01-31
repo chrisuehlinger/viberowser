@@ -3121,6 +3121,41 @@ func (b *DOMBinder) bindNodeProperties(jsObj *goja.Object, node *dom.Node) {
 		}
 		return vm.ToValue(int(node.CompareDocumentPosition(goOther)))
 	})
+
+	// lookupNamespaceURI returns the namespace URI associated with a given prefix
+	jsObj.Set("lookupNamespaceURI", func(call goja.FunctionCall) goja.Value {
+		var prefix string
+		if len(call.Arguments) > 0 && !goja.IsNull(call.Arguments[0]) && !goja.IsUndefined(call.Arguments[0]) {
+			prefix = call.Arguments[0].String()
+		}
+		result := node.LookupNamespaceURI(prefix)
+		if result == "" {
+			return goja.Null()
+		}
+		return vm.ToValue(result)
+	})
+
+	// isDefaultNamespace checks if the given namespace URI is the default namespace
+	jsObj.Set("isDefaultNamespace", func(call goja.FunctionCall) goja.Value {
+		var namespaceURI string
+		if len(call.Arguments) > 0 && !goja.IsNull(call.Arguments[0]) && !goja.IsUndefined(call.Arguments[0]) {
+			namespaceURI = call.Arguments[0].String()
+		}
+		return vm.ToValue(node.IsDefaultNamespace(namespaceURI))
+	})
+
+	// lookupPrefix returns the prefix associated with a given namespace URI
+	jsObj.Set("lookupPrefix", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 || goja.IsNull(call.Arguments[0]) || goja.IsUndefined(call.Arguments[0]) {
+			return goja.Null()
+		}
+		namespaceURI := call.Arguments[0].String()
+		result := node.LookupPrefix(namespaceURI)
+		if result == "" {
+			return goja.Null()
+		}
+		return vm.ToValue(result)
+	})
 }
 
 // setupNodePrototypeMethods adds Node methods to the prototype so that
@@ -3394,6 +3429,56 @@ func (b *DOMBinder) setupNodePrototypeMethods() {
 			return vm.ToValue(0)
 		}
 		return vm.ToValue(int(node.CompareDocumentPosition(goOther)))
+	})
+
+	// lookupNamespaceURI - prototype version
+	b.nodeProto.Set("lookupNamespaceURI", func(call goja.FunctionCall) goja.Value {
+		thisObj := call.This.ToObject(vm)
+		node := b.getGoNode(thisObj)
+		if node == nil {
+			panic(vm.NewTypeError("Illegal invocation"))
+		}
+		var prefix string
+		if len(call.Arguments) > 0 && !goja.IsNull(call.Arguments[0]) && !goja.IsUndefined(call.Arguments[0]) {
+			prefix = call.Arguments[0].String()
+		}
+		result := node.LookupNamespaceURI(prefix)
+		if result == "" {
+			return goja.Null()
+		}
+		return vm.ToValue(result)
+	})
+
+	// isDefaultNamespace - prototype version
+	b.nodeProto.Set("isDefaultNamespace", func(call goja.FunctionCall) goja.Value {
+		thisObj := call.This.ToObject(vm)
+		node := b.getGoNode(thisObj)
+		if node == nil {
+			panic(vm.NewTypeError("Illegal invocation"))
+		}
+		var namespaceURI string
+		if len(call.Arguments) > 0 && !goja.IsNull(call.Arguments[0]) && !goja.IsUndefined(call.Arguments[0]) {
+			namespaceURI = call.Arguments[0].String()
+		}
+		return vm.ToValue(node.IsDefaultNamespace(namespaceURI))
+	})
+
+	// lookupPrefix - prototype version
+	b.nodeProto.Set("lookupPrefix", func(call goja.FunctionCall) goja.Value {
+		thisObj := call.This.ToObject(vm)
+		node := b.getGoNode(thisObj)
+		if node == nil {
+			panic(vm.NewTypeError("Illegal invocation"))
+		}
+		if len(call.Arguments) < 1 || goja.IsNull(call.Arguments[0]) || goja.IsUndefined(call.Arguments[0]) {
+			return goja.Null()
+		}
+		namespaceURI := call.Arguments[0].String()
+		result := node.LookupPrefix(namespaceURI)
+		if result == "" {
+			return goja.Null()
+		}
+		return vm.ToValue(result)
 	})
 }
 
@@ -4284,6 +4369,41 @@ func (b *DOMBinder) BindAttr(attr *dom.Attr) *goja.Object {
 		// For now, create a new Attr with the same properties
 		clonedAttr := dom.NewAttr(attr.LocalName(), attr.Value())
 		return b.BindAttr(clonedAttr)
+	})
+
+	// lookupNamespaceURI - returns the namespace URI for the given prefix
+	jsAttr.Set("lookupNamespaceURI", func(call goja.FunctionCall) goja.Value {
+		var prefix string
+		if len(call.Arguments) > 0 && !goja.IsNull(call.Arguments[0]) && !goja.IsUndefined(call.Arguments[0]) {
+			prefix = call.Arguments[0].String()
+		}
+		result := attr.LookupNamespaceURI(prefix)
+		if result == "" {
+			return goja.Null()
+		}
+		return vm.ToValue(result)
+	})
+
+	// isDefaultNamespace - checks if the given namespace URI is the default namespace
+	jsAttr.Set("isDefaultNamespace", func(call goja.FunctionCall) goja.Value {
+		var namespaceURI string
+		if len(call.Arguments) > 0 && !goja.IsNull(call.Arguments[0]) && !goja.IsUndefined(call.Arguments[0]) {
+			namespaceURI = call.Arguments[0].String()
+		}
+		return vm.ToValue(attr.IsDefaultNamespace(namespaceURI))
+	})
+
+	// lookupPrefix - returns the prefix associated with a given namespace URI
+	jsAttr.Set("lookupPrefix", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 || goja.IsNull(call.Arguments[0]) || goja.IsUndefined(call.Arguments[0]) {
+			return goja.Null()
+		}
+		namespaceURI := call.Arguments[0].String()
+		result := attr.LookupPrefix(namespaceURI)
+		if result == "" {
+			return goja.Null()
+		}
+		return vm.ToValue(result)
 	})
 
 	return jsAttr
