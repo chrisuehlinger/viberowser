@@ -887,3 +887,76 @@ func TestDOMTokenList_Deduplication(t *testing.T) {
 		t.Errorf("Expected Item(2) to be 'c', got '%s'", classList.Item(2))
 	}
 }
+
+func TestNode_HierarchyRequestError(t *testing.T) {
+	doc := NewDocument()
+
+	// Test 1: Text node cannot have children
+	text := doc.CreateTextNode("hello")
+	child := doc.CreateTextNode("world")
+	_, err := text.AppendChildWithError(child)
+	if err == nil {
+		t.Error("Expected HierarchyRequestError when appending to Text node")
+	}
+	if domErr, ok := err.(*DOMError); ok {
+		if domErr.Name != "HierarchyRequestError" {
+			t.Errorf("Expected HierarchyRequestError, got %s", domErr.Name)
+		}
+	}
+
+	// Test 2: Comment node cannot have children
+	comment := doc.CreateComment("comment")
+	_, err = comment.AppendChildWithError(child)
+	if err == nil {
+		t.Error("Expected HierarchyRequestError when appending to Comment node")
+	}
+
+	// Test 3: Cannot append an ancestor to a descendant
+	parent := doc.CreateElement("div")
+	childEl := doc.CreateElement("span")
+	grandchild := doc.CreateElement("a")
+	parent.AsNode().AppendChild(childEl.AsNode())
+	childEl.AsNode().AppendChild(grandchild.AsNode())
+
+	_, err = grandchild.AsNode().AppendChildWithError(parent.AsNode())
+	if err == nil {
+		t.Error("Expected HierarchyRequestError when creating circular reference")
+	}
+	if domErr, ok := err.(*DOMError); ok {
+		if domErr.Name != "HierarchyRequestError" {
+			t.Errorf("Expected HierarchyRequestError, got %s", domErr.Name)
+		}
+	}
+
+	// Test 4: Element cannot have Document child
+	newDoc := NewDocument()
+	_, err = parent.AsNode().AppendChildWithError(newDoc.AsNode())
+	if err == nil {
+		t.Error("Expected HierarchyRequestError when appending Document to Element")
+	}
+
+	// Test 5: Document can only have one element child
+	doc2 := NewDocument()
+	html := doc2.CreateElement("html")
+	doc2.AsNode().AppendChild(html.AsNode())
+
+	extraElement := doc2.CreateElement("extra")
+	_, err = doc2.AsNode().AppendChildWithError(extraElement.AsNode())
+	if err == nil {
+		t.Error("Expected HierarchyRequestError when adding second element to Document")
+	}
+
+	// Test 6: NotFoundError when refChild is not a child
+	parent2 := doc.CreateElement("div")
+	notChild := doc.CreateElement("notchild")
+	newNode := doc.CreateElement("new")
+	_, err = parent2.AsNode().InsertBeforeWithError(newNode.AsNode(), notChild.AsNode())
+	if err == nil {
+		t.Error("Expected NotFoundError when refChild is not a child")
+	}
+	if domErr, ok := err.(*DOMError); ok {
+		if domErr.Name != "NotFoundError" {
+			t.Errorf("Expected NotFoundError, got %s", domErr.Name)
+		}
+	}
+}

@@ -1,0 +1,50 @@
+package dom
+
+import "fmt"
+
+// DOMError represents a DOM exception with a name and message.
+type DOMError struct {
+	Name    string
+	Message string
+}
+
+func (e *DOMError) Error() string {
+	return fmt.Sprintf("%s: %s", e.Name, e.Message)
+}
+
+// Common DOM error constructors
+
+// ErrHierarchyRequest creates a HierarchyRequestError.
+func ErrHierarchyRequest(message string) *DOMError {
+	return &DOMError{Name: "HierarchyRequestError", Message: message}
+}
+
+// ErrNotFound creates a NotFoundError.
+func ErrNotFound(message string) *DOMError {
+	return &DOMError{Name: "NotFoundError", Message: message}
+}
+
+// ErrInvalidCharacter creates an InvalidCharacterError.
+func ErrInvalidCharacter(message string) *DOMError {
+	return &DOMError{Name: "InvalidCharacterError", Message: message}
+}
+
+// ErrNotSupported creates a NotSupportedError.
+func ErrNotSupported(message string) *DOMError {
+	return &DOMError{Name: "NotSupportedError", Message: message}
+}
+
+// ErrInvalidState creates an InvalidStateError.
+func ErrInvalidState(message string) *DOMError {
+	return &DOMError{Name: "InvalidStateError", Message: message}
+}
+
+// ErrIndexSize creates an IndexSizeError.
+func ErrIndexSize(message string) *DOMError {
+	return &DOMError{Name: "IndexSizeError", Message: message}
+}
+
+// ErrWrongDocument creates a WrongDocumentError.
+func ErrWrongDocument(message string) *DOMError {
+	return &DOMError{Name: "WrongDocumentError", Message: message}
+}

@@ -340,6 +340,14 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 	jsDoc.Set("nodeName", "#document")
 
 	// Document accessors
+	jsDoc.DefineAccessorProperty("doctype", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		doctype := doc.Doctype()
+		if doctype == nil {
+			return goja.Null()
+		}
+		return b.BindNode(doctype)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
 	jsDoc.DefineAccessorProperty("documentElement", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		el := doc.DocumentElement()
 		if el == nil {
@@ -1536,6 +1544,24 @@ func (b *DOMBinder) throwIndexSizeError(vm *goja.Runtime) {
 	panic(vm.ToValue(exc))
 }
 
+// throwDOMError throws a DOMException from a dom.DOMError.
+func (b *DOMBinder) throwDOMError(vm *goja.Runtime, err *dom.DOMError) {
+	exc := b.createDOMException(err.Name, err.Message)
+	panic(vm.ToValue(exc))
+}
+
+// throwHierarchyRequestError throws a DOMException with name "HierarchyRequestError".
+func (b *DOMBinder) throwHierarchyRequestError(vm *goja.Runtime, message string) {
+	exc := b.createDOMException("HierarchyRequestError", message)
+	panic(vm.ToValue(exc))
+}
+
+// throwNotFoundError throws a DOMException with name "NotFoundError".
+func (b *DOMBinder) throwNotFoundError(vm *goja.Runtime, message string) {
+	exc := b.createDOMException("NotFoundError", message)
+	panic(vm.ToValue(exc))
+}
+
 // bindCharacterDataMethods adds the CharacterData mutation methods to a node.
 // These are: substringData, appendData, insertData, deleteData, replaceData
 func (b *DOMBinder) bindCharacterDataMethods(jsNode *goja.Object, node *dom.Node) {
@@ -1920,55 +1946,90 @@ func (b *DOMBinder) bindNodeProperties(jsObj *goja.Object, node *dom.Node) {
 	})
 
 	jsObj.Set("appendChild", func(call goja.FunctionCall) goja.Value {
-		if len(call.Arguments) < 1 {
-			return goja.Null()
+		// Per WebIDL, appendChild requires 1 argument and it must be a Node
+		if len(call.Arguments) < 1 || goja.IsNull(call.Arguments[0]) || goja.IsUndefined(call.Arguments[0]) {
+			panic(vm.NewTypeError("Failed to execute 'appendChild' on 'Node': 1 argument required, but only 0 present."))
 		}
-		childObj := call.Arguments[0].ToObject(vm)
-		goChild := b.getGoNode(childObj)
-		if goChild == nil {
-			return goja.Null()
+
+		arg := call.Arguments[0]
+		// Check if it's an object that could be a Node
+		if !goja.IsNull(arg) && !goja.IsUndefined(arg) {
+			childObj := arg.ToObject(vm)
+			goChild := b.getGoNode(childObj)
+			if goChild == nil {
+				// Argument is not a Node - throw TypeError
+				panic(vm.NewTypeError("Failed to execute 'appendChild' on 'Node': parameter 1 is not of type 'Node'."))
+			}
+
+			result, err := node.AppendChildWithError(goChild)
+			if err != nil {
+				if domErr, ok := err.(*dom.DOMError); ok {
+					b.throwDOMError(vm, domErr)
+				}
+				return goja.Null()
+			}
+			return b.BindNode(result)
 		}
-		result := node.AppendChild(goChild)
-		if result == nil {
-			return goja.Null()
-		}
-		return b.BindNode(result)
+		// null or undefined - throw TypeError
+		panic(vm.NewTypeError("Failed to execute 'appendChild' on 'Node': parameter 1 is not of type 'Node'."))
 	})
 
 	jsObj.Set("insertBefore", func(call goja.FunctionCall) goja.Value {
-		if len(call.Arguments) < 1 {
-			return goja.Null()
+		// Per WebIDL, insertBefore requires 2 arguments
+		if len(call.Arguments) < 2 {
+			panic(vm.NewTypeError("Failed to execute 'insertBefore' on 'Node': 2 arguments required."))
 		}
-		newChildObj := call.Arguments[0].ToObject(vm)
+
+		// First argument must be a Node (not null)
+		arg0 := call.Arguments[0]
+		if goja.IsNull(arg0) || goja.IsUndefined(arg0) {
+			panic(vm.NewTypeError("Failed to execute 'insertBefore' on 'Node': parameter 1 is not of type 'Node'."))
+		}
+
+		newChildObj := arg0.ToObject(vm)
 		goNewChild := b.getGoNode(newChildObj)
 		if goNewChild == nil {
-			return goja.Null()
+			panic(vm.NewTypeError("Failed to execute 'insertBefore' on 'Node': parameter 1 is not of type 'Node'."))
 		}
 
+		// Second argument can be Node, null, or undefined (treated as null)
 		var goRefChild *dom.Node
-		if len(call.Arguments) > 1 && !goja.IsNull(call.Arguments[1]) {
-			refChildObj := call.Arguments[1].ToObject(vm)
+		arg1 := call.Arguments[1]
+		if !goja.IsNull(arg1) && !goja.IsUndefined(arg1) {
+			refChildObj := arg1.ToObject(vm)
 			goRefChild = b.getGoNode(refChildObj)
+			if goRefChild == nil {
+				// Not a Node and not null - throw TypeError
+				panic(vm.NewTypeError("Failed to execute 'insertBefore' on 'Node': parameter 2 is not of type 'Node'."))
+			}
 		}
 
-		result := node.InsertBefore(goNewChild, goRefChild)
-		if result == nil {
+		result, err := node.InsertBeforeWithError(goNewChild, goRefChild)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				b.throwDOMError(vm, domErr)
+			}
 			return goja.Null()
 		}
 		return b.BindNode(result)
 	})
 
 	jsObj.Set("removeChild", func(call goja.FunctionCall) goja.Value {
-		if len(call.Arguments) < 1 {
-			return goja.Null()
+		if len(call.Arguments) < 1 || goja.IsNull(call.Arguments[0]) || goja.IsUndefined(call.Arguments[0]) {
+			panic(vm.NewTypeError("Failed to execute 'removeChild' on 'Node': 1 argument required."))
 		}
+
 		childObj := call.Arguments[0].ToObject(vm)
 		goChild := b.getGoNode(childObj)
 		if goChild == nil {
-			return goja.Null()
+			panic(vm.NewTypeError("Failed to execute 'removeChild' on 'Node': parameter 1 is not of type 'Node'."))
 		}
-		result := node.RemoveChild(goChild)
-		if result == nil {
+
+		result, err := node.RemoveChildWithError(goChild)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				b.throwDOMError(vm, domErr)
+			}
 			return goja.Null()
 		}
 		// Remove from cache since it's been detached
@@ -1978,17 +2039,36 @@ func (b *DOMBinder) bindNodeProperties(jsObj *goja.Object, node *dom.Node) {
 
 	jsObj.Set("replaceChild", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 2 {
-			return goja.Null()
+			panic(vm.NewTypeError("Failed to execute 'replaceChild' on 'Node': 2 arguments required."))
 		}
-		newChildObj := call.Arguments[0].ToObject(vm)
-		oldChildObj := call.Arguments[1].ToObject(vm)
+
+		arg0 := call.Arguments[0]
+		arg1 := call.Arguments[1]
+
+		if goja.IsNull(arg0) || goja.IsUndefined(arg0) {
+			panic(vm.NewTypeError("Failed to execute 'replaceChild' on 'Node': parameter 1 is not of type 'Node'."))
+		}
+		if goja.IsNull(arg1) || goja.IsUndefined(arg1) {
+			panic(vm.NewTypeError("Failed to execute 'replaceChild' on 'Node': parameter 2 is not of type 'Node'."))
+		}
+
+		newChildObj := arg0.ToObject(vm)
+		oldChildObj := arg1.ToObject(vm)
 		goNewChild := b.getGoNode(newChildObj)
 		goOldChild := b.getGoNode(oldChildObj)
-		if goNewChild == nil || goOldChild == nil {
-			return goja.Null()
+
+		if goNewChild == nil {
+			panic(vm.NewTypeError("Failed to execute 'replaceChild' on 'Node': parameter 1 is not of type 'Node'."))
 		}
-		result := node.ReplaceChild(goNewChild, goOldChild)
-		if result == nil {
+		if goOldChild == nil {
+			panic(vm.NewTypeError("Failed to execute 'replaceChild' on 'Node': parameter 2 is not of type 'Node'."))
+		}
+
+		result, err := node.ReplaceChildWithError(goNewChild, goOldChild)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				b.throwDOMError(vm, domErr)
+			}
 			return goja.Null()
 		}
 		delete(b.nodeMap, result)

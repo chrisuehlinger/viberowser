@@ -209,14 +209,219 @@ func (n *Node) SetTextContent(value string) {
 }
 
 // AppendChild adds a node to the end of the list of children of this node.
+// For error-returning version, use AppendChildWithError.
 func (n *Node) AppendChild(child *Node) *Node {
-	return n.insertBefore(child, nil)
+	result, _ := n.AppendChildWithError(child)
+	return result
+}
+
+// AppendChildWithError adds a node to the end of the list of children of this node.
+// Returns an error if the operation violates DOM hierarchy constraints.
+func (n *Node) AppendChildWithError(child *Node) (*Node, error) {
+	return n.InsertBeforeWithError(child, nil)
 }
 
 // InsertBefore inserts a node before a reference child node.
 // If refChild is nil, the node is appended to the end.
+// For error-returning version, use InsertBeforeWithError.
 func (n *Node) InsertBefore(newChild, refChild *Node) *Node {
-	return n.insertBefore(newChild, refChild)
+	result, _ := n.InsertBeforeWithError(newChild, refChild)
+	return result
+}
+
+// InsertBeforeWithError inserts a node before a reference child node.
+// If refChild is nil, the node is appended to the end.
+// Returns an error if the operation violates DOM hierarchy constraints.
+func (n *Node) InsertBeforeWithError(newChild, refChild *Node) (*Node, error) {
+	// Validate the insertion according to DOM spec
+	if err := n.validatePreInsertion(newChild, refChild); err != nil {
+		return nil, err
+	}
+	return n.insertBefore(newChild, refChild), nil
+}
+
+// validatePreInsertion implements the pre-insertion validation steps from the DOM spec.
+// https://dom.spec.whatwg.org/#concept-node-pre-insert
+func (n *Node) validatePreInsertion(node, child *Node) error {
+	// Step 1: If parent is not a Document, DocumentFragment, or Element node, throw HierarchyRequestError
+	if !n.canHaveChildren() {
+		return ErrHierarchyRequest("The operation would yield an incorrect node tree.")
+	}
+
+	// Step 2: If node is a host-including inclusive ancestor of parent, throw HierarchyRequestError
+	if n.isInclusiveAncestor(node) {
+		return ErrHierarchyRequest("The new child element contains the parent.")
+	}
+
+	// Step 3: If child is non-null and its parent is not parent, throw NotFoundError
+	if child != nil && child.parentNode != n {
+		return ErrNotFound("The node before which the new node is to be inserted is not a child of this node.")
+	}
+
+	// Step 4: If node is not a DocumentFragment, DocumentType, Element, Text, ProcessingInstruction, or Comment node
+	if !n.isValidChildType(node) {
+		return ErrHierarchyRequest("The operation would yield an incorrect node tree.")
+	}
+
+	// Step 5: If node is a Text node and parent is a document, or node is a doctype and parent is not a document
+	if node.nodeType == TextNode && n.nodeType == DocumentNode {
+		return ErrHierarchyRequest("Cannot insert Text node as a direct child of Document.")
+	}
+	if node.nodeType == DocumentTypeNode && n.nodeType != DocumentNode {
+		return ErrHierarchyRequest("DocumentType nodes can only be children of Document.")
+	}
+
+	// Step 6: If parent is a document, special validation for document children
+	if n.nodeType == DocumentNode {
+		if err := n.validateDocumentInsertion(node, child); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// canHaveChildren returns true if this node can have child nodes.
+func (n *Node) canHaveChildren() bool {
+	switch n.nodeType {
+	case DocumentNode, DocumentFragmentNode, ElementNode:
+		return true
+	default:
+		return false
+	}
+}
+
+// isInclusiveAncestor returns true if node is this node or an ancestor of this node.
+func (n *Node) isInclusiveAncestor(node *Node) bool {
+	if node == nil {
+		return false
+	}
+	for current := n; current != nil; current = current.parentNode {
+		if current == node {
+			return true
+		}
+	}
+	return false
+}
+
+// isValidChildType returns true if node is a valid type for children.
+func (n *Node) isValidChildType(node *Node) bool {
+	if node == nil {
+		return false
+	}
+	switch node.nodeType {
+	case DocumentFragmentNode, DocumentTypeNode, ElementNode, TextNode,
+		ProcessingInstructionNode, CommentNode:
+		return true
+	default:
+		// Document nodes and other types cannot be children
+		return false
+	}
+}
+
+// validateDocumentInsertion performs additional validation for inserting into a Document node.
+func (n *Node) validateDocumentInsertion(node, child *Node) error {
+	switch node.nodeType {
+	case DocumentFragmentNode:
+		// Count element children in the fragment
+		elementCount := 0
+		hasText := false
+		for c := node.firstChild; c != nil; c = c.nextSibling {
+			if c.nodeType == ElementNode {
+				elementCount++
+			}
+			if c.nodeType == TextNode {
+				hasText = true
+			}
+		}
+
+		// A document fragment with text nodes cannot be inserted
+		if hasText {
+			return ErrHierarchyRequest("Cannot insert Text node as a direct child of Document.")
+		}
+
+		// A document fragment with more than one element cannot be inserted
+		if elementCount > 1 {
+			return ErrHierarchyRequest("Document can have only one element child.")
+		}
+
+		// If the fragment has an element, check if document already has one
+		// and also check doctype positioning
+		if elementCount == 1 {
+			if n.hasElementChild() {
+				return ErrHierarchyRequest("Document already has a document element.")
+			}
+			// Check if a doctype follows the reference child
+			if child != nil && n.doctypeFollows(child) {
+				return ErrHierarchyRequest("Cannot insert element before document element when doctype follows.")
+			}
+		}
+
+	case ElementNode:
+		// Document can only have one element child
+		if n.hasElementChild() {
+			return ErrHierarchyRequest("Document already has a document element.")
+		}
+		// Check if a doctype follows the reference child
+		if child != nil && n.doctypeFollows(child) {
+			return ErrHierarchyRequest("Cannot insert element before doctype.")
+		}
+
+	case DocumentTypeNode:
+		// Document can only have one doctype
+		if n.hasDoctype() {
+			return ErrHierarchyRequest("Document already has a doctype.")
+		}
+		// Doctype cannot be inserted after an element
+		if n.hasElementChild() {
+			// Check if child is null (append) or if element precedes child
+			if child == nil || n.elementPrecedes(child) {
+				return ErrHierarchyRequest("Cannot insert doctype after document element.")
+			}
+		}
+	}
+
+	return nil
+}
+
+// hasElementChild returns true if this node has an element child.
+func (n *Node) hasElementChild() bool {
+	for c := n.firstChild; c != nil; c = c.nextSibling {
+		if c.nodeType == ElementNode {
+			return true
+		}
+	}
+	return false
+}
+
+// hasDoctype returns true if this document has a doctype child.
+func (n *Node) hasDoctype() bool {
+	for c := n.firstChild; c != nil; c = c.nextSibling {
+		if c.nodeType == DocumentTypeNode {
+			return true
+		}
+	}
+	return false
+}
+
+// doctypeFollows returns true if there is a doctype node following the given child.
+func (n *Node) doctypeFollows(child *Node) bool {
+	for c := child.nextSibling; c != nil; c = c.nextSibling {
+		if c.nodeType == DocumentTypeNode {
+			return true
+		}
+	}
+	return false
+}
+
+// elementPrecedes returns true if there is an element node preceding the given child (or if child is nil, anywhere).
+func (n *Node) elementPrecedes(child *Node) bool {
+	for c := n.firstChild; c != nil && c != child; c = c.nextSibling {
+		if c.nodeType == ElementNode {
+			return true
+		}
+	}
+	return false
 }
 
 func (n *Node) insertBefore(newChild, refChild *Node) *Node {
@@ -237,6 +442,11 @@ func (n *Node) insertBefore(newChild, refChild *Node) *Node {
 		return newChild
 	}
 
+	// If inserting a node before itself, return early (no-op)
+	if newChild == refChild {
+		return newChild
+	}
+
 	// Remove from current parent if necessary
 	if newChild.parentNode != nil {
 		newChild.parentNode.RemoveChild(newChild)
@@ -244,7 +454,15 @@ func (n *Node) insertBefore(newChild, refChild *Node) *Node {
 
 	// Set the new parent
 	newChild.parentNode = n
-	newChild.ownerDoc = n.ownerDoc
+
+	// Adopt the node to this document if needed
+	if n.ownerDoc != nil && newChild.ownerDoc != n.ownerDoc {
+		adoptNode(newChild, n.ownerDoc)
+	} else if n.nodeType == DocumentNode {
+		// If parent is a Document, set ownerDoc to the document itself
+		doc := (*Document)(n)
+		adoptNode(newChild, doc)
+	}
 
 	if refChild == nil {
 		// Append to the end
@@ -271,10 +489,29 @@ func (n *Node) insertBefore(newChild, refChild *Node) *Node {
 	return newChild
 }
 
+// adoptNode recursively sets the ownerDocument for a node and its descendants.
+func adoptNode(node *Node, doc *Document) {
+	node.ownerDoc = doc
+	for child := node.firstChild; child != nil; child = child.nextSibling {
+		adoptNode(child, doc)
+	}
+}
+
 // RemoveChild removes a child node from this node.
+// For error-returning version, use RemoveChildWithError.
 func (n *Node) RemoveChild(child *Node) *Node {
-	if child == nil || child.parentNode != n {
-		return nil
+	result, _ := n.RemoveChildWithError(child)
+	return result
+}
+
+// RemoveChildWithError removes a child node from this node.
+// Returns an error if the child is not a child of this node.
+func (n *Node) RemoveChildWithError(child *Node) (*Node, error) {
+	if child == nil {
+		return nil, ErrNotFound("The node to be removed is null.")
+	}
+	if child.parentNode != n {
+		return nil, ErrNotFound("The node to be removed is not a child of this node.")
 	}
 
 	// Update sibling pointers
@@ -295,16 +532,36 @@ func (n *Node) RemoveChild(child *Node) *Node {
 	child.prevSibling = nil
 	child.nextSibling = nil
 
-	return child
+	return child, nil
 }
 
 // ReplaceChild replaces a child node with a new node.
+// For error-returning version, use ReplaceChildWithError.
 func (n *Node) ReplaceChild(newChild, oldChild *Node) *Node {
-	if oldChild == nil || oldChild.parentNode != n {
-		return nil
+	result, _ := n.ReplaceChildWithError(newChild, oldChild)
+	return result
+}
+
+// ReplaceChildWithError replaces a child node with a new node.
+// Returns an error if the operation violates DOM hierarchy constraints.
+func (n *Node) ReplaceChildWithError(newChild, oldChild *Node) (*Node, error) {
+	if oldChild == nil {
+		return nil, ErrNotFound("The node to be replaced is null.")
 	}
-	n.InsertBefore(newChild, oldChild)
-	return n.RemoveChild(oldChild)
+	if oldChild.parentNode != n {
+		return nil, ErrNotFound("The node to be replaced is not a child of this node.")
+	}
+
+	// Validate the insertion (treating oldChild as the reference child position)
+	if err := n.validatePreInsertion(newChild, oldChild); err != nil {
+		return nil, err
+	}
+
+	// Insert the new child before the old child
+	n.insertBefore(newChild, oldChild)
+
+	// Remove the old child
+	return n.RemoveChildWithError(oldChild)
 }
 
 // CloneNode creates a copy of this node.

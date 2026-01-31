@@ -155,6 +155,123 @@ func TestWPTRunner(t *testing.T) {
 	}
 }
 
+// TestWPTNodeAppendChild tests the Node.appendChild WPT test specifically
+func TestWPTNodeAppendChild(t *testing.T) {
+	wptPath := "/workspaces/wpt"
+
+	// Check if WPT exists
+	if _, err := os.Stat(wptPath); os.IsNotExist(err) {
+		t.Skip("WPT not available")
+	}
+
+	runner := NewRunner(wptPath)
+	runner.Timeout = 10 * time.Second
+
+	result := runner.RunTestFile("/dom/nodes/Node-appendChild.html")
+
+	t.Logf("HarnessStatus: %s", result.HarnessStatus)
+	t.Logf("Error: %s", result.Error)
+	t.Logf("Duration: %v", result.Duration)
+	t.Logf("Tests: %d", len(result.Tests))
+
+	passed := 0
+	failed := 0
+	for _, test := range result.Tests {
+		statusStr := "PASS"
+		if test.Status != StatusPass {
+			statusStr = "FAIL"
+			failed++
+		} else {
+			passed++
+		}
+		t.Logf("  [%s] %s: %s", statusStr, test.Name, test.Message)
+	}
+
+	t.Logf("Summary: %d passed, %d failed", passed, failed)
+
+	if len(result.Tests) == 0 {
+		t.Errorf("Expected some test results, got none")
+	}
+}
+
+// TestWPTCharacterDataAppendChild tests the CharacterData.appendChild WPT test
+func TestWPTCharacterDataAppendChild(t *testing.T) {
+	wptPath := "/workspaces/wpt"
+
+	// Check if WPT exists
+	if _, err := os.Stat(wptPath); os.IsNotExist(err) {
+		t.Skip("WPT not available")
+	}
+
+	runner := NewRunner(wptPath)
+	runner.Timeout = 10 * time.Second
+
+	result := runner.RunTestFile("/dom/nodes/CharacterData-appendChild.html")
+
+	t.Logf("HarnessStatus: %s", result.HarnessStatus)
+	t.Logf("Error: %s", result.Error)
+	t.Logf("Duration: %v", result.Duration)
+	t.Logf("Tests: %d", len(result.Tests))
+
+	passed := 0
+	failed := 0
+	for _, test := range result.Tests {
+		statusStr := "PASS"
+		if test.Status != StatusPass {
+			statusStr = "FAIL"
+			failed++
+		} else {
+			passed++
+		}
+		t.Logf("  [%s] %s: %s", statusStr, test.Name, test.Message)
+	}
+
+	t.Logf("Summary: %d passed, %d failed", passed, failed)
+
+	if len(result.Tests) == 0 {
+		t.Errorf("Expected some test results, got none")
+	}
+}
+
+// TestWPTNodeInsertBefore tests the Node.insertBefore WPT test
+func TestWPTNodeInsertBefore(t *testing.T) {
+	wptPath := "/workspaces/wpt"
+
+	// Check if WPT exists
+	if _, err := os.Stat(wptPath); os.IsNotExist(err) {
+		t.Skip("WPT not available")
+	}
+
+	runner := NewRunner(wptPath)
+	runner.Timeout = 10 * time.Second
+
+	result := runner.RunTestFile("/dom/nodes/Node-insertBefore.html")
+
+	t.Logf("HarnessStatus: %s", result.HarnessStatus)
+	t.Logf("Error: %s", result.Error)
+	t.Logf("Duration: %v", result.Duration)
+	t.Logf("Tests: %d", len(result.Tests))
+
+	passed := 0
+	failed := 0
+	for _, test := range result.Tests {
+		statusStr := "PASS"
+		if test.Status != StatusPass {
+			statusStr = "FAIL"
+			failed++
+		} else {
+			passed++
+		}
+		t.Logf("  [%s] %s: %s", statusStr, test.Name, test.Message)
+	}
+
+	t.Logf("Summary: %d passed, %d failed", passed, failed)
+
+	if len(result.Tests) == 0 {
+		t.Errorf("Expected some test results, got none")
+	}
+}
+
 // TestWPTManual manually steps through WPT loading to diagnose issues
 func TestWPTManual(t *testing.T) {
 	wptPath := "/workspaces/wpt"
