@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
-	"unicode/utf16"
 
 	"github.com/AYColumbia/viberowser/css"
 	"github.com/AYColumbia/viberowser/dom"
@@ -14,13 +13,138 @@ import (
 // utf16Length returns the length of a string in UTF-16 code units.
 // This matches JavaScript's String.length behavior.
 func utf16Length(s string) int {
-	return len(utf16.Encode([]rune(s)))
+	return len(stringToUTF16(s))
+}
+
+// gojaValueToUTF16 extracts UTF-16 code units from a goja.Value.
+// This preserves surrogates that would be lost when converting to Go strings.
+func gojaValueToUTF16(v goja.Value) []uint16 {
+	if str, ok := v.(goja.String); ok {
+		// Use goja's CharAt method to get exact UTF-16 code units
+		length := str.Length()
+		result := make([]uint16, length)
+		for i := 0; i < length; i++ {
+			result[i] = str.CharAt(i)
+		}
+		return result
+	}
+	// Fallback for non-String values
+	return stringToUTF16(v.String())
+}
+
+// utf16ToGojaValue creates a goja.Value from UTF-16 code units.
+// This preserves surrogates by using goja.StringFromUTF16.
+func utf16ToGojaValue(vm *goja.Runtime, units []uint16) goja.Value {
+	return vm.ToValue(goja.StringFromUTF16(units))
+}
+
+// stringToUTF16 converts a Go string (which may be WTF-8) to UTF-16 code units.
+// This handles:
+// - Normal UTF-8 encoded characters
+// - WTF-8 encoded surrogates (which appear as 3-byte sequences starting with ED)
+func stringToUTF16(s string) []uint16 {
+	result := make([]uint16, 0, len(s))
+	data := []byte(s)
+	for i := 0; i < len(data); {
+		// Check for WTF-8 encoded surrogate (ED A0-BF 80-BF)
+		// High surrogate (D800-DBFF): ED A0-AF 80-BF
+		// Low surrogate (DC00-DFFF): ED B0-BF 80-BF
+		if i+2 < len(data) && data[i] == 0xED {
+			b1, b2 := data[i+1], data[i+2]
+			if (b1 >= 0xA0 && b1 <= 0xBF) && (b2 >= 0x80 && b2 <= 0xBF) {
+				// Decode WTF-8 surrogate using standard 3-byte UTF-8 formula
+				cu := uint16((uint32(0xED&0x0F) << 12) | (uint32(b1&0x3F) << 6) | uint32(b2&0x3F))
+				result = append(result, cu)
+				i += 3
+				continue
+			}
+		}
+
+		// Decode as normal UTF-8
+		r, size := decodeRune(data[i:])
+		if r >= 0x10000 {
+			// Supplementary plane character - encode as surrogate pair
+			r -= 0x10000
+			result = append(result, uint16(0xD800+(r>>10)))
+			result = append(result, uint16(0xDC00+(r&0x3FF)))
+		} else {
+			result = append(result, uint16(r))
+		}
+		i += size
+	}
+	return result
+}
+
+// decodeRune decodes a single UTF-8 rune from a byte slice.
+// Returns the rune and the number of bytes consumed.
+func decodeRune(b []byte) (rune, int) {
+	if len(b) == 0 {
+		return 0xFFFD, 1
+	}
+	c := b[0]
+	if c < 0x80 {
+		return rune(c), 1
+	}
+	if c < 0xC0 {
+		return 0xFFFD, 1
+	}
+	if c < 0xE0 && len(b) >= 2 {
+		return rune(c&0x1F)<<6 | rune(b[1]&0x3F), 2
+	}
+	if c < 0xF0 && len(b) >= 3 {
+		return rune(c&0x0F)<<12 | rune(b[1]&0x3F)<<6 | rune(b[2]&0x3F), 3
+	}
+	if c < 0xF8 && len(b) >= 4 {
+		return rune(c&0x07)<<18 | rune(b[1]&0x3F)<<12 | rune(b[2]&0x3F)<<6 | rune(b[3]&0x3F), 4
+	}
+	return 0xFFFD, 1
+}
+
+// utf16ToString converts UTF-16 code units to a Go string using WTF-8 encoding.
+// Unpaired surrogates are encoded as WTF-8 three-byte sequences, which allows
+// round-tripping through Go strings.
+func utf16ToString(codeUnits []uint16) string {
+	// Estimate size: most code units are 1-3 bytes in WTF-8
+	buf := make([]byte, 0, len(codeUnits)*3)
+
+	for i := 0; i < len(codeUnits); i++ {
+		cu := codeUnits[i]
+
+		// Check for surrogate pair
+		if cu >= 0xD800 && cu <= 0xDBFF && i+1 < len(codeUnits) {
+			next := codeUnits[i+1]
+			if next >= 0xDC00 && next <= 0xDFFF {
+				// Valid surrogate pair - encode as single 4-byte UTF-8
+				r := 0x10000 + (rune(cu-0xD800) << 10) + rune(next-0xDC00)
+				buf = append(buf,
+					byte(0xF0|(r>>18)),
+					byte(0x80|((r>>12)&0x3F)),
+					byte(0x80|((r>>6)&0x3F)),
+					byte(0x80|(r&0x3F)))
+				i++
+				continue
+			}
+		}
+
+		// Encode single code unit
+		if cu < 0x80 {
+			buf = append(buf, byte(cu))
+		} else if cu < 0x800 {
+			buf = append(buf, byte(0xC0|(cu>>6)), byte(0x80|(cu&0x3F)))
+		} else {
+			// 3-byte encoding (includes unpaired surrogates via WTF-8)
+			buf = append(buf, byte(0xE0|(cu>>12)), byte(0x80|((cu>>6)&0x3F)), byte(0x80|(cu&0x3F)))
+		}
+	}
+
+	return string(buf)
 }
 
 // utf16Substring extracts a substring using UTF-16 code unit offsets.
 // This matches JavaScript's String.substring behavior for proper Unicode handling.
+// Unpaired surrogates are preserved if the substring splits a surrogate pair.
 func utf16Substring(s string, offset, count int) string {
-	codeUnits := utf16.Encode([]rune(s))
+	codeUnits := stringToUTF16(s)
 	if offset >= len(codeUnits) {
 		return ""
 	}
@@ -28,13 +152,14 @@ func utf16Substring(s string, offset, count int) string {
 	if end > len(codeUnits) {
 		end = len(codeUnits)
 	}
-	// Convert back to string
-	return string(utf16.Decode(codeUnits[offset:end]))
+	// Convert back to string using WTF-8 to preserve unpaired surrogates
+	return utf16ToString(codeUnits[offset:end])
 }
 
 // utf16ReplaceRange replaces a range of UTF-16 code units in a string.
+// Unpaired surrogates are preserved if the operation splits a surrogate pair.
 func utf16ReplaceRange(s string, offset, count int, replacement string) string {
-	codeUnits := utf16.Encode([]rune(s))
+	codeUnits := stringToUTF16(s)
 	if offset > len(codeUnits) {
 		offset = len(codeUnits)
 	}
@@ -46,14 +171,14 @@ func utf16ReplaceRange(s string, offset, count int, replacement string) string {
 	// Build result: before + replacement + after
 	before := codeUnits[:offset]
 	after := codeUnits[end:]
-	replacementUnits := utf16.Encode([]rune(replacement))
+	replacementUnits := stringToUTF16(replacement)
 
 	result := make([]uint16, 0, len(before)+len(replacementUnits)+len(after))
 	result = append(result, before...)
 	result = append(result, replacementUnits...)
 	result = append(result, after...)
 
-	return string(utf16.Decode(result))
+	return utf16ToString(result)
 }
 
 // asciiLowercase converts a string to lowercase using only ASCII rules.
@@ -3353,28 +3478,35 @@ func (b *DOMBinder) BindTextNode(node *dom.Node, proto *goja.Object) *goja.Objec
 
 	// CharacterData properties
 	// Per spec, setting data/nodeValue/textContent to null should result in empty string
+	// We use WTF-8 encoding internally to preserve unpaired surrogates.
 	jsNode.DefineAccessorProperty("data", vm.ToValue(func(call goja.FunctionCall) goja.Value {
-		return vm.ToValue(node.NodeValue())
+		// Return as goja String to preserve surrogates
+		return utf16ToGojaValue(vm, stringToUTF16(node.NodeValue()))
 	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) > 0 {
-			val := ""
-			if !goja.IsNull(call.Arguments[0]) {
-				val = call.Arguments[0].String()
+			if goja.IsNull(call.Arguments[0]) {
+				node.SetNodeValue("")
+			} else {
+				// Extract UTF-16 code units and convert to WTF-8 to preserve surrogates
+				units := gojaValueToUTF16(call.Arguments[0])
+				node.SetNodeValue(utf16ToString(units))
 			}
-			node.SetNodeValue(val)
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	jsNode.DefineAccessorProperty("nodeValue", vm.ToValue(func(call goja.FunctionCall) goja.Value {
-		return vm.ToValue(node.NodeValue())
+		// Return as goja String to preserve surrogates
+		return utf16ToGojaValue(vm, stringToUTF16(node.NodeValue()))
 	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) > 0 {
-			val := ""
-			if !goja.IsNull(call.Arguments[0]) {
-				val = call.Arguments[0].String()
+			if goja.IsNull(call.Arguments[0]) {
+				node.SetNodeValue("")
+			} else {
+				// Extract UTF-16 code units and convert to WTF-8 to preserve surrogates
+				units := gojaValueToUTF16(call.Arguments[0])
+				node.SetNodeValue(utf16ToString(units))
 			}
-			node.SetNodeValue(val)
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
@@ -3513,28 +3645,35 @@ func (b *DOMBinder) BindCommentNode(node *dom.Node, proto *goja.Object) *goja.Ob
 
 	// CharacterData properties
 	// Per spec, setting data/nodeValue/textContent to null should result in empty string
+	// We use WTF-8 encoding internally to preserve unpaired surrogates.
 	jsNode.DefineAccessorProperty("data", vm.ToValue(func(call goja.FunctionCall) goja.Value {
-		return vm.ToValue(node.NodeValue())
+		// Return as goja String to preserve surrogates
+		return utf16ToGojaValue(vm, stringToUTF16(node.NodeValue()))
 	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) > 0 {
-			val := ""
-			if !goja.IsNull(call.Arguments[0]) {
-				val = call.Arguments[0].String()
+			if goja.IsNull(call.Arguments[0]) {
+				node.SetNodeValue("")
+			} else {
+				// Extract UTF-16 code units and convert to WTF-8 to preserve surrogates
+				units := gojaValueToUTF16(call.Arguments[0])
+				node.SetNodeValue(utf16ToString(units))
 			}
-			node.SetNodeValue(val)
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	jsNode.DefineAccessorProperty("nodeValue", vm.ToValue(func(call goja.FunctionCall) goja.Value {
-		return vm.ToValue(node.NodeValue())
+		// Return as goja String to preserve surrogates
+		return utf16ToGojaValue(vm, stringToUTF16(node.NodeValue()))
 	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) > 0 {
-			val := ""
-			if !goja.IsNull(call.Arguments[0]) {
-				val = call.Arguments[0].String()
+			if goja.IsNull(call.Arguments[0]) {
+				node.SetNodeValue("")
+			} else {
+				// Extract UTF-16 code units and convert to WTF-8 to preserve surrogates
+				units := gojaValueToUTF16(call.Arguments[0])
+				node.SetNodeValue(utf16ToString(units))
 			}
-			node.SetNodeValue(val)
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
@@ -3599,28 +3738,35 @@ func (b *DOMBinder) BindCDATASectionNode(node *dom.Node, proto *goja.Object) *go
 
 	// CharacterData properties
 	// Per spec, setting data/nodeValue/textContent to null should result in empty string
+	// We use WTF-8 encoding internally to preserve unpaired surrogates.
 	jsNode.DefineAccessorProperty("data", vm.ToValue(func(call goja.FunctionCall) goja.Value {
-		return vm.ToValue(node.NodeValue())
+		// Return as goja String to preserve surrogates
+		return utf16ToGojaValue(vm, stringToUTF16(node.NodeValue()))
 	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) > 0 {
-			val := ""
-			if !goja.IsNull(call.Arguments[0]) {
-				val = call.Arguments[0].String()
+			if goja.IsNull(call.Arguments[0]) {
+				node.SetNodeValue("")
+			} else {
+				// Extract UTF-16 code units and convert to WTF-8 to preserve surrogates
+				units := gojaValueToUTF16(call.Arguments[0])
+				node.SetNodeValue(utf16ToString(units))
 			}
-			node.SetNodeValue(val)
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	jsNode.DefineAccessorProperty("nodeValue", vm.ToValue(func(call goja.FunctionCall) goja.Value {
-		return vm.ToValue(node.NodeValue())
+		// Return as goja String to preserve surrogates
+		return utf16ToGojaValue(vm, stringToUTF16(node.NodeValue()))
 	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) > 0 {
-			val := ""
-			if !goja.IsNull(call.Arguments[0]) {
-				val = call.Arguments[0].String()
+			if goja.IsNull(call.Arguments[0]) {
+				node.SetNodeValue("")
+			} else {
+				// Extract UTF-16 code units and convert to WTF-8 to preserve surrogates
+				units := gojaValueToUTF16(call.Arguments[0])
+				node.SetNodeValue(utf16ToString(units))
 			}
-			node.SetNodeValue(val)
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
@@ -3694,28 +3840,35 @@ func (b *DOMBinder) BindProcessingInstructionNode(node *dom.Node, proto *goja.Ob
 
 	// CharacterData properties
 	// Per spec, setting data/nodeValue/textContent to null should result in empty string
+	// We use WTF-8 encoding internally to preserve unpaired surrogates.
 	jsNode.DefineAccessorProperty("data", vm.ToValue(func(call goja.FunctionCall) goja.Value {
-		return vm.ToValue(node.NodeValue())
+		// Return as goja String to preserve surrogates
+		return utf16ToGojaValue(vm, stringToUTF16(node.NodeValue()))
 	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) > 0 {
-			val := ""
-			if !goja.IsNull(call.Arguments[0]) {
-				val = call.Arguments[0].String()
+			if goja.IsNull(call.Arguments[0]) {
+				node.SetNodeValue("")
+			} else {
+				// Extract UTF-16 code units and convert to WTF-8 to preserve surrogates
+				units := gojaValueToUTF16(call.Arguments[0])
+				node.SetNodeValue(utf16ToString(units))
 			}
-			node.SetNodeValue(val)
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	jsNode.DefineAccessorProperty("nodeValue", vm.ToValue(func(call goja.FunctionCall) goja.Value {
-		return vm.ToValue(node.NodeValue())
+		// Return as goja String to preserve surrogates
+		return utf16ToGojaValue(vm, stringToUTF16(node.NodeValue()))
 	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) > 0 {
-			val := ""
-			if !goja.IsNull(call.Arguments[0]) {
-				val = call.Arguments[0].String()
+			if goja.IsNull(call.Arguments[0]) {
+				node.SetNodeValue("")
+			} else {
+				// Extract UTF-16 code units and convert to WTF-8 to preserve surrogates
+				units := gojaValueToUTF16(call.Arguments[0])
+				node.SetNodeValue(utf16ToString(units))
 			}
-			node.SetNodeValue(val)
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
@@ -4126,6 +4279,7 @@ func (b *DOMBinder) throwNotFoundError(vm *goja.Runtime, message string) {
 
 // bindCharacterDataMethods adds the CharacterData mutation methods to a node.
 // These are: substringData, appendData, insertData, deleteData, replaceData
+// All methods properly handle UTF-16 surrogate pairs, preserving unpaired surrogates.
 func (b *DOMBinder) bindCharacterDataMethods(jsNode *goja.Object, node *dom.Node) {
 	vm := b.runtime.vm
 
@@ -4138,15 +4292,24 @@ func (b *DOMBinder) bindCharacterDataMethods(jsNode *goja.Object, node *dom.Node
 		offset := toUint32(call.Arguments[0])
 		count := toUint32(call.Arguments[1])
 
-		data := node.NodeValue()
-		length := uint32(utf16Length(data))
+		// Get data as UTF-16 code units
+		dataUnits := stringToUTF16(node.NodeValue())
+		length := uint32(len(dataUnits))
 
 		// Check offset bounds
 		if offset > length {
 			b.throwIndexSizeError(vm)
 		}
 
-		return vm.ToValue(utf16Substring(data, int(offset), int(count)))
+		// Extract substring as UTF-16 code units
+		end := int(offset) + int(count)
+		if end > len(dataUnits) {
+			end = len(dataUnits)
+		}
+		resultUnits := dataUnits[offset:end]
+
+		// Return as goja String to preserve surrogates
+		return utf16ToGojaValue(vm, resultUnits)
 	})
 
 	jsNode.Set("appendData", func(call goja.FunctionCall) goja.Value {
@@ -4155,8 +4318,14 @@ func (b *DOMBinder) bindCharacterDataMethods(jsNode *goja.Object, node *dom.Node
 			panic(vm.NewTypeError("Failed to execute 'appendData' on 'CharacterData': 1 argument required"))
 		}
 
-		data := call.Arguments[0].String()
-		node.SetNodeValue(node.NodeValue() + data)
+		// Get data to append as UTF-16 code units
+		appendUnits := gojaValueToUTF16(call.Arguments[0])
+		// Get current data as UTF-16 code units
+		currentUnits := stringToUTF16(node.NodeValue())
+		// Concatenate
+		newUnits := append(currentUnits, appendUnits...)
+		// Store as WTF-8
+		node.SetNodeValue(utf16ToString(newUnits))
 		return goja.Undefined()
 	})
 
@@ -4167,19 +4336,23 @@ func (b *DOMBinder) bindCharacterDataMethods(jsNode *goja.Object, node *dom.Node
 		}
 
 		offset := toUint32(call.Arguments[0])
-		data := call.Arguments[1].String()
+		insertUnits := gojaValueToUTF16(call.Arguments[1])
 
-		current := node.NodeValue()
-		length := uint32(utf16Length(current))
+		currentUnits := stringToUTF16(node.NodeValue())
+		length := uint32(len(currentUnits))
 
 		// Check offset bounds
 		if offset > length {
 			b.throwIndexSizeError(vm)
 		}
 
-		// Insert at offset
-		newValue := utf16ReplaceRange(current, int(offset), 0, data)
-		node.SetNodeValue(newValue)
+		// Build result: before + insert + after
+		newUnits := make([]uint16, 0, len(currentUnits)+len(insertUnits))
+		newUnits = append(newUnits, currentUnits[:offset]...)
+		newUnits = append(newUnits, insertUnits...)
+		newUnits = append(newUnits, currentUnits[offset:]...)
+
+		node.SetNodeValue(utf16ToString(newUnits))
 		return goja.Undefined()
 	})
 
@@ -4192,17 +4365,26 @@ func (b *DOMBinder) bindCharacterDataMethods(jsNode *goja.Object, node *dom.Node
 		offset := toUint32(call.Arguments[0])
 		count := toUint32(call.Arguments[1])
 
-		current := node.NodeValue()
-		length := uint32(utf16Length(current))
+		currentUnits := stringToUTF16(node.NodeValue())
+		length := uint32(len(currentUnits))
 
 		// Check offset bounds
 		if offset > length {
 			b.throwIndexSizeError(vm)
 		}
 
-		// Delete from offset
-		newValue := utf16ReplaceRange(current, int(offset), int(count), "")
-		node.SetNodeValue(newValue)
+		// Calculate end position (clamped to length)
+		end := int(offset) + int(count)
+		if end > len(currentUnits) {
+			end = len(currentUnits)
+		}
+
+		// Build result: before + after
+		newUnits := make([]uint16, 0, len(currentUnits)-int(count))
+		newUnits = append(newUnits, currentUnits[:offset]...)
+		newUnits = append(newUnits, currentUnits[end:]...)
+
+		node.SetNodeValue(utf16ToString(newUnits))
 		return goja.Undefined()
 	})
 
@@ -4214,19 +4396,29 @@ func (b *DOMBinder) bindCharacterDataMethods(jsNode *goja.Object, node *dom.Node
 
 		offset := toUint32(call.Arguments[0])
 		count := toUint32(call.Arguments[1])
-		data := call.Arguments[2].String()
+		replaceUnits := gojaValueToUTF16(call.Arguments[2])
 
-		current := node.NodeValue()
-		length := uint32(utf16Length(current))
+		currentUnits := stringToUTF16(node.NodeValue())
+		length := uint32(len(currentUnits))
 
 		// Check offset bounds
 		if offset > length {
 			b.throwIndexSizeError(vm)
 		}
 
-		// Replace at offset
-		newValue := utf16ReplaceRange(current, int(offset), int(count), data)
-		node.SetNodeValue(newValue)
+		// Calculate end position (clamped to length)
+		end := int(offset) + int(count)
+		if end > len(currentUnits) {
+			end = len(currentUnits)
+		}
+
+		// Build result: before + replacement + after
+		newUnits := make([]uint16, 0, len(currentUnits)-int(count)+len(replaceUnits))
+		newUnits = append(newUnits, currentUnits[:offset]...)
+		newUnits = append(newUnits, replaceUnits...)
+		newUnits = append(newUnits, currentUnits[end:]...)
+
+		node.SetNodeValue(utf16ToString(newUnits))
 		return goja.Undefined()
 	})
 }
