@@ -1268,6 +1268,9 @@ func (b *DOMBinder) setupPrototypes() {
 					html.AsNode().AppendChild(body.AsNode())
 					doc.AsNode().AppendChild(html.AsNode())
 				}
+				// Set the content type to indicate this is an XML document
+				// This is needed so that createCDATASection and other XML-only features work
+				doc.SetContentType(mimeType)
 				// For XML types, return XMLDocument
 				return b.bindXMLDocument(doc)
 

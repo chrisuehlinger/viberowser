@@ -82,6 +82,11 @@ func (d *Document) ContentType() string {
 	return d.AsNode().documentData.contentType
 }
 
+// SetContentType sets the document's content type.
+func (d *Document) SetContentType(contentType string) {
+	d.AsNode().documentData.contentType = contentType
+}
+
 // URL returns the document's URL. Defaults to "about:blank".
 func (d *Document) URL() string {
 	if d.AsNode().documentData.url == "" {
