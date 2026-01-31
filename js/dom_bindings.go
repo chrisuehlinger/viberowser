@@ -169,13 +169,39 @@ func (b *DOMBinder) setupPrototypes() {
 	nodeConstructorObj.Set("prototype", b.nodeProto)
 	b.nodeProto.Set("constructor", nodeConstructorObj)
 
-	// Set Node constants on the constructor
-	nodeConstructorObj.Set("ELEMENT_NODE", int(dom.ElementNode))
-	nodeConstructorObj.Set("TEXT_NODE", int(dom.TextNode))
-	nodeConstructorObj.Set("COMMENT_NODE", int(dom.CommentNode))
-	nodeConstructorObj.Set("DOCUMENT_NODE", int(dom.DocumentNode))
-	nodeConstructorObj.Set("DOCUMENT_FRAGMENT_NODE", int(dom.DocumentFragmentNode))
-	nodeConstructorObj.Set("DOCUMENT_TYPE_NODE", int(dom.DocumentTypeNode))
+	// Set Node constants on the constructor AND prototype
+	// Both locations are needed per the DOM spec for constants to be available
+	// on the interface object, the prototype, and all instances
+	nodeTypeConstants := map[string]int{
+		"ELEMENT_NODE":                1,
+		"ATTRIBUTE_NODE":              2,
+		"TEXT_NODE":                   3,
+		"CDATA_SECTION_NODE":          4,
+		"ENTITY_REFERENCE_NODE":       5,
+		"ENTITY_NODE":                 6,
+		"PROCESSING_INSTRUCTION_NODE": 7,
+		"COMMENT_NODE":                8,
+		"DOCUMENT_NODE":               9,
+		"DOCUMENT_TYPE_NODE":          10,
+		"DOCUMENT_FRAGMENT_NODE":      11,
+		"NOTATION_NODE":               12,
+	}
+	documentPositionConstants := map[string]int{
+		"DOCUMENT_POSITION_DISCONNECTED":            0x01,
+		"DOCUMENT_POSITION_PRECEDING":               0x02,
+		"DOCUMENT_POSITION_FOLLOWING":               0x04,
+		"DOCUMENT_POSITION_CONTAINS":                0x08,
+		"DOCUMENT_POSITION_CONTAINED_BY":            0x10,
+		"DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC": 0x20,
+	}
+	for name, value := range nodeTypeConstants {
+		nodeConstructorObj.Set(name, value)
+		b.nodeProto.Set(name, value)
+	}
+	for name, value := range documentPositionConstants {
+		nodeConstructorObj.Set(name, value)
+		b.nodeProto.Set(name, value)
+	}
 
 	// Add Node methods to prototype so Node.prototype.insertBefore etc. work
 	// These methods get the node from 'this'
