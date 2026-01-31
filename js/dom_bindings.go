@@ -1349,6 +1349,8 @@ func (b *DOMBinder) BindNode(node *dom.Node) *goja.Object {
 		return b.BindCommentNode(node, nil)
 	case dom.ProcessingInstructionNode:
 		return b.BindProcessingInstructionNode(node, nil)
+	case dom.DocumentTypeNode:
+		return b.BindDocumentTypeNode(node)
 	}
 
 	// For other nodes
@@ -1642,6 +1644,78 @@ func (b *DOMBinder) BindProcessingInstructionNode(node *dom.Node, proto *goja.Ob
 	b.bindCharacterDataMethods(jsNode, node)
 
 	// ChildNode mixin methods
+	b.bindCharacterDataChildNodeMixin(jsNode, node)
+
+	// Common node properties
+	b.bindNodeProperties(jsNode, node)
+
+	// Cache
+	b.nodeMap[node] = jsNode
+
+	return jsNode
+}
+
+// BindDocumentTypeNode creates a JavaScript object from a DOM DocumentType node.
+// DocumentType nodes have specific properties (name, publicId, systemId) and implement ChildNode mixin.
+func (b *DOMBinder) BindDocumentTypeNode(node *dom.Node) *goja.Object {
+	if node == nil {
+		return nil
+	}
+
+	// Check cache
+	if jsObj, ok := b.nodeMap[node]; ok {
+		return jsObj
+	}
+
+	vm := b.runtime.vm
+	jsNode := vm.NewObject()
+
+	// Set prototype (use the generic node prototype)
+	if b.nodeProto != nil {
+		jsNode.SetPrototype(b.nodeProto)
+	}
+
+	jsNode.Set("_goNode", node)
+	jsNode.Set("nodeType", int(dom.DocumentTypeNode))
+
+	// DocumentType-specific properties (all read-only)
+	// nodeName is the "name" for DocumentType
+	jsNode.DefineAccessorProperty("nodeName", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(node.DoctypeName())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// name property
+	jsNode.DefineAccessorProperty("name", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(node.DoctypeName())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// publicId property
+	jsNode.DefineAccessorProperty("publicId", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(node.DoctypePublicId())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// systemId property
+	jsNode.DefineAccessorProperty("systemId", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(node.DoctypeSystemId())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// nodeValue is null for DocumentType (per spec)
+	jsNode.DefineAccessorProperty("nodeValue", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return goja.Null()
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Setting nodeValue has no effect on DocumentType nodes
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// textContent is null for DocumentType (per spec)
+	jsNode.DefineAccessorProperty("textContent", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return goja.Null()
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Setting textContent has no effect on DocumentType nodes
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// ChildNode mixin methods (remove, before, after, replaceWith)
 	b.bindCharacterDataChildNodeMixin(jsNode, node)
 
 	// Common node properties

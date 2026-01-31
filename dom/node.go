@@ -923,3 +923,29 @@ func extractNodeSet(items []interface{}) map[*Node]bool {
 	}
 	return result
 }
+
+// DocumentType accessor methods
+
+// DoctypeName returns the name of a DocumentType node, or empty string for other node types.
+func (n *Node) DoctypeName() string {
+	if n.nodeType == DocumentTypeNode && n.docTypeData != nil {
+		return n.docTypeData.name
+	}
+	return ""
+}
+
+// DoctypePublicId returns the publicId of a DocumentType node, or empty string for other node types.
+func (n *Node) DoctypePublicId() string {
+	if n.nodeType == DocumentTypeNode && n.docTypeData != nil {
+		return n.docTypeData.publicId
+	}
+	return ""
+}
+
+// DoctypeSystemId returns the systemId of a DocumentType node, or empty string for other node types.
+func (n *Node) DoctypeSystemId() string {
+	if n.nodeType == DocumentTypeNode && n.docTypeData != nil {
+		return n.docTypeData.systemId
+	}
+	return ""
+}
