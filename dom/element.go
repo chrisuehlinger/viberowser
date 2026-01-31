@@ -887,36 +887,54 @@ func convertHTMLNode(n *html.Node, doc *Document) *Node {
 }
 
 // Append appends nodes or strings to this element.
+// For error handling, use AppendWithError.
 func (e *Element) Append(nodes ...interface{}) {
-	for _, item := range nodes {
-		switch v := item.(type) {
-		case *Node:
-			e.AsNode().AppendChild(v)
-		case *Element:
-			e.AsNode().AppendChild(v.AsNode())
-		case string:
-			e.AsNode().AppendChild(e.AsNode().ownerDoc.CreateTextNode(v))
-		}
+	_ = e.AppendWithError(nodes...)
+}
+
+// AppendWithError appends nodes or strings to this element.
+// Returns an error if any validation fails (e.g., HierarchyRequestError).
+// Implements the ParentNode.append() algorithm from the DOM spec.
+func (e *Element) AppendWithError(nodes ...interface{}) error {
+	if len(nodes) == 0 {
+		return nil
 	}
+
+	// Convert nodes/strings into a single node (or document fragment)
+	node := e.AsNode().convertNodesToFragment(nodes)
+	if node == nil {
+		return nil
+	}
+
+	// Append the node using the error-returning method
+	_, err := e.AsNode().AppendChildWithError(node)
+	return err
 }
 
 // Prepend prepends nodes or strings to this element.
+// For error handling, use PrependWithError.
 func (e *Element) Prepend(nodes ...interface{}) {
-	firstChild := e.AsNode().firstChild
-	for _, item := range nodes {
-		var node *Node
-		switch v := item.(type) {
-		case *Node:
-			node = v
-		case *Element:
-			node = v.AsNode()
-		case string:
-			node = e.AsNode().ownerDoc.CreateTextNode(v)
-		}
-		if node != nil {
-			e.AsNode().InsertBefore(node, firstChild)
-		}
+	_ = e.PrependWithError(nodes...)
+}
+
+// PrependWithError prepends nodes or strings to this element.
+// Returns an error if any validation fails (e.g., HierarchyRequestError).
+// Implements the ParentNode.prepend() algorithm from the DOM spec.
+func (e *Element) PrependWithError(nodes ...interface{}) error {
+	if len(nodes) == 0 {
+		return nil
 	}
+
+	// Convert nodes/strings into a single node (or document fragment)
+	node := e.AsNode().convertNodesToFragment(nodes)
+	if node == nil {
+		return nil
+	}
+
+	// Insert before the first child using the error-returning method
+	firstChild := e.AsNode().firstChild
+	_, err := e.AsNode().InsertBeforeWithError(node, firstChild)
+	return err
 }
 
 // Before inserts nodes before this element.

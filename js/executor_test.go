@@ -494,3 +494,37 @@ func TestGetComputedStyle(t *testing.T) {
 		t.Errorf("Expected window.getComputedStyle to be function, got %v", result.String())
 	}
 }
+
+func TestPrependHierarchyErrorViaImplementation(t *testing.T) {
+	// Create a base document like the WPT does
+	doc := dom.NewDocument()
+	impl := doc.Implementation()
+	title := "test"
+	baseDoc := impl.CreateHTMLDocument(&title)
+	
+	// Create JS runtime and executor
+	runtime := NewRuntime()
+	executor := NewScriptExecutor(runtime)
+	executor.SetupDocument(baseDoc)
+	
+	// Test: create a new document via document.implementation.createHTMLDocument
+	// and test body.prepend(body)
+	err := runtime.ExecuteScript(`
+		var doc = document.implementation.createHTMLDocument("title");
+		var caught = false;
+		try {
+			doc.body.prepend(doc.body);
+		} catch (e) {
+			caught = true;
+			if (e.name !== "HierarchyRequestError") {
+				throw new Error("Expected HierarchyRequestError but got: " + e.name);
+			}
+		}
+		if (!caught) {
+			throw new Error("Expected to throw HierarchyRequestError but prepend succeeded");
+		}
+	`, "test.js")
+	if err != nil {
+		t.Fatalf("Script failed: %v", err)
+	}
+}

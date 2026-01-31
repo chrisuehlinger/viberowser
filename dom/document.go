@@ -515,36 +515,54 @@ func (d *Document) LastElementChild() *Element {
 }
 
 // Append appends nodes or strings to this document.
+// For error handling, use AppendWithError.
 func (d *Document) Append(nodes ...interface{}) {
-	for _, item := range nodes {
-		switch v := item.(type) {
-		case *Node:
-			d.AsNode().AppendChild(v)
-		case *Element:
-			d.AsNode().AppendChild(v.AsNode())
-		case string:
-			d.AsNode().AppendChild(d.CreateTextNode(v))
-		}
+	_ = d.AppendWithError(nodes...)
+}
+
+// AppendWithError appends nodes or strings to this document.
+// Returns an error if any validation fails (e.g., HierarchyRequestError).
+// Implements the ParentNode.append() algorithm from the DOM spec.
+func (d *Document) AppendWithError(nodes ...interface{}) error {
+	if len(nodes) == 0 {
+		return nil
 	}
+
+	// Convert nodes/strings into a single node (or document fragment)
+	node := d.AsNode().convertNodesToFragment(nodes)
+	if node == nil {
+		return nil
+	}
+
+	// Append the node using the error-returning method
+	_, err := d.AsNode().AppendChildWithError(node)
+	return err
 }
 
 // Prepend prepends nodes or strings to this document.
+// For error handling, use PrependWithError.
 func (d *Document) Prepend(nodes ...interface{}) {
-	firstChild := d.AsNode().firstChild
-	for _, item := range nodes {
-		var node *Node
-		switch v := item.(type) {
-		case *Node:
-			node = v
-		case *Element:
-			node = v.AsNode()
-		case string:
-			node = d.CreateTextNode(v)
-		}
-		if node != nil {
-			d.AsNode().InsertBefore(node, firstChild)
-		}
+	_ = d.PrependWithError(nodes...)
+}
+
+// PrependWithError prepends nodes or strings to this document.
+// Returns an error if any validation fails (e.g., HierarchyRequestError).
+// Implements the ParentNode.prepend() algorithm from the DOM spec.
+func (d *Document) PrependWithError(nodes ...interface{}) error {
+	if len(nodes) == 0 {
+		return nil
 	}
+
+	// Convert nodes/strings into a single node (or document fragment)
+	node := d.AsNode().convertNodesToFragment(nodes)
+	if node == nil {
+		return nil
+	}
+
+	// Insert before the first child using the error-returning method
+	firstChild := d.AsNode().firstChild
+	_, err := d.AsNode().InsertBeforeWithError(node, firstChild)
+	return err
 }
 
 // ReplaceChildren replaces all children with the given nodes.

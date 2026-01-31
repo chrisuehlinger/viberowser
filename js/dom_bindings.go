@@ -1255,13 +1255,25 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 	// ParentNode mixin methods
 	jsDoc.Set("append", func(call goja.FunctionCall) goja.Value {
 		nodes := b.convertJSNodesToGo(call.Arguments)
-		doc.Append(nodes...)
+		err := doc.AppendWithError(nodes...)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("HierarchyRequestError", err.Error()))
+		}
 		return goja.Undefined()
 	})
 
 	jsDoc.Set("prepend", func(call goja.FunctionCall) goja.Value {
 		nodes := b.convertJSNodesToGo(call.Arguments)
-		doc.Prepend(nodes...)
+		err := doc.PrependWithError(nodes...)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("HierarchyRequestError", err.Error()))
+		}
 		return goja.Undefined()
 	})
 
@@ -1623,13 +1635,25 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 	// ParentNode mixin methods
 	jsDoc.Set("append", func(call goja.FunctionCall) goja.Value {
 		nodes := b.convertJSNodesToGo(call.Arguments)
-		doc.Append(nodes...)
+		err := doc.AppendWithError(nodes...)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("HierarchyRequestError", err.Error()))
+		}
 		return goja.Undefined()
 	})
 
 	jsDoc.Set("prepend", func(call goja.FunctionCall) goja.Value {
 		nodes := b.convertJSNodesToGo(call.Arguments)
-		doc.Prepend(nodes...)
+		err := doc.PrependWithError(nodes...)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("HierarchyRequestError", err.Error()))
+		}
 		return goja.Undefined()
 	})
 
@@ -2287,13 +2311,25 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 	// ParentNode mixin methods
 	jsEl.Set("append", func(call goja.FunctionCall) goja.Value {
 		nodes := b.convertJSNodesToGo(call.Arguments)
-		el.Append(nodes...)
+		err := el.AppendWithError(nodes...)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("HierarchyRequestError", err.Error()))
+		}
 		return goja.Undefined()
 	})
 
 	jsEl.Set("prepend", func(call goja.FunctionCall) goja.Value {
 		nodes := b.convertJSNodesToGo(call.Arguments)
-		el.Prepend(nodes...)
+		err := el.PrependWithError(nodes...)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("HierarchyRequestError", err.Error()))
+		}
 		return goja.Undefined()
 	})
 
