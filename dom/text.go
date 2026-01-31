@@ -222,3 +222,12 @@ func (t *Text) Remove() {
 		t.AsNode().parentNode.RemoveChild(t.AsNode())
 	}
 }
+
+// NewTextNode creates a new detached text node with the given data.
+// The node has no owner document.
+func NewTextNode(data string) *Node {
+	node := newNode(TextNode, "#text", nil)
+	node.textData = &data
+	node.nodeValue = &data
+	return node
+}

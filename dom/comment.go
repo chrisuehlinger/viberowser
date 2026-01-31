@@ -170,3 +170,12 @@ func (c *Comment) Remove() {
 		c.AsNode().parentNode.RemoveChild(c.AsNode())
 	}
 }
+
+// NewCommentNode creates a new detached comment node with the given data.
+// The node has no owner document.
+func NewCommentNode(data string) *Node {
+	node := newNode(CommentNode, "#comment", nil)
+	node.commentData = &data
+	node.nodeValue = &data
+	return node
+}

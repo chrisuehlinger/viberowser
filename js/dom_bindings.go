@@ -7,22 +7,160 @@ import (
 
 // DOMBinder provides methods to bind DOM objects to JavaScript.
 type DOMBinder struct {
-	runtime *Runtime
-	nodeMap map[*dom.Node]*goja.Object // Cache to return same JS object for same DOM node
+	runtime  *Runtime
+	nodeMap  map[*dom.Node]*goja.Object // Cache to return same JS object for same DOM node
+	document *dom.Document              // Current document for creating new nodes
+
+	// Prototype objects for instanceof checks
+	nodeProto             *goja.Object
+	characterDataProto    *goja.Object
+	textProto             *goja.Object
+	commentProto          *goja.Object
+	elementProto          *goja.Object
+	documentProto         *goja.Object
+	documentFragmentProto *goja.Object
 }
 
 // NewDOMBinder creates a new DOM binder for the given runtime.
 func NewDOMBinder(runtime *Runtime) *DOMBinder {
-	return &DOMBinder{
+	b := &DOMBinder{
 		runtime: runtime,
 		nodeMap: make(map[*dom.Node]*goja.Object),
 	}
+	b.setupPrototypes()
+	return b
+}
+
+// setupPrototypes creates the prototype chain for DOM interfaces.
+// This enables instanceof checks to work correctly.
+func (b *DOMBinder) setupPrototypes() {
+	vm := b.runtime.vm
+
+	// Create Node prototype and constructor
+	b.nodeProto = vm.NewObject()
+	nodeConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		// Node is abstract - cannot be instantiated directly
+		panic(vm.NewTypeError("Illegal constructor"))
+	})
+	nodeConstructorObj := nodeConstructor.ToObject(vm)
+	nodeConstructorObj.Set("prototype", b.nodeProto)
+	b.nodeProto.Set("constructor", nodeConstructorObj)
+
+	// Set Node constants on the constructor
+	nodeConstructorObj.Set("ELEMENT_NODE", int(dom.ElementNode))
+	nodeConstructorObj.Set("TEXT_NODE", int(dom.TextNode))
+	nodeConstructorObj.Set("COMMENT_NODE", int(dom.CommentNode))
+	nodeConstructorObj.Set("DOCUMENT_NODE", int(dom.DocumentNode))
+	nodeConstructorObj.Set("DOCUMENT_FRAGMENT_NODE", int(dom.DocumentFragmentNode))
+	nodeConstructorObj.Set("DOCUMENT_TYPE_NODE", int(dom.DocumentTypeNode))
+
+	vm.Set("Node", nodeConstructorObj)
+
+	// Create CharacterData prototype (extends Node)
+	b.characterDataProto = vm.NewObject()
+	b.characterDataProto.SetPrototype(b.nodeProto)
+	charDataConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		panic(vm.NewTypeError("Illegal constructor"))
+	})
+	charDataConstructorObj := charDataConstructor.ToObject(vm)
+	charDataConstructorObj.Set("prototype", b.characterDataProto)
+	b.characterDataProto.Set("constructor", charDataConstructorObj)
+	vm.Set("CharacterData", charDataConstructorObj)
+
+	// Create Text prototype (extends CharacterData)
+	b.textProto = vm.NewObject()
+	b.textProto.SetPrototype(b.characterDataProto)
+	textConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		// Text can be constructed with new Text() or new Text(data)
+		data := ""
+		if len(call.Arguments) > 0 {
+			data = call.Arguments[0].String()
+		}
+		// Create text node using document if available, otherwise detached
+		var textNode *dom.Node
+		if b.document != nil {
+			textNode = b.document.CreateTextNode(data)
+		} else {
+			textNode = dom.NewTextNode(data)
+		}
+		return b.BindTextNode(textNode, call.This.Prototype())
+	})
+	textConstructorObj := textConstructor.ToObject(vm)
+	textConstructorObj.Set("prototype", b.textProto)
+	b.textProto.Set("constructor", textConstructorObj)
+	vm.Set("Text", textConstructorObj)
+
+	// Create Comment prototype (extends CharacterData)
+	b.commentProto = vm.NewObject()
+	b.commentProto.SetPrototype(b.characterDataProto)
+	commentConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		// Comment can be constructed with new Comment() or new Comment(data)
+		data := ""
+		if len(call.Arguments) > 0 {
+			data = call.Arguments[0].String()
+		}
+		// Create comment node using document if available, otherwise detached
+		var commentNode *dom.Node
+		if b.document != nil {
+			commentNode = b.document.CreateComment(data)
+		} else {
+			commentNode = dom.NewCommentNode(data)
+		}
+		return b.BindCommentNode(commentNode, call.This.Prototype())
+	})
+	commentConstructorObj := commentConstructor.ToObject(vm)
+	commentConstructorObj.Set("prototype", b.commentProto)
+	b.commentProto.Set("constructor", commentConstructorObj)
+	vm.Set("Comment", commentConstructorObj)
+
+	// Create Element prototype (extends Node)
+	b.elementProto = vm.NewObject()
+	b.elementProto.SetPrototype(b.nodeProto)
+	elementConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		panic(vm.NewTypeError("Illegal constructor"))
+	})
+	elementConstructorObj := elementConstructor.ToObject(vm)
+	elementConstructorObj.Set("prototype", b.elementProto)
+	b.elementProto.Set("constructor", elementConstructorObj)
+	vm.Set("Element", elementConstructorObj)
+
+	// Create Document prototype (extends Node)
+	b.documentProto = vm.NewObject()
+	b.documentProto.SetPrototype(b.nodeProto)
+	documentConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		panic(vm.NewTypeError("Illegal constructor"))
+	})
+	documentConstructorObj := documentConstructor.ToObject(vm)
+	documentConstructorObj.Set("prototype", b.documentProto)
+	b.documentProto.Set("constructor", documentConstructorObj)
+	vm.Set("Document", documentConstructorObj)
+
+	// Create DocumentFragment prototype (extends Node)
+	b.documentFragmentProto = vm.NewObject()
+	b.documentFragmentProto.SetPrototype(b.nodeProto)
+	docFragConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		// DocumentFragment can be constructed
+		frag := dom.NewDocumentFragment()
+		return b.BindDocumentFragment(frag)
+	})
+	docFragConstructorObj := docFragConstructor.ToObject(vm)
+	docFragConstructorObj.Set("prototype", b.documentFragmentProto)
+	b.documentFragmentProto.Set("constructor", docFragConstructorObj)
+	vm.Set("DocumentFragment", docFragConstructorObj)
 }
 
 // BindDocument creates a JavaScript document object from a DOM document.
 func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 	vm := b.runtime.vm
 	jsDoc := vm.NewObject()
+
+	// Set prototype for instanceof to work
+	if b.documentProto != nil {
+		jsDoc.SetPrototype(b.documentProto)
+	}
+
+	// Store current document for creating new nodes
+	b.document = doc
 
 	// Store reference to the Go document
 	jsDoc.Set("_goDoc", doc)
@@ -245,7 +383,8 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 	// Child node properties (document can have children)
 	b.bindNodeProperties(jsDoc, doc.AsNode())
 
-	b.runtime.SetDocument(jsDoc)
+	// Set document on runtime without mutex (we're already in runtime context)
+	b.runtime.setDocumentDirect(jsDoc)
 	return jsDoc
 }
 
@@ -264,6 +403,11 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 
 	vm := b.runtime.vm
 	jsEl := vm.NewObject()
+
+	// Set prototype for instanceof to work
+	if b.elementProto != nil {
+		jsEl.SetPrototype(b.elementProto)
+	}
 
 	// Store reference to the Go element
 	jsEl.Set("_goElement", el)
@@ -635,9 +779,13 @@ func (b *DOMBinder) BindNode(node *dom.Node) *goja.Object {
 		return b.BindDocument((*dom.Document)(node))
 	case dom.DocumentFragmentNode:
 		return b.BindDocumentFragment((*dom.DocumentFragment)(node))
+	case dom.TextNode:
+		return b.BindTextNode(node, nil)
+	case dom.CommentNode:
+		return b.BindCommentNode(node, nil)
 	}
 
-	// For text, comment, and other nodes
+	// For other nodes
 	vm := b.runtime.vm
 	jsNode := vm.NewObject()
 
@@ -664,102 +812,232 @@ func (b *DOMBinder) BindNode(node *dom.Node) *goja.Object {
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
 
-	// For Text and Comment nodes (CharacterData), add data property and ChildNode mixin
-	if node.NodeType() == dom.TextNode || node.NodeType() == dom.CommentNode {
-		jsNode.DefineAccessorProperty("data", vm.ToValue(func(call goja.FunctionCall) goja.Value {
-			return vm.ToValue(node.NodeValue())
-		}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
-			if len(call.Arguments) > 0 {
-				node.SetNodeValue(call.Arguments[0].String())
-			}
-			return goja.Undefined()
-		}), goja.FLAG_FALSE, goja.FLAG_TRUE)
-
-		jsNode.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
-			return vm.ToValue(len(node.NodeValue()))
-		}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
-
-		// ChildNode mixin methods for CharacterData (Text and Comment nodes)
-		jsNode.Set("before", func(call goja.FunctionCall) goja.Value {
-			parent := node.ParentNode()
-			if parent == nil {
-				return goja.Undefined()
-			}
-			nodes := b.convertJSNodesToGo(call.Arguments)
-			for _, item := range nodes {
-				var n *dom.Node
-				switch v := item.(type) {
-				case *dom.Node:
-					n = v
-				case string:
-					n = node.OwnerDocument().CreateTextNode(v)
-				}
-				if n != nil {
-					parent.InsertBefore(n, node)
-				}
-			}
-			return goja.Undefined()
-		})
-
-		jsNode.Set("after", func(call goja.FunctionCall) goja.Value {
-			parent := node.ParentNode()
-			if parent == nil {
-				return goja.Undefined()
-			}
-			ref := node.NextSibling()
-			nodes := b.convertJSNodesToGo(call.Arguments)
-			for _, item := range nodes {
-				var n *dom.Node
-				switch v := item.(type) {
-				case *dom.Node:
-					n = v
-				case string:
-					n = node.OwnerDocument().CreateTextNode(v)
-				}
-				if n != nil {
-					parent.InsertBefore(n, ref)
-				}
-			}
-			return goja.Undefined()
-		})
-
-		jsNode.Set("replaceWith", func(call goja.FunctionCall) goja.Value {
-			parent := node.ParentNode()
-			if parent == nil {
-				return goja.Undefined()
-			}
-			ref := node.NextSibling()
-			parent.RemoveChild(node)
-			nodes := b.convertJSNodesToGo(call.Arguments)
-			for _, item := range nodes {
-				var n *dom.Node
-				switch v := item.(type) {
-				case *dom.Node:
-					n = v
-				case string:
-					n = node.OwnerDocument().CreateTextNode(v)
-				}
-				if n != nil {
-					parent.InsertBefore(n, ref)
-				}
-			}
-			return goja.Undefined()
-		})
-
-		jsNode.Set("remove", func(call goja.FunctionCall) goja.Value {
-			if node.ParentNode() != nil {
-				node.ParentNode().RemoveChild(node)
-			}
-			return goja.Undefined()
-		})
-	}
-
 	b.bindNodeProperties(jsNode, node)
 
 	// Cache the binding
 	b.nodeMap[node] = jsNode
 
 	return jsNode
+}
+
+// BindTextNode creates a JavaScript object from a DOM text node with proper prototype.
+func (b *DOMBinder) BindTextNode(node *dom.Node, proto *goja.Object) *goja.Object {
+	if node == nil {
+		return nil
+	}
+
+	// Check cache
+	if jsObj, ok := b.nodeMap[node]; ok {
+		return jsObj
+	}
+
+	vm := b.runtime.vm
+	jsNode := vm.NewObject()
+
+	// Set prototype for instanceof to work
+	if proto != nil {
+		jsNode.SetPrototype(proto)
+	} else if b.textProto != nil {
+		jsNode.SetPrototype(b.textProto)
+	}
+
+	jsNode.Set("_goNode", node)
+	jsNode.Set("nodeType", int(dom.TextNode))
+	jsNode.Set("nodeName", "#text")
+
+	// CharacterData properties
+	jsNode.DefineAccessorProperty("data", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(node.NodeValue())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			node.SetNodeValue(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsNode.DefineAccessorProperty("nodeValue", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(node.NodeValue())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			node.SetNodeValue(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsNode.DefineAccessorProperty("textContent", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(node.TextContent())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			node.SetTextContent(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsNode.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(len(node.NodeValue()))
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// ChildNode mixin methods
+	b.bindCharacterDataChildNodeMixin(jsNode, node)
+
+	// Common node properties
+	b.bindNodeProperties(jsNode, node)
+
+	// Cache
+	b.nodeMap[node] = jsNode
+
+	return jsNode
+}
+
+// BindCommentNode creates a JavaScript object from a DOM comment node with proper prototype.
+func (b *DOMBinder) BindCommentNode(node *dom.Node, proto *goja.Object) *goja.Object {
+	if node == nil {
+		return nil
+	}
+
+	// Check cache
+	if jsObj, ok := b.nodeMap[node]; ok {
+		return jsObj
+	}
+
+	vm := b.runtime.vm
+	jsNode := vm.NewObject()
+
+	// Set prototype for instanceof to work
+	if proto != nil {
+		jsNode.SetPrototype(proto)
+	} else if b.commentProto != nil {
+		jsNode.SetPrototype(b.commentProto)
+	}
+
+	jsNode.Set("_goNode", node)
+	jsNode.Set("nodeType", int(dom.CommentNode))
+	jsNode.Set("nodeName", "#comment")
+
+	// CharacterData properties
+	jsNode.DefineAccessorProperty("data", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(node.NodeValue())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			node.SetNodeValue(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsNode.DefineAccessorProperty("nodeValue", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(node.NodeValue())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			node.SetNodeValue(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsNode.DefineAccessorProperty("textContent", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(node.TextContent())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			node.SetTextContent(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsNode.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(len(node.NodeValue()))
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// ChildNode mixin methods
+	b.bindCharacterDataChildNodeMixin(jsNode, node)
+
+	// Common node properties
+	b.bindNodeProperties(jsNode, node)
+
+	// Cache
+	b.nodeMap[node] = jsNode
+
+	return jsNode
+}
+
+// bindCharacterDataChildNodeMixin adds ChildNode mixin methods to a CharacterData node.
+func (b *DOMBinder) bindCharacterDataChildNodeMixin(jsNode *goja.Object, node *dom.Node) {
+	jsNode.Set("before", func(call goja.FunctionCall) goja.Value {
+		parent := node.ParentNode()
+		if parent == nil {
+			return goja.Undefined()
+		}
+		nodes := b.convertJSNodesToGo(call.Arguments)
+		for _, item := range nodes {
+			var n *dom.Node
+			switch v := item.(type) {
+			case *dom.Node:
+				n = v
+			case string:
+				if node.OwnerDocument() != nil {
+					n = node.OwnerDocument().CreateTextNode(v)
+				}
+			}
+			if n != nil {
+				parent.InsertBefore(n, node)
+			}
+		}
+		return goja.Undefined()
+	})
+
+	jsNode.Set("after", func(call goja.FunctionCall) goja.Value {
+		parent := node.ParentNode()
+		if parent == nil {
+			return goja.Undefined()
+		}
+		ref := node.NextSibling()
+		nodes := b.convertJSNodesToGo(call.Arguments)
+		for _, item := range nodes {
+			var n *dom.Node
+			switch v := item.(type) {
+			case *dom.Node:
+				n = v
+			case string:
+				if node.OwnerDocument() != nil {
+					n = node.OwnerDocument().CreateTextNode(v)
+				}
+			}
+			if n != nil {
+				parent.InsertBefore(n, ref)
+			}
+		}
+		return goja.Undefined()
+	})
+
+	jsNode.Set("replaceWith", func(call goja.FunctionCall) goja.Value {
+		parent := node.ParentNode()
+		if parent == nil {
+			return goja.Undefined()
+		}
+		ref := node.NextSibling()
+		parent.RemoveChild(node)
+		nodes := b.convertJSNodesToGo(call.Arguments)
+		for _, item := range nodes {
+			var n *dom.Node
+			switch v := item.(type) {
+			case *dom.Node:
+				n = v
+			case string:
+				if node.OwnerDocument() != nil {
+					n = node.OwnerDocument().CreateTextNode(v)
+				}
+			}
+			if n != nil {
+				parent.InsertBefore(n, ref)
+			}
+		}
+		return goja.Undefined()
+	})
+
+	jsNode.Set("remove", func(call goja.FunctionCall) goja.Value {
+		if node.ParentNode() != nil {
+			node.ParentNode().RemoveChild(node)
+		}
+		return goja.Undefined()
+	})
 }
 
 // BindDocumentFragment creates a JavaScript object from a DOM document fragment.
@@ -777,6 +1055,11 @@ func (b *DOMBinder) BindDocumentFragment(frag *dom.DocumentFragment) *goja.Objec
 
 	vm := b.runtime.vm
 	jsFrag := vm.NewObject()
+
+	// Set prototype for instanceof to work
+	if b.documentFragmentProto != nil {
+		jsFrag.SetPrototype(b.documentFragmentProto)
+	}
 
 	jsFrag.Set("_goNode", node)
 	jsFrag.Set("_goFragment", frag)

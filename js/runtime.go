@@ -55,6 +55,12 @@ func (r *Runtime) SetDocument(doc *goja.Object) {
 	r.vm.Set("document", doc)
 }
 
+// setDocumentDirect sets the document without locking (for use from within runtime context).
+func (r *Runtime) setDocumentDirect(doc *goja.Object) {
+	r.document = doc
+	r.vm.Set("document", doc)
+}
+
 // SetOnError sets a callback for JavaScript errors.
 func (r *Runtime) SetOnError(handler func(error)) {
 	r.mu.Lock()
@@ -371,9 +377,12 @@ func (r *Runtime) setupTimers() {
 
 // setupWindow creates a basic window object.
 func (r *Runtime) setupWindow() {
-	window := r.vm.NewObject()
+	// Use the global object as window/self/globalThis
+	// This ensures that properties set on window are available globally
+	// (e.g., testharness.js does self.format_value = x)
+	window := r.vm.GlobalObject()
 
-	// Make window a reference to the global object
+	// Make window/self/globalThis all point to the global object
 	r.vm.Set("window", window)
 	r.vm.Set("self", window)
 	r.vm.Set("globalThis", window)
@@ -402,6 +411,12 @@ func (r *Runtime) setupWindow() {
 	navigator.Set("cookieEnabled", false)
 	window.Set("navigator", navigator)
 	r.vm.Set("navigator", navigator)
+
+	// window.parent and window.top (for top-level window, they point to self)
+	window.Set("parent", window)
+	window.Set("top", window)
+	window.Set("opener", goja.Null())
+	window.Set("frameElement", goja.Null())
 
 	// window.innerWidth/innerHeight (stubs)
 	window.Set("innerWidth", 1024)

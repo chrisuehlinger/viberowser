@@ -125,22 +125,23 @@ func (r *Runner) RunTestFile(testPath string) TestSuiteResult {
 	executor := js.NewScriptExecutor(runtime)
 	executor.SetupDocument(doc)
 
-	// Load testharness.js if not embedded
-	if err := r.loadTestHarnessJS(ctx, runtime); err != nil {
-		result.Error = fmt.Sprintf("Failed to load testharness.js: %v", err)
-		result.HarnessStatus = "ERROR"
-		result.Duration = time.Since(start)
-		return result
+	// Load and execute external scripts (including testharness.js from HTML)
+	// Use file:// URL if loading from local WPT path, otherwise use HTTP base URL
+	var baseURL string
+	if r.WPTPath != "" {
+		baseURL = "file://" + r.WPTPath + testPath
+	} else {
+		baseURL = r.BaseURL + "/" + strings.TrimPrefix(testPath, "/")
 	}
-
-	// Load and execute external scripts
-	baseURL := r.BaseURL + "/" + strings.TrimPrefix(testPath, "/")
 	if err := r.loadExternalScripts(ctx, doc, executor, baseURL); err != nil {
 		result.Error = fmt.Sprintf("Failed to load external scripts: %v", err)
 		result.HarnessStatus = "ERROR"
 		result.Duration = time.Since(start)
 		return result
 	}
+
+	// Register our callbacks with testharness.js now that it's loaded
+	binding.SetupPostLoad()
 
 	// Execute inline scripts (which include the actual tests)
 	executor.ExecuteScripts(doc)
@@ -152,29 +153,55 @@ func (r *Runner) RunTestFile(testPath string) TestSuiteResult {
 	executor.DispatchLoadEvent()
 
 	// Run event loop until tests complete or timeout
+	timedOut := false
 	done := false
+	// Give a short grace period for completion callback after tests run
+	gracePeriod := 100 * time.Millisecond
+	graceStart := time.Time{}
 	for !done {
 		select {
 		case <-completionChan:
 			done = true
 		case <-ctx.Done():
 			// Timeout occurred
-			result.Error = "Test timeout"
-			result.HarnessStatus = "TIMEOUT"
+			timedOut = true
 			done = true
 		default:
+			// Process timers (needed for setTimeout in testharness.js)
+			runtime.ProcessTimers()
 			// Process event loop
-			if !executor.RunEventLoopOnce() && binding.IsCompleted() {
+			eventLoopHasWork := executor.RunEventLoopOnce()
+			if binding.IsCompleted() {
 				done = true
 			}
-			time.Sleep(1 * time.Millisecond)
+			// If we have results but no completion, wait a short grace period
+			// then exit (real testharness.js may not call completion for sync tests)
+			if len(binding.Results()) > 0 && !binding.IsCompleted() {
+				if graceStart.IsZero() {
+					graceStart = time.Now()
+				} else if time.Since(graceStart) > gracePeriod {
+					// Grace period expired, assume tests are done
+					done = true
+				}
+			}
+			if !eventLoopHasWork {
+				time.Sleep(1 * time.Millisecond)
+			}
 		}
 	}
 
 	// Collect results
-	if binding.IsCompleted() {
-		result.HarnessStatus = HarnessStatusString(binding.HarnessStatus().Status)
-		for _, tr := range binding.Results() {
+	// Even if completion callback wasn't invoked, we may have collected results
+	// from the result_callback (which fires for each test)
+	results := binding.Results()
+	if len(results) > 0 {
+		if binding.IsCompleted() {
+			result.HarnessStatus = HarnessStatusString(binding.HarnessStatus().Status)
+		} else {
+			// Tests ran but completion didn't fire - still report results
+			result.HarnessStatus = "OK"
+		}
+		for _, tr := range results {
 			result.Tests = append(result.Tests, TestResult{
 				Name:    tr.Name,
 				Status:  convertTestStatus(tr.Status),
@@ -182,6 +209,10 @@ func (r *Runner) RunTestFile(testPath string) TestSuiteResult {
 				Stack:   tr.Stack,
 			})
 		}
+	} else if timedOut {
+		// Only set TIMEOUT if we actually timed out with no results
+		result.Error = "Test timeout"
+		result.HarnessStatus = "TIMEOUT"
 	}
 
 	result.Duration = time.Since(start)

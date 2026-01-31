@@ -192,8 +192,25 @@ func (l *Loader) loadFromLocal(urlStr string, basePath string, resourceType Reso
 		path = "/"
 	}
 
-	// Build local path
-	localPath := filepath.Join(basePath, path)
+	// Determine the local path to read
+	var localPath string
+
+	// Check if this is a file:// URL with an absolute path that already exists
+	if strings.HasPrefix(urlStr, "file://") && filepath.IsAbs(path) {
+		// For file:// URLs, try the absolute path directly first
+		if _, err := os.Stat(path); err == nil {
+			localPath = path
+		} else {
+			// Fall back to relative path within basePath
+			localPath = filepath.Join(basePath, path)
+		}
+	} else if filepath.IsAbs(path) && strings.HasPrefix(path, basePath) {
+		// Path is already absolute and within basePath
+		localPath = path
+	} else {
+		// Build local path from relative path
+		localPath = filepath.Join(basePath, path)
+	}
 
 	// Read file
 	content, err := os.ReadFile(localPath)

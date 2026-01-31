@@ -164,3 +164,10 @@ func (df *DocumentFragment) CloneNode(deep bool) *DocumentFragment {
 	clone := df.AsNode().CloneNode(deep)
 	return (*DocumentFragment)(clone)
 }
+
+// NewDocumentFragment creates a new detached document fragment.
+// The fragment has no owner document.
+func NewDocumentFragment() *DocumentFragment {
+	node := newNode(DocumentFragmentNode, "#document-fragment", nil)
+	return (*DocumentFragment)(node)
+}

@@ -66,36 +66,13 @@ func (thb *TestHarnessBinding) SetOnComplete(callback func([]TestHarnessResult, 
 func (thb *TestHarnessBinding) Setup() {
 	vm := thb.runtime.VM()
 
-	// Create add_result_callback function
-	vm.Set("add_result_callback", func(call goja.FunctionCall) goja.Value {
-		if len(call.Arguments) < 1 {
-			return goja.Undefined()
-		}
-		// We'll capture this callback but also install our own
-		return goja.Undefined()
-	})
-
-	// Create add_completion_callback function
-	vm.Set("add_completion_callback", func(call goja.FunctionCall) goja.Value {
-		if len(call.Arguments) < 1 {
-			return goja.Undefined()
-		}
-		// We'll capture this callback but also install our own
-		return goja.Undefined()
-	})
-
-	// Create add_start_callback function
-	vm.Set("add_start_callback", func(call goja.FunctionCall) goja.Value {
-		return goja.Undefined()
-	})
-
-	// Install global completion_callback that testharness.js will auto-invoke
+	// Install global completion_callback
 	vm.Set("completion_callback", func(call goja.FunctionCall) goja.Value {
 		thb.handleCompletionCallback(call)
 		return goja.Undefined()
 	})
 
-	// Install global result_callback that testharness.js will auto-invoke
+	// Install global result_callback
 	vm.Set("result_callback", func(call goja.FunctionCall) goja.Value {
 		thb.handleResultCallback(call)
 		return goja.Undefined()
@@ -105,6 +82,46 @@ func (thb *TestHarnessBinding) Setup() {
 	vm.Set("start_callback", func(call goja.FunctionCall) goja.Value {
 		return goja.Undefined()
 	})
+}
+
+// SetupPostLoad registers our callbacks with testharness.js after it has loaded.
+// This uses add_result_callback and add_completion_callback which are the
+// proper API for the real testharness.js. When using the real API, we disable
+// the global callbacks to avoid duplicate results.
+func (thb *TestHarnessBinding) SetupPostLoad() {
+	vm := thb.runtime.VM()
+
+	// Create our result callback wrapper
+	resultCallback := vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		thb.handleResultCallback(call)
+		return goja.Undefined()
+	})
+
+	// Create our completion callback wrapper
+	completionCallback := vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		thb.handleCompletionCallback(call)
+		return goja.Undefined()
+	})
+
+	vm.Set("__viberowser_result_callback", resultCallback)
+	vm.Set("__viberowser_completion_callback", completionCallback)
+
+	// Try to register using the real testharness.js API
+	// If the real API exists, use it and disable global callbacks to avoid duplicates
+	code := `
+		(function() {
+			if (typeof add_result_callback === 'function' && typeof add_completion_callback === 'function') {
+				add_result_callback(__viberowser_result_callback);
+				add_completion_callback(__viberowser_completion_callback);
+				// Disable global callbacks to avoid duplicates
+				result_callback = function() {};
+				completion_callback = function() {};
+			}
+			// If real API not available, global callbacks from Setup() will be used
+		})();
+	`
+
+	thb.runtime.Execute(code)
 }
 
 // handleResultCallback processes individual test results as they come in.

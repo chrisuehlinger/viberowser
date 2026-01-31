@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/AYColumbia/viberowser/dom"
+	"github.com/dop251/goja"
 )
 
 // ScriptExecutor handles executing scripts in an HTML document.
@@ -53,6 +54,105 @@ func (se *ScriptExecutor) SetupDocument(doc *dom.Document) {
 	if window != nil {
 		se.eventBinder.BindEventTarget(window)
 	}
+
+	// Add global addEventListener/removeEventListener/dispatchEvent
+	// These are needed because in browsers, the global scope IS the window,
+	// but in goja they are separate. Many scripts call addEventListener()
+	// without the window. prefix.
+	se.bindGlobalEventTargetMethods()
+}
+
+// bindGlobalEventTargetMethods adds global addEventListener/removeEventListener/dispatchEvent
+// that delegate to the window object.
+func (se *ScriptExecutor) bindGlobalEventTargetMethods() {
+	vm := se.runtime.vm
+	window := vm.Get("window").ToObject(vm)
+	if window == nil {
+		return
+	}
+
+	// Get the EventTarget for window
+	windowTarget := se.eventBinder.GetOrCreateTarget(window)
+
+	// addEventListener
+	vm.Set("addEventListener", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			return goja.Undefined()
+		}
+
+		eventType := call.Arguments[0].String()
+		callback, ok := goja.AssertFunction(call.Arguments[1])
+		if !ok {
+			return goja.Undefined()
+		}
+
+		opts := listenerOptions{}
+		if len(call.Arguments) > 2 {
+			arg := call.Arguments[2]
+			if arg.ExportType().Kind().String() == "bool" {
+				opts.capture = arg.ToBoolean()
+			} else if obj := arg.ToObject(vm); obj != nil {
+				if v := obj.Get("capture"); v != nil {
+					opts.capture = v.ToBoolean()
+				}
+				if v := obj.Get("once"); v != nil {
+					opts.once = v.ToBoolean()
+				}
+				if v := obj.Get("passive"); v != nil {
+					opts.passive = v.ToBoolean()
+				}
+			}
+		}
+
+		windowTarget.AddEventListener(eventType, callback, call.Arguments[1], opts)
+		return goja.Undefined()
+	}))
+
+	// removeEventListener
+	vm.Set("removeEventListener", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			return goja.Undefined()
+		}
+
+		eventType := call.Arguments[0].String()
+		_, ok := goja.AssertFunction(call.Arguments[1])
+		if !ok {
+			return goja.Undefined()
+		}
+
+		capture := false
+		if len(call.Arguments) > 2 {
+			arg := call.Arguments[2]
+			if arg.ExportType().Kind().String() == "bool" {
+				capture = arg.ToBoolean()
+			} else if obj := arg.ToObject(vm); obj != nil {
+				if v := obj.Get("capture"); v != nil {
+					capture = v.ToBoolean()
+				}
+			}
+		}
+
+		windowTarget.RemoveEventListener(eventType, call.Arguments[1], capture)
+		return goja.Undefined()
+	}))
+
+	// dispatchEvent
+	vm.Set("dispatchEvent", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return vm.ToValue(true)
+		}
+
+		event := call.Arguments[0].ToObject(vm)
+		if event == nil {
+			return vm.ToValue(true)
+		}
+
+		event.Set("target", window)
+		event.Set("currentTarget", window)
+		event.Set("eventPhase", int(EventPhaseAtTarget))
+
+		return vm.ToValue(windowTarget.DispatchEvent(vm, event, EventPhaseAtTarget))
+	}))
 }
 
 // ExecuteScripts finds and executes all script elements in the document.
