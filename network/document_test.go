@@ -137,7 +137,7 @@ func TestDocumentLoaderScripts(t *testing.T) {
 	}
 }
 
-func TestDocumentLoaderInlineScriptsIgnored(t *testing.T) {
+func TestDocumentLoaderInlineScriptsIncluded(t *testing.T) {
 	html := `<!DOCTYPE html>
 <html>
 <head>
@@ -161,8 +161,15 @@ func TestDocumentLoaderInlineScriptsIgnored(t *testing.T) {
 
 	result := docLoader.LoadDocumentWithResources(context.Background(), doc, "http://example.com")
 
-	if len(result.Scripts) != 0 {
-		t.Errorf("expected 0 external scripts (inline should be ignored), got %d", len(result.Scripts))
+	// Inline scripts are now included in the Scripts list for ordered execution
+	if len(result.Scripts) != 1 {
+		t.Errorf("expected 1 script (inline should be included), got %d", len(result.Scripts))
+	}
+	if len(result.Scripts) > 0 && !result.Scripts[0].Inline {
+		t.Errorf("expected script to be marked as inline")
+	}
+	if len(result.Scripts) > 0 && result.Scripts[0].Content != "console.log('inline');" {
+		t.Errorf("expected script content to match, got: %s", result.Scripts[0].Content)
 	}
 }
 

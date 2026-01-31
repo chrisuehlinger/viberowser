@@ -177,6 +177,10 @@ func (b *DOMBinder) setupPrototypes() {
 	nodeConstructorObj.Set("DOCUMENT_FRAGMENT_NODE", int(dom.DocumentFragmentNode))
 	nodeConstructorObj.Set("DOCUMENT_TYPE_NODE", int(dom.DocumentTypeNode))
 
+	// Add Node methods to prototype so Node.prototype.insertBefore etc. work
+	// These methods get the node from 'this'
+	b.setupNodePrototypeMethods()
+
 	vm.Set("Node", nodeConstructorObj)
 
 	// Create DOMException prototype and constructor
@@ -3057,6 +3061,280 @@ func (b *DOMBinder) bindNodeProperties(jsObj *goja.Object, node *dom.Node) {
 	})
 
 	jsObj.Set("compareDocumentPosition", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return vm.ToValue(0)
+		}
+		otherObj := call.Arguments[0].ToObject(vm)
+		goOther := b.getGoNode(otherObj)
+		if goOther == nil {
+			return vm.ToValue(0)
+		}
+		return vm.ToValue(int(node.CompareDocumentPosition(goOther)))
+	})
+}
+
+// setupNodePrototypeMethods adds Node methods to the prototype so that
+// Node.prototype.insertBefore, Node.prototype.appendChild, etc. exist.
+// This is needed for WPT tests that do: var f = Node.prototype.insertBefore; f.call(node, ...)
+func (b *DOMBinder) setupNodePrototypeMethods() {
+	vm := b.runtime.vm
+
+	// appendChild - prototype version that gets node from 'this'
+	b.nodeProto.Set("appendChild", func(call goja.FunctionCall) goja.Value {
+		thisObj := call.This.ToObject(vm)
+		node := b.getGoNode(thisObj)
+		if node == nil {
+			panic(vm.NewTypeError("Illegal invocation"))
+		}
+
+		if len(call.Arguments) < 1 || goja.IsNull(call.Arguments[0]) || goja.IsUndefined(call.Arguments[0]) {
+			panic(vm.NewTypeError("Failed to execute 'appendChild' on 'Node': 1 argument required, but only 0 present."))
+		}
+
+		arg := call.Arguments[0]
+		childObj := arg.ToObject(vm)
+		goChild := b.getGoNode(childObj)
+		if goChild == nil {
+			panic(vm.NewTypeError("Failed to execute 'appendChild' on 'Node': parameter 1 is not of type 'Node'."))
+		}
+
+		result, err := node.AppendChildWithError(goChild)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				b.throwDOMError(vm, domErr)
+			}
+			return goja.Null()
+		}
+		return b.BindNode(result)
+	})
+
+	// insertBefore - prototype version
+	b.nodeProto.Set("insertBefore", func(call goja.FunctionCall) goja.Value {
+		thisObj := call.This.ToObject(vm)
+		node := b.getGoNode(thisObj)
+		if node == nil {
+			panic(vm.NewTypeError("Illegal invocation"))
+		}
+
+		// First argument must be a Node
+		if len(call.Arguments) < 1 || goja.IsNull(call.Arguments[0]) || goja.IsUndefined(call.Arguments[0]) {
+			panic(vm.NewTypeError("Failed to execute 'insertBefore' on 'Node': parameter 1 is not of type 'Node'."))
+		}
+
+		newChildObj := call.Arguments[0].ToObject(vm)
+		goNewChild := b.getGoNode(newChildObj)
+		if goNewChild == nil {
+			panic(vm.NewTypeError("Failed to execute 'insertBefore' on 'Node': parameter 1 is not of type 'Node'."))
+		}
+
+		// Second argument is required
+		if len(call.Arguments) < 2 {
+			panic(vm.NewTypeError("Failed to execute 'insertBefore' on 'Node': 2 arguments required, but only 1 present."))
+		}
+
+		// Second argument can be Node, null, or undefined
+		var goRefChild *dom.Node
+		refArg := call.Arguments[1]
+		if !goja.IsNull(refArg) && !goja.IsUndefined(refArg) {
+			refChildObj := refArg.ToObject(vm)
+			goRefChild = b.getGoNode(refChildObj)
+			if goRefChild == nil {
+				panic(vm.NewTypeError("Failed to execute 'insertBefore' on 'Node': parameter 2 is not of type 'Node'."))
+			}
+		}
+
+		result, err := node.InsertBeforeWithError(goNewChild, goRefChild)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				b.throwDOMError(vm, domErr)
+			}
+			return goja.Null()
+		}
+		return b.BindNode(result)
+	})
+
+	// removeChild - prototype version
+	b.nodeProto.Set("removeChild", func(call goja.FunctionCall) goja.Value {
+		thisObj := call.This.ToObject(vm)
+		node := b.getGoNode(thisObj)
+		if node == nil {
+			panic(vm.NewTypeError("Illegal invocation"))
+		}
+
+		if len(call.Arguments) < 1 || goja.IsNull(call.Arguments[0]) || goja.IsUndefined(call.Arguments[0]) {
+			panic(vm.NewTypeError("Failed to execute 'removeChild' on 'Node': 1 argument required."))
+		}
+
+		childObj := call.Arguments[0].ToObject(vm)
+		goChild := b.getGoNode(childObj)
+		if goChild == nil {
+			panic(vm.NewTypeError("Failed to execute 'removeChild' on 'Node': parameter 1 is not of type 'Node'."))
+		}
+
+		result, err := node.RemoveChildWithError(goChild)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				b.throwDOMError(vm, domErr)
+			}
+			return goja.Null()
+		}
+		delete(b.nodeMap, result)
+		return b.BindNode(result)
+	})
+
+	// replaceChild - prototype version
+	b.nodeProto.Set("replaceChild", func(call goja.FunctionCall) goja.Value {
+		thisObj := call.This.ToObject(vm)
+		node := b.getGoNode(thisObj)
+		if node == nil {
+			panic(vm.NewTypeError("Illegal invocation"))
+		}
+
+		if len(call.Arguments) < 2 {
+			panic(vm.NewTypeError("Failed to execute 'replaceChild' on 'Node': 2 arguments required."))
+		}
+
+		arg0 := call.Arguments[0]
+		arg1 := call.Arguments[1]
+
+		if goja.IsNull(arg0) || goja.IsUndefined(arg0) {
+			panic(vm.NewTypeError("Failed to execute 'replaceChild' on 'Node': parameter 1 is not of type 'Node'."))
+		}
+		if goja.IsNull(arg1) || goja.IsUndefined(arg1) {
+			panic(vm.NewTypeError("Failed to execute 'replaceChild' on 'Node': parameter 2 is not of type 'Node'."))
+		}
+
+		newChildObj := arg0.ToObject(vm)
+		oldChildObj := arg1.ToObject(vm)
+		goNewChild := b.getGoNode(newChildObj)
+		goOldChild := b.getGoNode(oldChildObj)
+
+		if goNewChild == nil {
+			panic(vm.NewTypeError("Failed to execute 'replaceChild' on 'Node': parameter 1 is not of type 'Node'."))
+		}
+		if goOldChild == nil {
+			panic(vm.NewTypeError("Failed to execute 'replaceChild' on 'Node': parameter 2 is not of type 'Node'."))
+		}
+
+		result, err := node.ReplaceChildWithError(goNewChild, goOldChild)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				b.throwDOMError(vm, domErr)
+			}
+			return goja.Null()
+		}
+		delete(b.nodeMap, result)
+		return b.BindNode(result)
+	})
+
+	// hasChildNodes - prototype version
+	b.nodeProto.Set("hasChildNodes", func(call goja.FunctionCall) goja.Value {
+		thisObj := call.This.ToObject(vm)
+		node := b.getGoNode(thisObj)
+		if node == nil {
+			panic(vm.NewTypeError("Illegal invocation"))
+		}
+		return vm.ToValue(node.HasChildNodes())
+	})
+
+	// cloneNode - prototype version
+	b.nodeProto.Set("cloneNode", func(call goja.FunctionCall) goja.Value {
+		thisObj := call.This.ToObject(vm)
+		node := b.getGoNode(thisObj)
+		if node == nil {
+			panic(vm.NewTypeError("Illegal invocation"))
+		}
+		deep := false
+		if len(call.Arguments) > 0 {
+			deep = call.Arguments[0].ToBoolean()
+		}
+		clone := node.CloneNode(deep)
+		if clone == nil {
+			return goja.Null()
+		}
+		return b.BindNode(clone)
+	})
+
+	// contains - prototype version
+	b.nodeProto.Set("contains", func(call goja.FunctionCall) goja.Value {
+		thisObj := call.This.ToObject(vm)
+		node := b.getGoNode(thisObj)
+		if node == nil {
+			panic(vm.NewTypeError("Illegal invocation"))
+		}
+		if len(call.Arguments) < 1 || goja.IsNull(call.Arguments[0]) {
+			return vm.ToValue(false)
+		}
+		otherObj := call.Arguments[0].ToObject(vm)
+		goOther := b.getGoNode(otherObj)
+		if goOther == nil {
+			return vm.ToValue(false)
+		}
+		return vm.ToValue(node.Contains(goOther))
+	})
+
+	// normalize - prototype version
+	b.nodeProto.Set("normalize", func(call goja.FunctionCall) goja.Value {
+		thisObj := call.This.ToObject(vm)
+		node := b.getGoNode(thisObj)
+		if node == nil {
+			panic(vm.NewTypeError("Illegal invocation"))
+		}
+		node.Normalize()
+		return goja.Undefined()
+	})
+
+	// isSameNode - prototype version
+	b.nodeProto.Set("isSameNode", func(call goja.FunctionCall) goja.Value {
+		thisObj := call.This.ToObject(vm)
+		node := b.getGoNode(thisObj)
+		if node == nil {
+			panic(vm.NewTypeError("Illegal invocation"))
+		}
+		if len(call.Arguments) < 1 || goja.IsNull(call.Arguments[0]) {
+			return vm.ToValue(false)
+		}
+		otherObj := call.Arguments[0].ToObject(vm)
+		goOther := b.getGoNode(otherObj)
+		return vm.ToValue(node.IsSameNode(goOther))
+	})
+
+	// isEqualNode - prototype version
+	b.nodeProto.Set("isEqualNode", func(call goja.FunctionCall) goja.Value {
+		thisObj := call.This.ToObject(vm)
+		node := b.getGoNode(thisObj)
+		if node == nil {
+			panic(vm.NewTypeError("Illegal invocation"))
+		}
+		if len(call.Arguments) < 1 || goja.IsNull(call.Arguments[0]) {
+			return vm.ToValue(false)
+		}
+		otherObj := call.Arguments[0].ToObject(vm)
+		goOther := b.getGoNode(otherObj)
+		return vm.ToValue(node.IsEqualNode(goOther))
+	})
+
+	// getRootNode - prototype version
+	b.nodeProto.Set("getRootNode", func(call goja.FunctionCall) goja.Value {
+		thisObj := call.This.ToObject(vm)
+		node := b.getGoNode(thisObj)
+		if node == nil {
+			panic(vm.NewTypeError("Illegal invocation"))
+		}
+		root := node.GetRootNode()
+		if root == nil {
+			return goja.Null()
+		}
+		return b.BindNode(root)
+	})
+
+	// compareDocumentPosition - prototype version
+	b.nodeProto.Set("compareDocumentPosition", func(call goja.FunctionCall) goja.Value {
+		thisObj := call.This.ToObject(vm)
+		node := b.getGoNode(thisObj)
+		if node == nil {
+			panic(vm.NewTypeError("Illegal invocation"))
+		}
 		if len(call.Arguments) < 1 {
 			return vm.ToValue(0)
 		}

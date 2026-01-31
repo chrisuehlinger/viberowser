@@ -39,12 +39,14 @@ type LoadedStylesheet struct {
 
 // LoadedScript represents a loaded script.
 type LoadedScript struct {
-	URL     string
-	Content string
-	Async   bool
-	Defer   bool
-	Module  bool
-	Error   error
+	URL      string
+	Content  string
+	Async    bool
+	Defer    bool
+	Module   bool
+	Inline   bool // true if this is an inline script (no src attribute)
+	Position int  // position in document order (for ordered execution)
+	Error    error
 }
 
 // LoadDocumentWithResources loads an HTML document and all its external resources.
@@ -113,18 +115,12 @@ func (dl *DocumentLoader) loadStylesheets(ctx context.Context, doc *dom.Document
 	}
 }
 
-// loadScripts finds and loads all external scripts.
+// loadScripts finds and loads all scripts (both external and inline) in document order.
 func (dl *DocumentLoader) loadScripts(ctx context.Context, doc *dom.Document, result *LoadedDocument) {
 	scriptElements := doc.GetElementsByTagName("script")
 	for i := 0; i < scriptElements.Length(); i++ {
 		el := scriptElements.Item(i)
 		if el == nil {
-			continue
-		}
-
-		src := el.GetAttribute("src")
-		if src == "" {
-			// Inline script, skip
 			continue
 		}
 
@@ -134,11 +130,29 @@ func (dl *DocumentLoader) loadScripts(ctx context.Context, doc *dom.Document, re
 			continue // Not JavaScript
 		}
 
+		src := el.GetAttribute("src")
+		if src == "" {
+			// Inline script - include in ordered list
+			loaded := &LoadedScript{
+				Content:  el.TextContent(),
+				Inline:   true,
+				Position: i,
+				Async:    false,
+				Defer:    false,
+				Module:   scriptType == "module",
+			}
+			result.Scripts = append(result.Scripts, loaded)
+			continue
+		}
+
+		// External script
 		loaded := &LoadedScript{
-			URL:    src,
-			Async:  el.HasAttribute("async"),
-			Defer:  el.HasAttribute("defer"),
-			Module: scriptType == "module",
+			URL:      src,
+			Async:    el.HasAttribute("async"),
+			Defer:    el.HasAttribute("defer"),
+			Module:   scriptType == "module",
+			Inline:   false,
+			Position: i,
 		}
 
 		resource := dl.loader.LoadScript(ctx, src)
@@ -181,8 +195,21 @@ func (ld *LoadedDocument) GetSuccessfulScripts() []*LoadedScript {
 	return result
 }
 
-// GetSyncScripts returns successfully loaded synchronous scripts (not async/defer).
+// GetSyncScripts returns successfully loaded synchronous external scripts (not async/defer, not inline).
+// Deprecated: Use GetOrderedSyncScripts for proper document-order execution.
 func (ld *LoadedDocument) GetSyncScripts() []*LoadedScript {
+	var result []*LoadedScript
+	for _, s := range ld.Scripts {
+		if s.Error == nil && !s.Async && !s.Defer && !s.Inline {
+			result = append(result, s)
+		}
+	}
+	return result
+}
+
+// GetOrderedSyncScripts returns all synchronous scripts (both inline and external)
+// in document order for proper interleaved execution.
+func (ld *LoadedDocument) GetOrderedSyncScripts() []*LoadedScript {
 	var result []*LoadedScript
 	for _, s := range ld.Scripts {
 		if s.Error == nil && !s.Async && !s.Defer {

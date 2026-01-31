@@ -143,7 +143,7 @@ func (r *Runner) RunTestFile(testPath string) TestSuiteResult {
 	}
 	executor.SetStyleResolver(styleResolver)
 
-	// Load and execute external scripts (including testharness.js from HTML)
+	// Load and execute all scripts (both inline and external) in document order
 	// Use file:// URL if loading from local WPT path, otherwise use HTTP base URL
 	var baseURL string
 	if r.WPTPath != "" {
@@ -151,8 +151,8 @@ func (r *Runner) RunTestFile(testPath string) TestSuiteResult {
 	} else {
 		baseURL = r.BaseURL + "/" + strings.TrimPrefix(testPath, "/")
 	}
-	if err := r.loadExternalScripts(ctx, doc, executor, baseURL); err != nil {
-		result.Error = fmt.Sprintf("Failed to load external scripts: %v", err)
+	if err := r.loadAndExecuteScripts(ctx, doc, executor, baseURL); err != nil {
+		result.Error = fmt.Sprintf("Failed to execute scripts: %v", err)
 		result.HarnessStatus = "ERROR"
 		result.Duration = time.Since(start)
 		return result
@@ -160,9 +160,6 @@ func (r *Runner) RunTestFile(testPath string) TestSuiteResult {
 
 	// Register our callbacks with testharness.js now that it's loaded
 	binding.SetupPostLoad()
-
-	// Execute inline scripts (which include the actual tests)
-	executor.ExecuteScripts(doc)
 
 	// Dispatch DOMContentLoaded to trigger any waiting tests
 	executor.DispatchDOMContentLoaded()
@@ -320,8 +317,9 @@ func (r *Runner) loadResource(ctx context.Context, resourcePath string) (string,
 	return "", fmt.Errorf("resource not found: %s", resourcePath)
 }
 
-// loadExternalScripts loads and executes external scripts in document order.
-func (r *Runner) loadExternalScripts(ctx context.Context, doc *dom.Document, executor *js.ScriptExecutor, baseURL string) error {
+// loadAndExecuteScripts loads and executes all synchronous scripts in document order.
+// This properly interleaves inline and external scripts as they appear in the document.
+func (r *Runner) loadAndExecuteScripts(ctx context.Context, doc *dom.Document, executor *js.ScriptExecutor, baseURL string) error {
 	// Set base URL for loader
 	r.loader.SetBaseURL(baseURL)
 
@@ -329,10 +327,19 @@ func (r *Runner) loadExternalScripts(ctx context.Context, doc *dom.Document, exe
 	docLoader := network.NewDocumentLoader(r.loader)
 	loadedDoc := docLoader.LoadDocumentWithResources(ctx, doc, baseURL)
 
-	// Execute sync scripts in order
-	for _, script := range loadedDoc.GetSyncScripts() {
-		if err := executor.ExecuteExternalScript(script.Content, script.URL); err != nil {
-			return fmt.Errorf("error executing %s: %w", script.URL, err)
+	// Execute all sync scripts (both inline and external) in document order
+	for _, script := range loadedDoc.GetOrderedSyncScripts() {
+		if script.Inline {
+			// Inline script - execute as inline
+			if err := executor.ExecuteExternalScript(script.Content, "inline"); err != nil {
+				// Don't fail on inline script errors - browser continues
+				continue
+			}
+		} else {
+			// External script
+			if err := executor.ExecuteExternalScript(script.Content, script.URL); err != nil {
+				return fmt.Errorf("error executing %s: %w", script.URL, err)
+			}
 		}
 	}
 
