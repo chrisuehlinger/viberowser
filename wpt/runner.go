@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AYColumbia/viberowser/css"
 	"github.com/AYColumbia/viberowser/dom"
 	"github.com/AYColumbia/viberowser/js"
 	"github.com/AYColumbia/viberowser/network"
@@ -124,6 +125,23 @@ func (r *Runner) RunTestFile(testPath string) TestSuiteResult {
 	// Create script executor and bind document
 	executor := js.NewScriptExecutor(runtime)
 	executor.SetupDocument(doc)
+
+	// Set up style resolver for getComputedStyle
+	styleResolver := css.NewStyleResolver()
+	styleResolver.SetUserAgentStylesheet(css.GetUserAgentStylesheet())
+
+	// Parse inline style elements
+	styleElements := doc.GetElementsByTagName("style")
+	for i := 0; i < styleElements.Length(); i++ {
+		styleEl := styleElements.Item(i)
+		if styleEl != nil {
+			cssContent := styleEl.TextContent()
+			parser := css.NewParser(cssContent)
+			stylesheet := parser.Parse()
+			styleResolver.AddAuthorStylesheet(stylesheet)
+		}
+	}
+	executor.SetStyleResolver(styleResolver)
 
 	// Load and execute external scripts (including testharness.js from HTML)
 	// Use file:// URL if loading from local WPT path, otherwise use HTTP base URL

@@ -3,6 +3,7 @@ package js
 import (
 	"strings"
 
+	"github.com/AYColumbia/viberowser/css"
 	"github.com/AYColumbia/viberowser/dom"
 	"github.com/dop251/goja"
 )
@@ -42,6 +43,66 @@ func (se *ScriptExecutor) DOMBinder() *DOMBinder {
 // EventBinder returns the event binder.
 func (se *ScriptExecutor) EventBinder() *EventBinder {
 	return se.eventBinder
+}
+
+// SetStyleResolver sets the style resolver for getComputedStyle.
+func (se *ScriptExecutor) SetStyleResolver(sr *css.StyleResolver) {
+	se.domBinder.SetStyleResolver(sr)
+	se.setupGetComputedStyle()
+}
+
+// setupGetComputedStyle sets up the window.getComputedStyle function.
+func (se *ScriptExecutor) setupGetComputedStyle() {
+	vm := se.runtime.vm
+	window := vm.Get("window")
+	if window == nil {
+		return
+	}
+	windowObj := window.ToObject(vm)
+	if windowObj == nil {
+		return
+	}
+
+	// Override the stub getComputedStyle with a real implementation
+	windowObj.Set("getComputedStyle", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+
+		// Get the element argument
+		arg := call.Arguments[0]
+		if goja.IsNull(arg) || goja.IsUndefined(arg) {
+			return goja.Null()
+		}
+
+		obj := arg.ToObject(vm)
+		if obj == nil {
+			return goja.Null()
+		}
+
+		// Get the Go element from the JS object
+		goEl := obj.Get("_goElement")
+		if goEl == nil || goja.IsUndefined(goEl) {
+			return goja.Null()
+		}
+
+		el, ok := goEl.Export().(*dom.Element)
+		if !ok || el == nil {
+			return goja.Null()
+		}
+
+		// Get optional pseudo-element argument
+		pseudoElt := ""
+		if len(call.Arguments) > 1 && !goja.IsNull(call.Arguments[1]) && !goja.IsUndefined(call.Arguments[1]) {
+			pseudoElt = call.Arguments[1].String()
+		}
+
+		// Get computed style from DOM binder
+		return se.domBinder.GetComputedStyle(el, pseudoElt)
+	})
+
+	// Also set it globally for scripts that use getComputedStyle without window prefix
+	vm.Set("getComputedStyle", windowObj.Get("getComputedStyle"))
 }
 
 // SetupDocument sets up the document object and returns the JS document.

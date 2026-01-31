@@ -1,8 +1,10 @@
 package js
 
 import (
+	"strings"
 	"unicode/utf16"
 
+	"github.com/AYColumbia/viberowser/css"
 	"github.com/AYColumbia/viberowser/dom"
 	"github.com/dop251/goja"
 )
@@ -110,6 +112,9 @@ type DOMBinder struct {
 	runtime  *Runtime
 	nodeMap  map[*dom.Node]*goja.Object // Cache to return same JS object for same DOM node
 	document *dom.Document              // Current document for creating new nodes
+
+	// Style resolver for getComputedStyle
+	styleResolver *css.StyleResolver
 
 	// Prototype objects for instanceof checks
 	nodeProto                    *goja.Object
@@ -3083,6 +3088,264 @@ func (b *DOMBinder) createEmptyHTMLCollection() *goja.Object {
 // ClearCache clears the node binding cache.
 func (b *DOMBinder) ClearCache() {
 	b.nodeMap = make(map[*dom.Node]*goja.Object)
+}
+
+// SetStyleResolver sets the style resolver for getComputedStyle.
+func (b *DOMBinder) SetStyleResolver(sr *css.StyleResolver) {
+	b.styleResolver = sr
+}
+
+// GetComputedStyle returns the computed style for an element.
+// This implements window.getComputedStyle().
+func (b *DOMBinder) GetComputedStyle(el *dom.Element, pseudoElt string) *goja.Object {
+	// Compute the style using the style resolver
+	var computedStyle *css.ComputedStyle
+	if b.styleResolver != nil {
+		// Find parent computed style for inheritance
+		var parentStyle *css.ComputedStyle
+		if parentNode := el.AsNode().ParentNode(); parentNode != nil {
+			// Check if parent is an element
+			if parentNode.NodeType() == dom.ElementNode {
+				parentEl := (*dom.Element)(parentNode)
+				// Recursively get parent's computed style
+				// For simplicity, we compute it on demand here
+				parentStyle = b.styleResolver.ResolveStyles(parentEl, nil)
+			}
+		}
+		computedStyle = b.styleResolver.ResolveStyles(el, parentStyle)
+	}
+
+	return b.bindComputedStyleDeclaration(computedStyle, el)
+}
+
+// bindComputedStyleDeclaration creates a read-only CSSStyleDeclaration for computed styles.
+func (b *DOMBinder) bindComputedStyleDeclaration(cs *css.ComputedStyle, el *dom.Element) *goja.Object {
+	vm := b.runtime.vm
+	jsSD := vm.NewObject()
+
+	// Set prototype if we have one
+	if b.cssStyleDeclarationProto != nil {
+		jsSD.SetPrototype(b.cssStyleDeclarationProto)
+	}
+
+	// Helper function to get property value as string
+	getPropertyValue := func(property string) string {
+		property = strings.ToLower(property)
+		// Convert camelCase to kebab-case
+		property = camelToKebab(property)
+
+		if cs == nil {
+			return ""
+		}
+
+		val := cs.GetPropertyValue(property)
+		if val == nil {
+			// Check for default value
+			if def, ok := css.PropertyDefaults[property]; ok {
+				return def.InitialValue
+			}
+			return ""
+		}
+
+		// Return the value as a string
+		if val.Keyword != "" {
+			return val.Keyword
+		}
+		if val.Value.Raw != "" {
+			return val.Value.Raw
+		}
+		// For length values, format as pixels
+		if val.Value.Type == css.LengthValue || val.Value.Type == css.NumberValue {
+			return formatCSSLength(val.Length)
+		}
+		// For color values
+		if val.Value.Type == css.ColorValue {
+			return formatCSSColor(val.Color)
+		}
+
+		return ""
+	}
+
+	// Get all property names
+	getPropertyNames := func() []string {
+		// Return all known CSS properties
+		names := make([]string, 0, len(css.PropertyDefaults))
+		for prop := range css.PropertyDefaults {
+			names = append(names, prop)
+		}
+		return names
+	}
+
+	// cssText property (read-only for computed styles)
+	jsSD.DefineAccessorProperty("cssText", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Computed styles have empty cssText per spec
+		return vm.ToValue("")
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// length property
+	jsSD.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(len(css.PropertyDefaults))
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// parentRule property (always null for computed styles)
+	jsSD.DefineAccessorProperty("parentRule", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return goja.Null()
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// item(index) method
+	jsSD.Set("item", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return vm.ToValue("")
+		}
+		index := int(call.Arguments[0].ToInteger())
+		names := getPropertyNames()
+		if index < 0 || index >= len(names) {
+			return vm.ToValue("")
+		}
+		return vm.ToValue(names[index])
+	})
+
+	// getPropertyValue(property) method
+	jsSD.Set("getPropertyValue", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return vm.ToValue("")
+		}
+		property := call.Arguments[0].String()
+		return vm.ToValue(getPropertyValue(property))
+	})
+
+	// getPropertyPriority(property) method - always returns "" for computed styles
+	jsSD.Set("getPropertyPriority", func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue("")
+	})
+
+	// setProperty - no-op for computed styles (they're read-only)
+	jsSD.Set("setProperty", func(call goja.FunctionCall) goja.Value {
+		// Computed styles are read-only, silently ignore
+		return goja.Undefined()
+	})
+
+	// removeProperty - no-op for computed styles
+	jsSD.Set("removeProperty", func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue("")
+	})
+
+	// Set up camelCase property access for common CSS properties
+	b.setupComputedStylePropertyProxy(jsSD, getPropertyValue)
+
+	return jsSD
+}
+
+// setupComputedStylePropertyProxy sets up read-only property access for computed styles.
+func (b *DOMBinder) setupComputedStylePropertyProxy(jsSD *goja.Object, getPropertyValue func(string) string) {
+	vm := b.runtime.vm
+
+	// Common CSS properties to expose as camelCase
+	cssProperties := []string{
+		"alignContent", "alignItems", "alignSelf",
+		"background", "backgroundColor", "backgroundImage", "backgroundPosition",
+		"backgroundRepeat", "backgroundSize",
+		"border", "borderBottom", "borderBottomColor", "borderBottomStyle",
+		"borderBottomWidth", "borderCollapse", "borderColor", "borderLeft",
+		"borderLeftColor", "borderLeftStyle", "borderLeftWidth", "borderRadius",
+		"borderRight", "borderRightColor", "borderRightStyle", "borderRightWidth",
+		"borderSpacing", "borderStyle", "borderTop", "borderTopColor",
+		"borderTopStyle", "borderTopWidth", "borderWidth",
+		"bottom", "boxSizing", "clear", "clip", "color", "content", "cursor",
+		"direction", "display",
+		"emptyCells",
+		"flex", "flexBasis", "flexDirection", "flexFlow", "flexGrow", "flexShrink", "flexWrap",
+		"float", "font", "fontFamily", "fontSize", "fontStyle", "fontVariant", "fontWeight",
+		"gap", "gridColumn", "gridRow", "gridTemplateColumns", "gridTemplateRows",
+		"height",
+		"justifyContent",
+		"left", "letterSpacing", "lineHeight", "listStyle", "listStyleImage",
+		"listStylePosition", "listStyleType",
+		"margin", "marginBottom", "marginLeft", "marginRight", "marginTop",
+		"maxHeight", "maxWidth", "minHeight", "minWidth",
+		"opacity", "order", "outline", "outlineColor", "outlineStyle", "outlineWidth",
+		"overflow", "overflowX", "overflowY",
+		"padding", "paddingBottom", "paddingLeft", "paddingRight", "paddingTop",
+		"position",
+		"quotes",
+		"right",
+		"tableLayout", "textAlign", "textDecoration", "textIndent", "textTransform",
+		"top",
+		"unicodeBidi",
+		"verticalAlign", "visibility",
+		"whiteSpace", "width", "wordSpacing",
+		"zIndex",
+	}
+
+	for _, camelProp := range cssProperties {
+		prop := camelProp // Capture for closure
+		jsSD.DefineAccessorProperty(prop, vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			return vm.ToValue(getPropertyValue(prop))
+		}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	}
+}
+
+// formatCSSLength formats a length value for CSS output.
+func formatCSSLength(length float64) string {
+	if length == 0 {
+		return "0px"
+	}
+	// Use integer if it's a whole number
+	if length == float64(int64(length)) {
+		return itoa(int(length)) + "px"
+	}
+	// Format with up to 2 decimal places
+	return ftoa(length) + "px"
+}
+
+// formatCSSColor formats a color value for CSS output.
+func formatCSSColor(c css.Color) string {
+	if c.A == 255 {
+		return "rgb(" + itoa(int(c.R)) + ", " + itoa(int(c.G)) + ", " + itoa(int(c.B)) + ")"
+	}
+	return "rgba(" + itoa(int(c.R)) + ", " + itoa(int(c.G)) + ", " + itoa(int(c.B)) + ", " + ftoa(float64(c.A)/255.0) + ")"
+}
+
+// itoa converts an int to string (simple implementation to avoid fmt import).
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	neg := i < 0
+	if neg {
+		i = -i
+	}
+	var buf [20]byte
+	pos := len(buf)
+	for i > 0 {
+		pos--
+		buf[pos] = byte('0' + i%10)
+		i /= 10
+	}
+	if neg {
+		pos--
+		buf[pos] = '-'
+	}
+	return string(buf[pos:])
+}
+
+// ftoa converts a float to string with 2 decimal places.
+func ftoa(f float64) string {
+	// Simple implementation - multiply by 100, round, format
+	i := int(f*100 + 0.5)
+	whole := i / 100
+	frac := i % 100
+	if frac == 0 {
+		return itoa(whole)
+	}
+	if frac%10 == 0 {
+		return itoa(whole) + "." + itoa(frac/10)
+	}
+	fracStr := itoa(frac)
+	if len(fracStr) == 1 {
+		fracStr = "0" + fracStr
+	}
+	return itoa(whole) + "." + fracStr
 }
 
 // BindAttr creates a JavaScript object from a DOM Attr.
