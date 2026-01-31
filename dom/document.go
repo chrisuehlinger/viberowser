@@ -655,3 +655,95 @@ func convertHTMLTree(src *html.Node, parent *Node, doc *Document) {
 		}
 	}
 }
+
+// DOMImplementation provides methods for creating DOM objects.
+type DOMImplementation struct {
+	document *Document // The associated document
+}
+
+// NewDOMImplementation creates a new DOMImplementation for the given document.
+func NewDOMImplementation(doc *Document) *DOMImplementation {
+	return &DOMImplementation{document: doc}
+}
+
+// Implementation returns the DOMImplementation for this document.
+func (d *Document) Implementation() *DOMImplementation {
+	// Each document should have its own implementation instance
+	// We create it on demand and cache it
+	if d.AsNode().documentData.implementation == nil {
+		d.AsNode().documentData.implementation = NewDOMImplementation(d)
+	}
+	return d.AsNode().documentData.implementation
+}
+
+// CreateHTMLDocument creates a new HTML document with the given title.
+// If title is empty, no title element is created.
+func (impl *DOMImplementation) CreateHTMLDocument(title string) *Document {
+	// Create a new document
+	doc := NewDocument()
+
+	// Create and append doctype
+	doctype := newNode(DocumentTypeNode, "html", doc)
+	doctype.docTypeData = &docTypeData{
+		name:     "html",
+		publicId: "",
+		systemId: "",
+	}
+	doc.AsNode().AppendChild(doctype)
+
+	// Create html element
+	html := doc.CreateElement("html")
+	doc.AsNode().AppendChild(html.AsNode())
+
+	// Create head element
+	head := doc.CreateElement("head")
+	html.AsNode().AppendChild(head.AsNode())
+
+	// Create title element if title is provided (even if empty string when explicitly given)
+	titleEl := doc.CreateElement("title")
+	if title != "" {
+		titleEl.SetTextContent(title)
+	}
+	head.AsNode().AppendChild(titleEl.AsNode())
+
+	// Create body element
+	body := doc.CreateElement("body")
+	html.AsNode().AppendChild(body.AsNode())
+
+	return doc
+}
+
+// CreateDocument creates a new XML document with the given namespace and qualified name.
+func (impl *DOMImplementation) CreateDocument(namespaceURI, qualifiedName string, doctype *Node) *Document {
+	doc := NewDocument()
+	doc.AsNode().documentData.contentType = "application/xml"
+
+	// Add doctype if provided
+	if doctype != nil {
+		doc.AsNode().AppendChild(doctype)
+	}
+
+	// Create root element if qualified name is provided
+	if qualifiedName != "" {
+		root := doc.CreateElementNS(namespaceURI, qualifiedName)
+		doc.AsNode().AppendChild(root.AsNode())
+	}
+
+	return doc
+}
+
+// CreateDocumentType creates a new DocumentType node.
+func (impl *DOMImplementation) CreateDocumentType(qualifiedName, publicId, systemId string) *Node {
+	doctype := newNode(DocumentTypeNode, qualifiedName, nil)
+	doctype.docTypeData = &docTypeData{
+		name:     qualifiedName,
+		publicId: publicId,
+		systemId: systemId,
+	}
+	return doctype
+}
+
+// HasFeature returns true. Per spec, always returns true for compatibility.
+func (impl *DOMImplementation) HasFeature() bool {
+	return true
+}

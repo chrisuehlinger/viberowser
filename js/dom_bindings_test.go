@@ -927,3 +927,61 @@ func TestDOMBinderDocumentFragmentMixinMethods(t *testing.T) {
 		t.Errorf("Expected 1 child after replaceChildren, got %v", result.ToInteger())
 	}
 }
+
+func TestDOMImplementation(t *testing.T) {
+	doc, _ := dom.ParseHTML("<html><body></body></html>")
+	runtime := NewRuntime()
+	binder := NewDOMBinder(runtime)
+	binder.BindDocument(doc)
+
+	// Test that DOMImplementation exists
+	result, err := runtime.Execute(`typeof DOMImplementation`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.String() != "function" {
+		t.Errorf("DOMImplementation should be a function, got %s", result.String())
+	}
+
+	// Test that document.implementation exists
+	result, err = runtime.Execute(`typeof document.implementation`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.String() != "object" {
+		t.Errorf("document.implementation should be an object, got %s", result.String())
+	}
+
+	// Test instanceof
+	result, err = runtime.Execute(`document.implementation instanceof DOMImplementation`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.ToBoolean() {
+		t.Error("document.implementation should be instanceof DOMImplementation")
+	}
+
+	// Test createHTMLDocument
+	result, err = runtime.Execute(`
+		var doc = document.implementation.createHTMLDocument("Test");
+		doc.title
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.String() != "Test" {
+		t.Errorf("Expected title 'Test', got %s", result.String())
+	}
+
+	// Test createHTMLDocument returns different implementation
+	result, err = runtime.Execute(`
+		var doc = document.implementation.createHTMLDocument("Test");
+		document.implementation !== doc.implementation
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Different documents should have different implementations")
+	}
+}

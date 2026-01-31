@@ -13,6 +13,98 @@ func utf16Length(s string) int {
 	return len(utf16.Encode([]rune(s)))
 }
 
+// utf16Substring extracts a substring using UTF-16 code unit offsets.
+// This matches JavaScript's String.substring behavior for proper Unicode handling.
+func utf16Substring(s string, offset, count int) string {
+	codeUnits := utf16.Encode([]rune(s))
+	if offset >= len(codeUnits) {
+		return ""
+	}
+	end := offset + count
+	if end > len(codeUnits) {
+		end = len(codeUnits)
+	}
+	// Convert back to string
+	return string(utf16.Decode(codeUnits[offset:end]))
+}
+
+// utf16ReplaceRange replaces a range of UTF-16 code units in a string.
+func utf16ReplaceRange(s string, offset, count int, replacement string) string {
+	codeUnits := utf16.Encode([]rune(s))
+	if offset > len(codeUnits) {
+		offset = len(codeUnits)
+	}
+	end := offset + count
+	if end > len(codeUnits) {
+		end = len(codeUnits)
+	}
+
+	// Build result: before + replacement + after
+	before := codeUnits[:offset]
+	after := codeUnits[end:]
+	replacementUnits := utf16.Encode([]rune(replacement))
+
+	result := make([]uint16, 0, len(before)+len(replacementUnits)+len(after))
+	result = append(result, before...)
+	result = append(result, replacementUnits...)
+	result = append(result, after...)
+
+	return string(utf16.Decode(result))
+}
+
+// domExceptionCode returns the legacy exception code for a DOMException name.
+func domExceptionCode(name string) int {
+	codes := map[string]int{
+		"IndexSizeError":             1,
+		"HierarchyRequestError":      3,
+		"WrongDocumentError":         4,
+		"InvalidCharacterError":      5,
+		"NoModificationAllowedError": 7,
+		"NotFoundError":              8,
+		"NotSupportedError":          9,
+		"InUseAttributeError":        10,
+		"InvalidStateError":          11,
+		"SyntaxError":                12,
+		"InvalidModificationError":   13,
+		"NamespaceError":             14,
+		"InvalidAccessError":         15,
+		"TypeMismatchError":          17,
+		"SecurityError":              18,
+		"NetworkError":               19,
+		"AbortError":                 20,
+		"URLMismatchError":           21,
+		"QuotaExceededError":         22,
+		"TimeoutError":               23,
+		"InvalidNodeTypeError":       24,
+		"DataCloneError":             25,
+	}
+	if code, ok := codes[name]; ok {
+		return code
+	}
+	return 0
+}
+
+// toUint32 converts a JavaScript value to an unsigned 32-bit integer per Web IDL.
+// This handles overflow/underflow for CharacterData methods.
+func toUint32(v goja.Value) uint32 {
+	if goja.IsUndefined(v) || goja.IsNull(v) {
+		return 0
+	}
+	num := v.ToFloat()
+	// Handle NaN
+	if num != num {
+		return 0
+	}
+	// Handle infinity
+	if num == 0 || num > 4294967295 || num < -4294967295 {
+		return uint32(int64(num) & 0xFFFFFFFF)
+	}
+	// Truncate to integer
+	intVal := int64(num)
+	// Apply modulo 2^32
+	return uint32(intVal & 0xFFFFFFFF)
+}
+
 // DOMBinder provides methods to bind DOM objects to JavaScript.
 type DOMBinder struct {
 	runtime  *Runtime
@@ -26,14 +118,18 @@ type DOMBinder struct {
 	commentProto          *goja.Object
 	elementProto          *goja.Object
 	documentProto         *goja.Object
-	documentFragmentProto *goja.Object
+	documentFragmentProto     *goja.Object
+	domExceptionProto         *goja.Object
+	domImplementationProto    *goja.Object
+	domImplementationCache    map[*dom.DOMImplementation]*goja.Object
 }
 
 // NewDOMBinder creates a new DOM binder for the given runtime.
 func NewDOMBinder(runtime *Runtime) *DOMBinder {
 	b := &DOMBinder{
-		runtime: runtime,
-		nodeMap: make(map[*dom.Node]*goja.Object),
+		runtime:                runtime,
+		nodeMap:                make(map[*dom.Node]*goja.Object),
+		domImplementationCache: make(map[*dom.DOMImplementation]*goja.Object),
 	}
 	b.setupPrototypes()
 	return b
@@ -63,6 +159,60 @@ func (b *DOMBinder) setupPrototypes() {
 	nodeConstructorObj.Set("DOCUMENT_TYPE_NODE", int(dom.DocumentTypeNode))
 
 	vm.Set("Node", nodeConstructorObj)
+
+	// Create DOMException prototype and constructor
+	b.domExceptionProto = vm.NewObject()
+	// DOMException extends Error prototype
+	errorProto := vm.Get("Error").ToObject(vm).Get("prototype").ToObject(vm)
+	b.domExceptionProto.SetPrototype(errorProto)
+
+	domExceptionConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		message := ""
+		name := "Error"
+		if len(call.Arguments) > 0 {
+			message = call.Arguments[0].String()
+		}
+		if len(call.Arguments) > 1 {
+			name = call.Arguments[1].String()
+		}
+		exc := call.This
+		exc.Set("message", message)
+		exc.Set("name", name)
+		exc.Set("code", domExceptionCode(name))
+		return exc
+	})
+	domExceptionConstructorObj := domExceptionConstructor.ToObject(vm)
+	domExceptionConstructorObj.Set("prototype", b.domExceptionProto)
+	b.domExceptionProto.Set("constructor", domExceptionConstructorObj)
+
+	// Set DOMException constants
+	domExceptionConstructorObj.Set("INDEX_SIZE_ERR", 1)
+	domExceptionConstructorObj.Set("DOMSTRING_SIZE_ERR", 2)
+	domExceptionConstructorObj.Set("HIERARCHY_REQUEST_ERR", 3)
+	domExceptionConstructorObj.Set("WRONG_DOCUMENT_ERR", 4)
+	domExceptionConstructorObj.Set("INVALID_CHARACTER_ERR", 5)
+	domExceptionConstructorObj.Set("NO_DATA_ALLOWED_ERR", 6)
+	domExceptionConstructorObj.Set("NO_MODIFICATION_ALLOWED_ERR", 7)
+	domExceptionConstructorObj.Set("NOT_FOUND_ERR", 8)
+	domExceptionConstructorObj.Set("NOT_SUPPORTED_ERR", 9)
+	domExceptionConstructorObj.Set("INUSE_ATTRIBUTE_ERR", 10)
+	domExceptionConstructorObj.Set("INVALID_STATE_ERR", 11)
+	domExceptionConstructorObj.Set("SYNTAX_ERR", 12)
+	domExceptionConstructorObj.Set("INVALID_MODIFICATION_ERR", 13)
+	domExceptionConstructorObj.Set("NAMESPACE_ERR", 14)
+	domExceptionConstructorObj.Set("INVALID_ACCESS_ERR", 15)
+	domExceptionConstructorObj.Set("VALIDATION_ERR", 16)
+	domExceptionConstructorObj.Set("TYPE_MISMATCH_ERR", 17)
+	domExceptionConstructorObj.Set("SECURITY_ERR", 18)
+	domExceptionConstructorObj.Set("NETWORK_ERR", 19)
+	domExceptionConstructorObj.Set("ABORT_ERR", 20)
+	domExceptionConstructorObj.Set("URL_MISMATCH_ERR", 21)
+	domExceptionConstructorObj.Set("QUOTA_EXCEEDED_ERR", 22)
+	domExceptionConstructorObj.Set("TIMEOUT_ERR", 23)
+	domExceptionConstructorObj.Set("INVALID_NODE_TYPE_ERR", 24)
+	domExceptionConstructorObj.Set("DATA_CLONE_ERR", 25)
+
+	vm.Set("DOMException", domExceptionConstructorObj)
 
 	// Create CharacterData prototype (extends Node)
 	b.characterDataProto = vm.NewObject()
@@ -157,6 +307,16 @@ func (b *DOMBinder) setupPrototypes() {
 	docFragConstructorObj.Set("prototype", b.documentFragmentProto)
 	b.documentFragmentProto.Set("constructor", docFragConstructorObj)
 	vm.Set("DocumentFragment", docFragConstructorObj)
+
+	// Create DOMImplementation prototype
+	b.domImplementationProto = vm.NewObject()
+	domImplConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		panic(vm.NewTypeError("Illegal constructor"))
+	})
+	domImplConstructorObj := domImplConstructor.ToObject(vm)
+	domImplConstructorObj.Set("prototype", b.domImplementationProto)
+	b.domImplementationProto.Set("constructor", domImplConstructorObj)
+	vm.Set("DOMImplementation", domImplConstructorObj)
 }
 
 // BindDocument creates a JavaScript document object from a DOM document.
@@ -346,6 +506,11 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 		return b.BindNode(adopted)
 	})
 
+	// implementation property
+	jsDoc.DefineAccessorProperty("implementation", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.bindDOMImplementation(doc.Implementation())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
 	// ParentNode mixin properties
 	jsDoc.DefineAccessorProperty("children", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		return b.BindHTMLCollection(doc.Children())
@@ -394,8 +559,324 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 	b.bindNodeProperties(jsDoc, doc.AsNode())
 
 	// Set document on runtime without mutex (we're already in runtime context)
+	// Note: Only set global document for the first/main document
 	b.runtime.setDocumentDirect(jsDoc)
 	return jsDoc
+}
+
+// bindDocumentInternal binds a document without setting it as the global document.
+// Used for documents created via createHTMLDocument, createDocument, etc.
+func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
+	vm := b.runtime.vm
+	jsDoc := vm.NewObject()
+
+	// Set prototype for instanceof to work
+	if b.documentProto != nil {
+		jsDoc.SetPrototype(b.documentProto)
+	}
+
+	// Store reference to the Go document
+	jsDoc.Set("_goDoc", doc)
+
+	// Document properties
+	jsDoc.Set("nodeType", int(dom.DocumentNode))
+	jsDoc.Set("nodeName", "#document")
+
+	// Document accessors
+	jsDoc.DefineAccessorProperty("documentElement", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		el := doc.DocumentElement()
+		if el == nil {
+			return goja.Null()
+		}
+		return b.BindElement(el)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("head", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		el := doc.Head()
+		if el == nil {
+			return goja.Null()
+		}
+		return b.BindElement(el)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("body", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		el := doc.Body()
+		if el == nil {
+			return goja.Null()
+		}
+		return b.BindElement(el)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("title", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(doc.Title())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			doc.SetTitle(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// Document methods
+	jsDoc.Set("getElementById", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		id := call.Arguments[0].String()
+		el := doc.GetElementById(id)
+		if el == nil {
+			return goja.Null()
+		}
+		return b.BindElement(el)
+	})
+
+	jsDoc.Set("getElementsByTagName", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return b.createEmptyHTMLCollection()
+		}
+		tagName := call.Arguments[0].String()
+		collection := doc.GetElementsByTagName(tagName)
+		return b.BindHTMLCollection(collection)
+	})
+
+	jsDoc.Set("getElementsByClassName", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return b.createEmptyHTMLCollection()
+		}
+		classNames := call.Arguments[0].String()
+		collection := doc.GetElementsByClassName(classNames)
+		return b.BindHTMLCollection(collection)
+	})
+
+	jsDoc.Set("querySelector", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		selector := call.Arguments[0].String()
+		el := doc.QuerySelector(selector)
+		if el == nil {
+			return goja.Null()
+		}
+		return b.BindElement(el)
+	})
+
+	jsDoc.Set("querySelectorAll", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return b.createEmptyNodeList()
+		}
+		selector := call.Arguments[0].String()
+		nodeList := doc.QuerySelectorAll(selector)
+		return b.BindNodeList(nodeList)
+	})
+
+	jsDoc.Set("createElement", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		tagName := call.Arguments[0].String()
+		el := doc.CreateElement(tagName)
+		return b.BindElement(el)
+	})
+
+	jsDoc.Set("createElementNS", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			return goja.Null()
+		}
+		namespaceURI := ""
+		if !goja.IsNull(call.Arguments[0]) {
+			namespaceURI = call.Arguments[0].String()
+		}
+		qualifiedName := call.Arguments[1].String()
+		el := doc.CreateElementNS(namespaceURI, qualifiedName)
+		return b.BindElement(el)
+	})
+
+	jsDoc.Set("createTextNode", func(call goja.FunctionCall) goja.Value {
+		data := ""
+		if len(call.Arguments) > 0 {
+			data = call.Arguments[0].String()
+		}
+		node := doc.CreateTextNode(data)
+		return b.BindNode(node)
+	})
+
+	jsDoc.Set("createComment", func(call goja.FunctionCall) goja.Value {
+		data := ""
+		if len(call.Arguments) > 0 {
+			data = call.Arguments[0].String()
+		}
+		node := doc.CreateComment(data)
+		return b.BindNode(node)
+	})
+
+	jsDoc.Set("createDocumentFragment", func(call goja.FunctionCall) goja.Value {
+		frag := doc.CreateDocumentFragment()
+		return b.BindDocumentFragment(frag)
+	})
+
+	jsDoc.Set("importNode", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		nodeObj := call.Arguments[0].ToObject(vm)
+		goNode := b.getGoNode(nodeObj)
+		if goNode == nil {
+			return goja.Null()
+		}
+		deep := false
+		if len(call.Arguments) > 1 {
+			deep = call.Arguments[1].ToBoolean()
+		}
+		imported := doc.ImportNode(goNode, deep)
+		if imported == nil {
+			return goja.Null()
+		}
+		return b.BindNode(imported)
+	})
+
+	jsDoc.Set("adoptNode", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		nodeObj := call.Arguments[0].ToObject(vm)
+		goNode := b.getGoNode(nodeObj)
+		if goNode == nil {
+			return goja.Null()
+		}
+		adopted := doc.AdoptNode(goNode)
+		if adopted == nil {
+			return goja.Null()
+		}
+		return b.BindNode(adopted)
+	})
+
+	// implementation property
+	jsDoc.DefineAccessorProperty("implementation", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.bindDOMImplementation(doc.Implementation())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// ParentNode mixin properties
+	jsDoc.DefineAccessorProperty("children", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindHTMLCollection(doc.Children())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("childElementCount", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(doc.ChildElementCount())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("firstElementChild", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		child := doc.FirstElementChild()
+		if child == nil {
+			return goja.Null()
+		}
+		return b.BindElement(child)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("lastElementChild", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		child := doc.LastElementChild()
+		if child == nil {
+			return goja.Null()
+		}
+		return b.BindElement(child)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// ParentNode mixin methods
+	jsDoc.Set("append", func(call goja.FunctionCall) goja.Value {
+		nodes := b.convertJSNodesToGo(call.Arguments)
+		doc.Append(nodes...)
+		return goja.Undefined()
+	})
+
+	jsDoc.Set("prepend", func(call goja.FunctionCall) goja.Value {
+		nodes := b.convertJSNodesToGo(call.Arguments)
+		doc.Prepend(nodes...)
+		return goja.Undefined()
+	})
+
+	jsDoc.Set("replaceChildren", func(call goja.FunctionCall) goja.Value {
+		nodes := b.convertJSNodesToGo(call.Arguments)
+		doc.ReplaceChildren(nodes...)
+		return goja.Undefined()
+	})
+
+	// Child node properties (document can have children)
+	b.bindNodeProperties(jsDoc, doc.AsNode())
+
+	// Do NOT set global document here - this is for internal documents
+	return jsDoc
+}
+
+// bindDOMImplementation creates a JavaScript object for a DOMImplementation.
+func (b *DOMBinder) bindDOMImplementation(impl *dom.DOMImplementation) *goja.Object {
+	if impl == nil {
+		return nil
+	}
+
+	// Check cache
+	if jsObj, ok := b.domImplementationCache[impl]; ok {
+		return jsObj
+	}
+
+	vm := b.runtime.vm
+	jsImpl := vm.NewObject()
+
+	// Set prototype for instanceof to work
+	if b.domImplementationProto != nil {
+		jsImpl.SetPrototype(b.domImplementationProto)
+	}
+
+	// createHTMLDocument(title)
+	jsImpl.Set("createHTMLDocument", func(call goja.FunctionCall) goja.Value {
+		title := ""
+		if len(call.Arguments) > 0 && !goja.IsUndefined(call.Arguments[0]) {
+			title = call.Arguments[0].String()
+		}
+		doc := impl.CreateHTMLDocument(title)
+		return b.bindDocumentInternal(doc)
+	})
+
+	// createDocument(namespaceURI, qualifiedName, doctype)
+	jsImpl.Set("createDocument", func(call goja.FunctionCall) goja.Value {
+		namespaceURI := ""
+		qualifiedName := ""
+		var doctype *dom.Node
+
+		if len(call.Arguments) > 0 && !goja.IsNull(call.Arguments[0]) {
+			namespaceURI = call.Arguments[0].String()
+		}
+		if len(call.Arguments) > 1 && !goja.IsNull(call.Arguments[1]) {
+			qualifiedName = call.Arguments[1].String()
+		}
+		if len(call.Arguments) > 2 && !goja.IsNull(call.Arguments[2]) && !goja.IsUndefined(call.Arguments[2]) {
+			obj := call.Arguments[2].ToObject(vm)
+			doctype = b.getGoNode(obj)
+		}
+
+		doc := impl.CreateDocument(namespaceURI, qualifiedName, doctype)
+		return b.bindDocumentInternal(doc)
+	})
+
+	// createDocumentType(qualifiedName, publicId, systemId)
+	jsImpl.Set("createDocumentType", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 3 {
+			panic(vm.NewTypeError("Failed to execute 'createDocumentType': 3 arguments required"))
+		}
+		qualifiedName := call.Arguments[0].String()
+		publicId := call.Arguments[1].String()
+		systemId := call.Arguments[2].String()
+
+		doctype := impl.CreateDocumentType(qualifiedName, publicId, systemId)
+		return b.BindNode(doctype)
+	})
+
+	// hasFeature() - always returns true per spec
+	jsImpl.Set("hasFeature", func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(true)
+	})
+
+	// Cache
+	b.domImplementationCache[impl] = jsImpl
+
+	return jsImpl
 }
 
 // BindElement creates a JavaScript element object from a DOM element.
@@ -909,6 +1390,9 @@ func (b *DOMBinder) BindTextNode(node *dom.Node, proto *goja.Object) *goja.Objec
 		return vm.ToValue(utf16Length(node.NodeValue()))
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 
+	// CharacterData mutation methods
+	b.bindCharacterDataMethods(jsNode, node)
+
 	// ChildNode mixin methods
 	b.bindCharacterDataChildNodeMixin(jsNode, node)
 
@@ -992,6 +1476,9 @@ func (b *DOMBinder) BindCommentNode(node *dom.Node, proto *goja.Object) *goja.Ob
 		return vm.ToValue(utf16Length(node.NodeValue()))
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 
+	// CharacterData mutation methods
+	b.bindCharacterDataMethods(jsNode, node)
+
 	// ChildNode mixin methods
 	b.bindCharacterDataChildNodeMixin(jsNode, node)
 
@@ -1002,6 +1489,158 @@ func (b *DOMBinder) BindCommentNode(node *dom.Node, proto *goja.Object) *goja.Ob
 	b.nodeMap[node] = jsNode
 
 	return jsNode
+}
+
+// createDOMException creates a proper DOMException object using the global constructor.
+func (b *DOMBinder) createDOMException(name, message string) *goja.Object {
+	vm := b.runtime.vm
+
+	// Use the DOMException constructor that was set up in setupPrototypes
+	// This ensures instanceof DOMException works correctly
+	domExceptionCtor := vm.Get("DOMException")
+	if domExceptionCtor == nil || goja.IsUndefined(domExceptionCtor) {
+		// Fallback: create a basic object
+		exc := vm.NewObject()
+		exc.Set("name", name)
+		exc.Set("message", message)
+		exc.Set("code", domExceptionCode(name))
+		return exc
+	}
+
+	// Call: new DOMException(message, name)
+	ctor, ok := goja.AssertConstructor(domExceptionCtor)
+	if !ok {
+		// Fallback
+		exc := vm.NewObject()
+		exc.Set("name", name)
+		exc.Set("message", message)
+		exc.Set("code", domExceptionCode(name))
+		return exc
+	}
+
+	exc, err := ctor(nil, vm.ToValue(message), vm.ToValue(name))
+	if err != nil {
+		// Fallback
+		fallback := vm.NewObject()
+		fallback.Set("name", name)
+		fallback.Set("message", message)
+		fallback.Set("code", domExceptionCode(name))
+		return fallback
+	}
+	return exc
+}
+
+// throwIndexSizeError throws a DOMException with name "IndexSizeError".
+func (b *DOMBinder) throwIndexSizeError(vm *goja.Runtime) {
+	exc := b.createDOMException("IndexSizeError", "The index is not in the allowed range.")
+	panic(vm.ToValue(exc))
+}
+
+// bindCharacterDataMethods adds the CharacterData mutation methods to a node.
+// These are: substringData, appendData, insertData, deleteData, replaceData
+func (b *DOMBinder) bindCharacterDataMethods(jsNode *goja.Object, node *dom.Node) {
+	vm := b.runtime.vm
+
+	jsNode.Set("substringData", func(call goja.FunctionCall) goja.Value {
+		// Per spec: requires 2 arguments
+		if len(call.Arguments) < 2 {
+			panic(vm.NewTypeError("Failed to execute 'substringData' on 'CharacterData': 2 arguments required"))
+		}
+
+		offset := toUint32(call.Arguments[0])
+		count := toUint32(call.Arguments[1])
+
+		data := node.NodeValue()
+		length := uint32(utf16Length(data))
+
+		// Check offset bounds
+		if offset > length {
+			b.throwIndexSizeError(vm)
+		}
+
+		return vm.ToValue(utf16Substring(data, int(offset), int(count)))
+	})
+
+	jsNode.Set("appendData", func(call goja.FunctionCall) goja.Value {
+		// Per spec: requires 1 argument
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'appendData' on 'CharacterData': 1 argument required"))
+		}
+
+		data := call.Arguments[0].String()
+		node.SetNodeValue(node.NodeValue() + data)
+		return goja.Undefined()
+	})
+
+	jsNode.Set("insertData", func(call goja.FunctionCall) goja.Value {
+		// Per spec: requires 2 arguments
+		if len(call.Arguments) < 2 {
+			panic(vm.NewTypeError("Failed to execute 'insertData' on 'CharacterData': 2 arguments required"))
+		}
+
+		offset := toUint32(call.Arguments[0])
+		data := call.Arguments[1].String()
+
+		current := node.NodeValue()
+		length := uint32(utf16Length(current))
+
+		// Check offset bounds
+		if offset > length {
+			b.throwIndexSizeError(vm)
+		}
+
+		// Insert at offset
+		newValue := utf16ReplaceRange(current, int(offset), 0, data)
+		node.SetNodeValue(newValue)
+		return goja.Undefined()
+	})
+
+	jsNode.Set("deleteData", func(call goja.FunctionCall) goja.Value {
+		// Per spec: requires 2 arguments
+		if len(call.Arguments) < 2 {
+			panic(vm.NewTypeError("Failed to execute 'deleteData' on 'CharacterData': 2 arguments required"))
+		}
+
+		offset := toUint32(call.Arguments[0])
+		count := toUint32(call.Arguments[1])
+
+		current := node.NodeValue()
+		length := uint32(utf16Length(current))
+
+		// Check offset bounds
+		if offset > length {
+			b.throwIndexSizeError(vm)
+		}
+
+		// Delete from offset
+		newValue := utf16ReplaceRange(current, int(offset), int(count), "")
+		node.SetNodeValue(newValue)
+		return goja.Undefined()
+	})
+
+	jsNode.Set("replaceData", func(call goja.FunctionCall) goja.Value {
+		// Per spec: requires 3 arguments
+		if len(call.Arguments) < 3 {
+			panic(vm.NewTypeError("Failed to execute 'replaceData' on 'CharacterData': 3 arguments required"))
+		}
+
+		offset := toUint32(call.Arguments[0])
+		count := toUint32(call.Arguments[1])
+		data := call.Arguments[2].String()
+
+		current := node.NodeValue()
+		length := uint32(utf16Length(current))
+
+		// Check offset bounds
+		if offset > length {
+			b.throwIndexSizeError(vm)
+		}
+
+		// Replace at offset
+		newValue := utf16ReplaceRange(current, int(offset), int(count), data)
+		node.SetNodeValue(newValue)
+		return goja.Undefined()
+	})
 }
 
 // bindCharacterDataChildNodeMixin adds ChildNode mixin methods to a CharacterData node.
