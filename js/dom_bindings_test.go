@@ -1090,3 +1090,21 @@ func TestDOMTokenList_Deduplication(t *testing.T) {
 		t.Errorf("Expected classList[0] to be 'a', got '%s'", result.String())
 	}
 }
+
+func TestInsertBeforeLength(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML("<!DOCTYPE html><html><body></body></html>")
+	binder.BindDocument(doc)
+
+	// Test that insertBefore.length is 2
+	result, err := r.Execute("document.body.insertBefore.length")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	t.Logf("insertBefore.length = %v", result.String())
+	if result.ToInteger() != 2 {
+		t.Errorf("Expected insertBefore.length = 2, got %v", result.String())
+	}
+}

@@ -591,6 +591,14 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 	jsDoc.Set("nodeName", "#document")
 
 	// Document accessors
+	jsDoc.DefineAccessorProperty("doctype", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		doctype := doc.Doctype()
+		if doctype == nil {
+			return goja.Null()
+		}
+		return b.BindNode(doctype)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
 	jsDoc.DefineAccessorProperty("documentElement", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		el := doc.DocumentElement()
 		if el == nil {
@@ -1974,29 +1982,31 @@ func (b *DOMBinder) bindNodeProperties(jsObj *goja.Object, node *dom.Node) {
 		panic(vm.NewTypeError("Failed to execute 'appendChild' on 'Node': parameter 1 is not of type 'Node'."))
 	})
 
-	jsObj.Set("insertBefore", func(call goja.FunctionCall) goja.Value {
-		// Per WebIDL, insertBefore requires 2 arguments
-		if len(call.Arguments) < 2 {
-			panic(vm.NewTypeError("Failed to execute 'insertBefore' on 'Node': 2 arguments required."))
-		}
-
-		// First argument must be a Node (not null)
-		arg0 := call.Arguments[0]
-		if goja.IsNull(arg0) || goja.IsUndefined(arg0) {
+	// insertBefore uses typed parameters (newNode, refNode goja.Value) so that
+	// insertBefore.length correctly returns 2, which WPT tests rely on to detect
+	// whether to pass null as the second argument.
+	jsObj.Set("insertBefore", func(newNode, refNode goja.Value) goja.Value {
+		// First argument must be a Node (not null or undefined or missing)
+		// When an argument is missing, goja passes nil for typed parameters
+		if newNode == nil || goja.IsNull(newNode) || goja.IsUndefined(newNode) {
 			panic(vm.NewTypeError("Failed to execute 'insertBefore' on 'Node': parameter 1 is not of type 'Node'."))
 		}
 
-		newChildObj := arg0.ToObject(vm)
+		newChildObj := newNode.ToObject(vm)
 		goNewChild := b.getGoNode(newChildObj)
 		if goNewChild == nil {
 			panic(vm.NewTypeError("Failed to execute 'insertBefore' on 'Node': parameter 1 is not of type 'Node'."))
 		}
 
-		// Second argument can be Node, null, or undefined (treated as null)
+		// Second argument is required per WebIDL - nil means argument was not provided
+		if refNode == nil {
+			panic(vm.NewTypeError("Failed to execute 'insertBefore' on 'Node': 2 arguments required, but only 1 present."))
+		}
+
+		// Second argument can be Node, null, or undefined (null and undefined treated as null)
 		var goRefChild *dom.Node
-		arg1 := call.Arguments[1]
-		if !goja.IsNull(arg1) && !goja.IsUndefined(arg1) {
-			refChildObj := arg1.ToObject(vm)
+		if !goja.IsNull(refNode) && !goja.IsUndefined(refNode) {
+			refChildObj := refNode.ToObject(vm)
 			goRefChild = b.getGoNode(refChildObj)
 			if goRefChild == nil {
 				// Not a Node and not null - throw TypeError
