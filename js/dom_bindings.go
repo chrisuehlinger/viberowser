@@ -133,6 +133,7 @@ type DOMBinder struct {
 	cssStyleDeclarationProto     *goja.Object
 	domImplementationCache       map[*dom.DOMImplementation]*goja.Object
 	styleDeclarationCache        map[*dom.CSSStyleDeclaration]*goja.Object
+	htmlCollectionMap            map[*goja.Object]*dom.HTMLCollection
 }
 
 // NewDOMBinder creates a new DOM binder for the given runtime.
@@ -142,6 +143,7 @@ func NewDOMBinder(runtime *Runtime) *DOMBinder {
 		nodeMap:                make(map[*dom.Node]*goja.Object),
 		domImplementationCache: make(map[*dom.DOMImplementation]*goja.Object),
 		styleDeclarationCache:  make(map[*dom.CSSStyleDeclaration]*goja.Object),
+		htmlCollectionMap:      make(map[*goja.Object]*dom.HTMLCollection),
 	}
 	b.setupPrototypes()
 	return b
@@ -354,7 +356,7 @@ func (b *DOMBinder) setupPrototypes() {
 	b.domImplementationProto.Set("constructor", domImplConstructorObj)
 	vm.Set("DOMImplementation", domImplConstructorObj)
 
-	// Create HTMLCollection prototype
+	// Create HTMLCollection prototype with item and namedItem methods
 	b.htmlCollectionProto = vm.NewObject()
 	htmlCollectionConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
 		panic(vm.NewTypeError("Illegal constructor"))
@@ -362,6 +364,58 @@ func (b *DOMBinder) setupPrototypes() {
 	htmlCollectionConstructorObj := htmlCollectionConstructor.ToObject(vm)
 	htmlCollectionConstructorObj.Set("prototype", b.htmlCollectionProto)
 	b.htmlCollectionProto.Set("constructor", htmlCollectionConstructorObj)
+
+	// Helper to get collection from this object
+	getCollection := func(thisObj *goja.Object) *dom.HTMLCollection {
+		if thisObj == nil {
+			return nil
+		}
+		return b.htmlCollectionMap[thisObj]
+	}
+
+	// Add length getter to prototype - it reads from the internal map
+	b.htmlCollectionProto.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		col := getCollection(call.This.ToObject(vm))
+		if col == nil {
+			return vm.ToValue(0)
+		}
+		return vm.ToValue(col.Length())
+	}), nil, goja.FLAG_TRUE, goja.FLAG_FALSE)
+
+	// Add item method to prototype
+	b.htmlCollectionProto.Set("item", func(call goja.FunctionCall) goja.Value {
+		col := getCollection(call.This.ToObject(vm))
+		if col == nil {
+			return goja.Null()
+		}
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		index := int(call.Arguments[0].ToInteger())
+		el := col.Item(index)
+		if el == nil {
+			return goja.Null()
+		}
+		return b.BindElement(el)
+	})
+
+	// Add namedItem method to prototype
+	b.htmlCollectionProto.Set("namedItem", func(call goja.FunctionCall) goja.Value {
+		col := getCollection(call.This.ToObject(vm))
+		if col == nil {
+			return goja.Null()
+		}
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		name := call.Arguments[0].String()
+		el := col.NamedItem(name)
+		if el == nil {
+			return goja.Null()
+		}
+		return b.BindElement(el)
+	})
+
 	vm.Set("HTMLCollection", htmlCollectionConstructorObj)
 
 	// Create NodeList prototype
@@ -2889,35 +2943,10 @@ func (b *DOMBinder) BindHTMLCollection(collection *dom.HTMLCollection) *goja.Obj
 		jsCol.SetPrototype(b.htmlCollectionProto)
 	}
 
-	jsCol.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
-		return vm.ToValue(collection.Length())
-	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	// Register the collection in our internal map for prototype methods
+	b.htmlCollectionMap[jsCol] = collection
 
-	jsCol.Set("item", func(call goja.FunctionCall) goja.Value {
-		if len(call.Arguments) < 1 {
-			return goja.Null()
-		}
-		index := int(call.Arguments[0].ToInteger())
-		el := collection.Item(index)
-		if el == nil {
-			return goja.Null()
-		}
-		return b.BindElement(el)
-	})
-
-	jsCol.Set("namedItem", func(call goja.FunctionCall) goja.Value {
-		if len(call.Arguments) < 1 {
-			return goja.Null()
-		}
-		name := call.Arguments[0].String()
-		el := collection.NamedItem(name)
-		if el == nil {
-			return goja.Null()
-		}
-		return b.BindElement(el)
-	})
-
-	// Array-like indexing
+	// Array-like indexed properties - these should be enumerable
 	// Note: This snapshot may become stale for live collections
 	length := collection.Length()
 	for i := 0; i < length; i++ {
@@ -2928,7 +2957,25 @@ func (b *DOMBinder) BindHTMLCollection(collection *dom.HTMLCollection) *goja.Obj
 				return goja.Undefined()
 			}
 			return b.BindElement(el)
-		}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+		}), nil, goja.FLAG_TRUE, goja.FLAG_TRUE)
+	}
+
+	// Named properties - non-enumerable own properties (in tree order)
+	namedProps := collection.NamedProperties()
+	for _, prop := range namedProps {
+		// Don't overwrite numeric indices - check if name is a valid array index
+		isNumeric := true
+		for _, c := range prop.Name {
+			if c < '0' || c > '9' {
+				isNumeric = false
+				break
+			}
+		}
+		if isNumeric && len(prop.Name) > 0 {
+			continue
+		}
+		boundEl := b.BindElement(prop.Element)
+		jsCol.DefineDataProperty(prop.Name, boundEl, goja.FLAG_TRUE, goja.FLAG_TRUE, goja.FLAG_FALSE)
 	}
 
 	return jsCol
@@ -3071,17 +3118,12 @@ func (b *DOMBinder) createEmptyNodeList() *goja.Object {
 func (b *DOMBinder) createEmptyHTMLCollection() *goja.Object {
 	vm := b.runtime.vm
 	jsCol := vm.NewObject()
-	// Set prototype for instanceof to work
+	// Set prototype for instanceof to work - length, item, namedItem are on the prototype
 	if b.htmlCollectionProto != nil {
 		jsCol.SetPrototype(b.htmlCollectionProto)
 	}
-	jsCol.Set("length", 0)
-	jsCol.Set("item", func(call goja.FunctionCall) goja.Value {
-		return goja.Null()
-	})
-	jsCol.Set("namedItem", func(call goja.FunctionCall) goja.Value {
-		return goja.Null()
-	})
+	// Register nil collection - prototype methods will handle this gracefully
+	b.htmlCollectionMap[jsCol] = nil
 	return jsCol
 }
 

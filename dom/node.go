@@ -632,6 +632,21 @@ func (n *Node) shallowClone() *Node {
 				systemId: n.docTypeData.systemId,
 			}
 		}
+	case DocumentNode:
+		if n.documentData != nil {
+			clone.documentData = &documentData{
+				contentType: n.documentData.contentType,
+				// doctype, documentElement are tracked via children
+				// implementation is created lazily when accessed
+			}
+		} else {
+			// Ensure documentData is always initialized for Document nodes
+			clone.documentData = &documentData{
+				contentType: "text/html",
+			}
+		}
+		// Set ownerDoc to point to itself for Document nodes
+		clone.ownerDoc = (*Document)(clone)
 	}
 
 	return clone

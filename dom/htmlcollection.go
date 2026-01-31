@@ -83,6 +83,7 @@ func (hc *HTMLCollection) Item(index int) *Element {
 
 // NamedItem returns the element with the given id or name attribute.
 // If multiple elements match, returns the first one.
+// Note: The `name` attribute is only checked for elements in the HTML namespace.
 func (hc *HTMLCollection) NamedItem(name string) *Element {
 	elements := hc.collectElements()
 	// First look for id match
@@ -91,9 +92,10 @@ func (hc *HTMLCollection) NamedItem(name string) *Element {
 			return el
 		}
 	}
-	// Then look for name attribute match
+	// Then look for name attribute match (only for HTML namespace elements)
 	for _, el := range elements {
-		if el.GetAttribute("name") == name {
+		ns := el.AsNode().elementData.namespaceURI
+		if ns == HTMLNamespace && el.GetAttribute("name") == name {
 			return el
 		}
 	}
@@ -103,4 +105,48 @@ func (hc *HTMLCollection) NamedItem(name string) *Element {
 // ToSlice returns all elements as a slice.
 func (hc *HTMLCollection) ToSlice() []*Element {
 	return hc.collectElements()
+}
+
+// NamedProperty represents a named property with its name and element.
+type NamedProperty struct {
+	Name    string
+	Element *Element
+}
+
+// NamedProperties returns an ordered list of all named properties (id and name attributes)
+// that should be exposed on this collection. According to the HTML spec,
+// only HTML namespace elements expose their `name` attribute; non-HTML elements
+// only expose `id`. The order is preserved (first occurrence in tree order wins).
+func (hc *HTMLCollection) NamedProperties() []NamedProperty {
+	var result []NamedProperty
+	seen := make(map[string]bool)
+	elements := hc.collectElements()
+
+	// Per the spec, we iterate in tree order and only add the first element
+	// for each name. We process both id and name in the same pass to maintain
+	// the correct tree order.
+	for _, el := range elements {
+		// Check id first
+		id := el.Id()
+		if id != "" && !seen[id] {
+			result = append(result, NamedProperty{Name: id, Element: el})
+			seen[id] = true
+		}
+
+		// Check name attribute (only for HTML namespace elements)
+		// Note: Elements created with createElementNS("", ...) have empty namespace,
+		// which is NOT the HTML namespace.
+		ns := el.AsNode().elementData.namespaceURI
+		isHTML := ns == HTMLNamespace
+
+		if isHTML {
+			name := el.GetAttribute("name")
+			if name != "" && !seen[name] {
+				result = append(result, NamedProperty{Name: name, Element: el})
+				seen[name] = true
+			}
+		}
+	}
+
+	return result
 }
