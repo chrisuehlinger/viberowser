@@ -136,6 +136,7 @@ type DOMBinder struct {
 	domImplementationCache       map[*dom.DOMImplementation]*goja.Object
 	styleDeclarationCache        map[*dom.CSSStyleDeclaration]*goja.Object
 	htmlCollectionMap            map[*goja.Object]*dom.HTMLCollection
+	nodeListCache                map[*dom.NodeList]*goja.Object
 }
 
 // NewDOMBinder creates a new DOM binder for the given runtime.
@@ -147,6 +148,7 @@ func NewDOMBinder(runtime *Runtime) *DOMBinder {
 		styleDeclarationCache:  make(map[*dom.CSSStyleDeclaration]*goja.Object),
 		htmlCollectionMap:      make(map[*goja.Object]*dom.HTMLCollection),
 		htmlElementProtoMap:    make(map[string]*goja.Object),
+		nodeListCache:          make(map[*dom.NodeList]*goja.Object),
 	}
 	b.setupPrototypes()
 	return b
@@ -344,7 +346,9 @@ func (b *DOMBinder) setupPrototypes() {
 	b.documentProto = vm.NewObject()
 	b.documentProto.SetPrototype(b.nodeProto)
 	documentConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
-		panic(vm.NewTypeError("Illegal constructor"))
+		// Per DOM spec, new Document() creates a new Document
+		doc := dom.NewDocument()
+		return b.bindDocumentInternal(doc)
 	})
 	documentConstructorObj := documentConstructor.ToObject(vm)
 	documentConstructorObj.Set("prototype", b.documentProto)
@@ -3027,20 +3031,42 @@ func (b *DOMBinder) getGoNode(obj *goja.Object) *dom.Node {
 }
 
 // BindNodeList creates a JavaScript NodeList object.
+// The object is cached so that the same DOM NodeList returns the same JS object.
 func (b *DOMBinder) BindNodeList(nodeList *dom.NodeList) *goja.Object {
+	// Check cache first - return same JS object for same NodeList
+	if cached, ok := b.nodeListCache[nodeList]; ok {
+		return cached
+	}
+
+	// Create the NodeList object using a dynamic proxy for live collection behavior
+	jsList := b.createNodeListProxy(nodeList)
+
+	// Cache it
+	b.nodeListCache[nodeList] = jsList
+
+	return jsList
+}
+
+// createNodeListProxy creates a NodeList with a Proxy for dynamic indexed access.
+// This ensures the collection is "live" - accessing list[0] always gets the current first child.
+func (b *DOMBinder) createNodeListProxy(nodeList *dom.NodeList) *goja.Object {
 	vm := b.runtime.vm
-	jsList := vm.NewObject()
+
+	// Create the target object with methods and prototype
+	target := vm.NewObject()
 
 	// Set prototype for instanceof to work
 	if b.nodeListProto != nil {
-		jsList.SetPrototype(b.nodeListProto)
+		target.SetPrototype(b.nodeListProto)
 	}
 
-	jsList.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+	// Define length as a getter (live property)
+	target.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		return vm.ToValue(nodeList.Length())
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 
-	jsList.Set("item", func(call goja.FunctionCall) goja.Value {
+	// item() method
+	target.Set("item", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
 			return goja.Null()
 		}
@@ -3052,64 +3078,173 @@ func (b *DOMBinder) BindNodeList(nodeList *dom.NodeList) *goja.Object {
 		return b.BindNode(node)
 	})
 
-	// Array-like indexing via proxy or direct property setting
-	for i := 0; i < nodeList.Length(); i++ {
-		idx := i
-		jsList.DefineAccessorProperty(vm.ToValue(idx).String(), vm.ToValue(func(call goja.FunctionCall) goja.Value {
-			node := nodeList.Item(idx)
-			if node == nil {
-				return goja.Undefined()
-			}
-			return b.BindNode(node)
-		}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	// Get Array.prototype methods and set them on NodeList
+	// Per spec, NodeList should use Array.prototype's iterator methods
+	arrayProto := vm.Get("Array").ToObject(vm).Get("prototype").ToObject(vm)
+
+	// Symbol.iterator - copy from Array.prototype using DefineDataPropertySymbol
+	// We need to get the symbol and set it properly
+	_, _ = vm.RunString(`
+		(function(target, arrayProto) {
+			target[Symbol.iterator] = arrayProto[Symbol.iterator];
+		})
+	`)
+	symbolSetup, _ := vm.RunString(`
+		(function(target, arrayProto) {
+			target[Symbol.iterator] = arrayProto[Symbol.iterator];
+		})
+	`)
+	if symbolSetup != nil {
+		fn, _ := goja.AssertFunction(symbolSetup)
+		if fn != nil {
+			fn(goja.Undefined(), target, arrayProto)
+		}
 	}
 
-	jsList.Set("forEach", func(call goja.FunctionCall) goja.Value {
-		if len(call.Arguments) < 1 {
+	// keys, values, entries, forEach - copy from Array.prototype
+	for _, method := range []string{"keys", "values", "entries", "forEach"} {
+		m := arrayProto.Get(method)
+		if m != nil && !goja.IsUndefined(m) {
+			target.Set(method, m)
+		}
+	}
+
+	// Create a Proxy to handle dynamic indexed access
+	// The proxy intercepts get operations for numeric indices
+	proxyHandler := vm.NewObject()
+
+	// Store binder reference for use in handler closures
+	binder := b
+
+	// get trap - intercepts property access
+	proxyHandler.Set("get", func(call goja.FunctionCall) goja.Value {
+		targetObj := call.Arguments[0].ToObject(vm)
+		prop := call.Arguments[1]
+		propStr := prop.String()
+
+		// Check if it's a numeric index
+		if isNumericString(propStr) {
+			index := parseNumericString(propStr)
+			if index >= 0 && index < nodeList.Length() {
+				node := nodeList.Item(index)
+				if node != nil {
+					return binder.BindNode(node)
+				}
+			}
 			return goja.Undefined()
 		}
-		callback, ok := goja.AssertFunction(call.Arguments[0])
-		if !ok {
-			return goja.Undefined()
+
+		// For non-numeric properties, use Reflect.get to properly handle prototype chain
+		reflect := vm.Get("Reflect").ToObject(vm)
+		reflectGet, _ := goja.AssertFunction(reflect.Get("get"))
+		if reflectGet != nil {
+			result, err := reflectGet(goja.Undefined(), targetObj, prop)
+			if err == nil {
+				return result
+			}
 		}
-		var thisArg goja.Value = goja.Undefined()
-		if len(call.Arguments) > 1 {
-			thisArg = call.Arguments[1]
-		}
-		for i := 0; i < nodeList.Length(); i++ {
-			node := nodeList.Item(i)
-			jsNode := b.BindNode(node)
-			callback(thisArg, jsNode, vm.ToValue(i), jsList)
-		}
-		return goja.Undefined()
+
+		// Fallback to direct target access
+		return targetObj.Get(propStr)
 	})
 
-	jsList.Set("entries", func(call goja.FunctionCall) goja.Value {
-		// Return an iterator-like array of [index, value] pairs
-		entries := make([]interface{}, nodeList.Length())
-		for i := 0; i < nodeList.Length(); i++ {
-			entries[i] = []interface{}{i, b.BindNode(nodeList.Item(i))}
+	// has trap - for "in" operator
+	proxyHandler.Set("has", func(call goja.FunctionCall) goja.Value {
+		prop := call.Arguments[1]
+		propStr := prop.String()
+
+		// Check if it's a numeric index
+		if isNumericString(propStr) {
+			index := int(prop.ToInteger())
+			return vm.ToValue(index >= 0 && index < nodeList.Length())
 		}
-		return vm.ToValue(entries)
+
+		// Check if target has the property
+		return vm.ToValue(target.Get(propStr) != nil)
 	})
 
-	jsList.Set("keys", func(call goja.FunctionCall) goja.Value {
-		keys := make([]int, nodeList.Length())
-		for i := 0; i < nodeList.Length(); i++ {
-			keys[i] = i
+	// ownKeys trap - for Object.getOwnPropertyNames
+	proxyHandler.Set("ownKeys", func(call goja.FunctionCall) goja.Value {
+		length := nodeList.Length()
+		keys := make([]interface{}, length+1)
+		for i := 0; i < length; i++ {
+			keys[i] = vm.ToValue(i).String()
 		}
+		keys[length] = "length"
 		return vm.ToValue(keys)
 	})
 
-	jsList.Set("values", func(call goja.FunctionCall) goja.Value {
-		values := make([]interface{}, nodeList.Length())
-		for i := 0; i < nodeList.Length(); i++ {
-			values[i] = b.BindNode(nodeList.Item(i))
+	// getOwnPropertyDescriptor trap
+	proxyHandler.Set("getOwnPropertyDescriptor", func(call goja.FunctionCall) goja.Value {
+		prop := call.Arguments[1]
+		propStr := prop.String()
+
+		if isNumericString(propStr) {
+			index := int(prop.ToInteger())
+			if index >= 0 && index < nodeList.Length() {
+				desc := vm.NewObject()
+				node := nodeList.Item(index)
+				if node != nil {
+					desc.Set("value", binder.BindNode(node))
+				} else {
+					desc.Set("value", goja.Undefined())
+				}
+				desc.Set("writable", false)
+				desc.Set("enumerable", true)
+				desc.Set("configurable", true)
+				return desc
+			}
+		} else if propStr == "length" {
+			desc := vm.NewObject()
+			desc.Set("value", nodeList.Length())
+			desc.Set("writable", false)
+			desc.Set("enumerable", false)
+			desc.Set("configurable", false)
+			return desc
 		}
-		return vm.ToValue(values)
+
+		return goja.Undefined()
 	})
 
-	return jsList
+	// Create the proxy via JavaScript's new Proxy() constructor
+	// Store handler temporarily in a unique location
+	vm.Set("__nodeListTarget", target)
+	vm.Set("__nodeListHandler", proxyHandler)
+
+	result, err := vm.RunString("new Proxy(__nodeListTarget, __nodeListHandler)")
+
+	// Clean up temporary globals
+	vm.Set("__nodeListTarget", goja.Undefined())
+	vm.Set("__nodeListHandler", goja.Undefined())
+
+	if err != nil {
+		// Fallback to non-proxy version if Proxy fails
+		return target
+	}
+
+	return result.ToObject(vm)
+}
+
+// isNumericString checks if a string represents a non-negative integer
+func isNumericString(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// parseNumericString parses a string as a non-negative integer
+func parseNumericString(s string) int {
+	result := 0
+	for _, c := range s {
+		result = result*10 + int(c-'0')
+	}
+	return result
 }
 
 // bindStaticNodeList creates a NodeList-like object from a slice of nodes.
