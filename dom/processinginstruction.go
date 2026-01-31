@@ -259,9 +259,13 @@ func isXMLNameChar(ch rune) bool {
 
 // isXMLNameCharPermissive checks if a rune is valid in an XML name using permissive rules.
 // This allows characters that browsers accept but strict XML 1.0 doesn't.
+// Based on WPT test dom/nodes/name-validation.html - invalid chars are:
+// NULL (0x00), tab (0x09), newline (0x0A), form feed (0x0C), carriage return (0x0D),
+// space (0x20), forward slash (0x2F), greater than (0x3E)
 func isXMLNameCharPermissive(ch rune) bool {
-	// Definitely invalid anywhere in a name
-	if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '>' {
+	// Definitely invalid anywhere in a name (per WPT name-validation.html)
+	if ch == 0 || ch == '\t' || ch == '\n' || ch == '\f' || ch == '\r' ||
+		ch == ' ' || ch == '/' || ch == '>' {
 		return false
 	}
 	return true
@@ -269,10 +273,15 @@ func isXMLNameCharPermissive(ch rune) bool {
 
 // isXMLNameStartCharPermissive checks if a rune is valid at the start of an XML name
 // using permissive rules. Used for createElement which is very lenient.
+// Based on WPT test dom/nodes/name-validation.html:
+// Start chars that are invalid: everything isXMLNameCharPermissive rejects, plus < } - . and digits
 func isXMLNameStartCharPermissive(ch rune) bool {
-	// Invalid at start of name (based on WPT tests for createElement)
-	if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' ||
-		ch == '<' || ch == '>' || ch == '}' ||
+	// First check the general name char rules
+	if !isXMLNameCharPermissive(ch) {
+		return false
+	}
+	// Additional invalid characters at start of name
+	if ch == '<' || ch == '}' ||
 		ch == '-' || ch == '.' ||
 		(ch >= '0' && ch <= '9') {
 		return false
@@ -282,18 +291,20 @@ func isXMLNameStartCharPermissive(ch rune) bool {
 
 // isXMLNameStartCharForNS checks if a rune is valid at the start of an XML name
 // for createElementNS. This is stricter than the permissive version.
-// Based on WPT test: dom/nodes/Document-createElementNS.html
+// Based on WPT test: dom/nodes/Document-createElementNS.html and name-validation.html
 func isXMLNameStartCharForNS(ch rune) bool {
-	// Invalid at start of name for createElementNS (per WPT tests)
-	// Includes more characters than the permissive version
-	if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' ||
-		ch == '<' || ch == '>' || ch == '}' || ch == '{' ||
+	// First check the general NS name char rules (NULL, whitespace, /, >)
+	if !isXMLNameCharForNS(ch) {
+		return false
+	}
+	// Additional invalid characters at start of name for createElementNS
+	if ch == '<' || ch == '}' || ch == '{' ||
 		ch == '-' || ch == '.' || ch == '^' ||
 		ch == '~' || ch == '\'' || ch == '!' || ch == '@' ||
 		ch == '#' || ch == '$' || ch == '%' || ch == '&' ||
 		ch == '*' || ch == '(' || ch == ')' || ch == '+' ||
 		ch == '=' || ch == '[' || ch == ']' || ch == '\\' ||
-		ch == '/' || ch == ';' || ch == '`' || ch == ',' ||
+		ch == ';' || ch == '`' || ch == ',' ||
 		ch == '"' ||
 		(ch >= '0' && ch <= '9') {
 		return false
@@ -303,9 +314,13 @@ func isXMLNameStartCharForNS(ch rune) bool {
 
 // isXMLNameCharForNS checks if a rune is valid in an XML name for createElementNS.
 // This is used for characters after the first in localName.
+// Based on WPT name-validation.html - invalid chars are:
+// NULL (0x00), tab (0x09), newline (0x0A), form feed (0x0C), carriage return (0x0D),
+// space (0x20), forward slash (0x2F), greater than (0x3E)
 func isXMLNameCharForNS(ch rune) bool {
-	// Definitely invalid anywhere in a name
-	if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '>' {
+	// Definitely invalid anywhere in a name (per WPT name-validation.html)
+	if ch == 0 || ch == '\t' || ch == '\n' || ch == '\f' || ch == '\r' ||
+		ch == ' ' || ch == '/' || ch == '>' {
 		return false
 	}
 	return true
@@ -337,27 +352,66 @@ func isValidLocalNameForNS(name string) bool {
 
 // isValidXMLNamePermissive checks if a string is a valid XML name using permissive rules.
 // This is used for createElement which browsers implement more permissively than strict XML.
-// Based on WPT test: dom/nodes/Document-createElement.html
+// Based on WPT test dom/nodes/name-validation.html, the valid name regex is:
+// /^(?:[A-Za-z][^\0\t\n\f\r\u0020/>]*|[:_\u0080-\u{10FFFF}][A-Za-z0-9-.:_\u0080-\u{10FFFF}]*)$/u
+// This means:
+// 1. Names starting with A-Za-z can have any char except NULL/whitespace/>/slash
+// 2. Names starting with : or _ or high Unicode must have alphanumeric/-/./:/_/high Unicode after
 func isValidXMLNamePermissive(name string) bool {
 	if name == "" {
 		return false
 	}
 
 	runes := []rune(name)
+	first := runes[0]
 
-	// Check first character using permissive rules
-	if !isXMLNameStartCharPermissive(runes[0]) {
-		return false
-	}
-
-	// Check remaining characters
-	for _, ch := range runes[1:] {
-		if !isXMLNameCharPermissive(ch) {
-			return false
+	// Determine which pattern applies based on first character
+	if isASCIIAlpha(first) {
+		// Pattern 1: [A-Za-z][^\0\t\n\f\r\u0020/>]*
+		// Can have any chars except NULL, whitespace, >, /
+		for _, ch := range runes[1:] {
+			if !isXMLNameCharPermissive(ch) {
+				return false
+			}
 		}
+		return true
+	} else if first == ':' || first == '_' || first >= 0x80 {
+		// Pattern 2: [:_\u0080-\u{10FFFF}][A-Za-z0-9-.:_\u0080-\u{10FFFF}]*
+		// Subsequent chars must be alphanumeric, -, ., :, _, or high Unicode
+		for _, ch := range runes[1:] {
+			if !isXMLNameSecondCharForSpecialStart(ch) {
+				return false
+			}
+		}
+		return true
 	}
 
-	return true
+	// Invalid first character
+	return false
+}
+
+// isASCIIAlpha checks if a rune is an ASCII letter
+func isASCIIAlpha(ch rune) bool {
+	return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z')
+}
+
+// isXMLNameSecondCharForSpecialStart checks if a character is valid as second+ char
+// when the first char was :, _, or high Unicode.
+// Valid chars are: A-Za-z0-9-.:_ or high Unicode (>= 0x80)
+func isXMLNameSecondCharForSpecialStart(ch rune) bool {
+	if isASCIIAlpha(ch) {
+		return true
+	}
+	if ch >= '0' && ch <= '9' {
+		return true
+	}
+	if ch == '-' || ch == '.' || ch == ':' || ch == '_' {
+		return true
+	}
+	if ch >= 0x80 {
+		return true
+	}
+	return false
 }
 
 // xmlNamePattern is a regex for valid XML names (simplified)

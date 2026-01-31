@@ -431,11 +431,11 @@ func (d *Document) CreateAttribute(name string) *Attr {
 
 // CreateAttributeWithError creates a new attribute with the given name.
 // For HTML documents, the name is lowercased per the spec.
-// Returns an InvalidCharacterError if the name is empty.
+// Returns an InvalidCharacterError if the name is invalid.
 func (d *Document) CreateAttributeWithError(name string) (*Attr, error) {
-	// Per DOM spec, if localName does not match the Name production, throw InvalidCharacterError
-	// In practice, browsers only check for empty string
-	if name == "" {
+	// Per DOM spec and WPT name-validation.html, validate the attribute name
+	// Invalid chars: empty, whitespace, NULL, /, =, >
+	if !IsValidAttributeLocalName(name) {
 		return nil, ErrInvalidCharacter("The string contains invalid characters.")
 	}
 
@@ -451,7 +451,19 @@ func (d *Document) CreateAttributeWithError(name string) (*Attr, error) {
 
 // CreateAttributeNS creates a new attribute with the given namespace.
 func (d *Document) CreateAttributeNS(namespaceURI, qualifiedName string) *Attr {
-	return NewAttrNS(namespaceURI, qualifiedName, "")
+	attr, _ := d.CreateAttributeNSWithError(namespaceURI, qualifiedName)
+	return attr
+}
+
+// CreateAttributeNSWithError creates a new attribute with the given namespace.
+// Returns an error if the qualified name is invalid.
+func (d *Document) CreateAttributeNSWithError(namespaceURI, qualifiedName string) (*Attr, error) {
+	// Validate using the same logic as setAttributeNS
+	_, _, _, err := ValidateAndExtractQualifiedName(namespaceURI, qualifiedName)
+	if err != nil {
+		return nil, err
+	}
+	return NewAttrNS(namespaceURI, qualifiedName, ""), nil
 }
 
 // GetElementById returns the element with the given id.
@@ -1080,11 +1092,14 @@ func (impl *DOMImplementation) CreateDocumentWithError(namespaceURI, qualifiedNa
 
 // CreateDocumentType creates a new DocumentType node.
 // The ownerDocument is set to the associated document of this implementation.
+// Per WPT name-validation.html, invalid doctype names contain:
+// NULL (0x00), tab (0x09), newline (0x0A), form feed (0x0C), carriage return (0x0D),
+// space (0x20), or greater than (0x3E)
 func (impl *DOMImplementation) CreateDocumentType(qualifiedName, publicId, systemId string) (*Node, error) {
-	// Per browser behavior, only reject names containing '>' or whitespace
-	// Browsers are very permissive with doctype names
+	// Validate doctype name - reject NULL, ASCII whitespace, and >
 	for _, ch := range qualifiedName {
-		if ch == '>' || ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+		if ch == 0 || ch == '\t' || ch == '\n' || ch == '\f' || ch == '\r' ||
+			ch == ' ' || ch == '>' {
 			return nil, ErrInvalidCharacter("The string did not match the expected pattern.")
 		}
 	}

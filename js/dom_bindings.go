@@ -1949,7 +1949,13 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 			namespaceURI = call.Arguments[0].String()
 		}
 		qualifiedName := call.Arguments[1].String()
-		attr := doc.CreateAttributeNS(namespaceURI, qualifiedName)
+		attr, err := doc.CreateAttributeNSWithError(namespaceURI, qualifiedName)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("InvalidCharacterError", err.Error()))
+		}
 		return b.BindAttr(attr)
 	})
 
@@ -2565,7 +2571,13 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 			namespaceURI = call.Arguments[0].String()
 		}
 		qualifiedName := call.Arguments[1].String()
-		attr := doc.CreateAttributeNS(namespaceURI, qualifiedName)
+		attr, err := doc.CreateAttributeNSWithError(namespaceURI, qualifiedName)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("InvalidCharacterError", err.Error()))
+		}
 		return b.BindAttr(attr)
 	})
 
