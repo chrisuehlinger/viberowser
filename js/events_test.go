@@ -328,3 +328,84 @@ func TestEventDuplicateListener(t *testing.T) {
 		t.Errorf("Expected count = 1 (duplicate ignored), got %v", result.ToInteger())
 	}
 }
+
+// TestHTMLElementClick tests that HTMLElement.click() dispatches a click event
+func TestHTMLElementClick(t *testing.T) {
+	r := NewRuntime()
+	executor := NewScriptExecutor(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body>
+	<div id="target">Click me</div>
+</body>
+</html>`)
+
+	executor.SetupDocument(doc)
+
+	// Test that click method exists
+	result, err := r.Execute(`
+		var target = document.getElementById('target');
+		typeof target.click
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "function" {
+		t.Errorf("Expected click to be a function, got %v", result.String())
+	}
+
+	// Test that click() dispatches an event
+	_, err = r.Execute(`
+		var clicked = false;
+		var target = document.getElementById('target');
+		target.addEventListener('click', function(e) {
+			clicked = true;
+		});
+		target.click();
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	result, err = r.Execute("clicked")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("click() should have dispatched a click event")
+	}
+
+	// Test that the event has correct properties
+	_, err = r.Execute(`
+		var isBubbling = null;
+		var isCancelable = null;
+		var target = document.getElementById('target');
+		target.addEventListener('click', function(e) {
+			isBubbling = e.bubbles;
+			isCancelable = e.cancelable;
+		});
+		target.click();
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Check that it's a MouseEvent with bubbles and cancelable true
+	result, err = r.Execute("isBubbling")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("click event should bubble")
+	}
+
+	result, err = r.Execute("isCancelable")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("click event should be cancelable")
+	}
+}

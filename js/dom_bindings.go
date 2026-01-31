@@ -600,6 +600,9 @@ func (b *DOMBinder) setupPrototypes() {
 	// Each extends HTMLElement and maps to specific tag names
 	b.setupHTMLElementPrototypes()
 
+	// Set up HTMLElement prototype methods (click, focus, blur, etc.)
+	b.setupHTMLElementPrototypeMethods()
+
 	// Create Document prototype (extends Node)
 	b.documentProto = vm.NewObject()
 	b.documentProto.SetPrototype(b.nodeProto)
@@ -1478,6 +1481,90 @@ func (b *DOMBinder) setupHTMLElementPrototypes() {
 	unknownProto.Set("constructor", unknownConstructorObj)
 	vm.Set("HTMLUnknownElement", unknownConstructorObj)
 	b.htmlElementProtoMap["HTMLUnknownElement"] = unknownProto
+}
+
+// setupHTMLElementPrototypeMethods adds methods like click(), focus(), blur() to HTMLElement.prototype.
+// Per the HTML specification, these methods are available on all HTML elements.
+func (b *DOMBinder) setupHTMLElementPrototypeMethods() {
+	vm := b.runtime.vm
+
+	// click() - Simulates a click on the element
+	// Per HTML spec: https://html.spec.whatwg.org/multipage/interaction.html#dom-click
+	// This method fires a click event at the element, even if it's disabled.
+	b.htmlElementProto.Set("click", func(call goja.FunctionCall) goja.Value {
+		thisObj := call.This.ToObject(vm)
+		if thisObj == nil {
+			return goja.Undefined()
+		}
+
+		// Create a MouseEvent with type "click"
+		// bubbles: true, cancelable: true, view: null, detail: 0
+		mouseEventCtor := vm.Get("MouseEvent")
+		if mouseEventCtor == nil || goja.IsUndefined(mouseEventCtor) {
+			return goja.Undefined()
+		}
+
+		ctor, ok := goja.AssertConstructor(mouseEventCtor)
+		if !ok {
+			return goja.Undefined()
+		}
+
+		// Create event options
+		options := vm.NewObject()
+		options.Set("bubbles", true)
+		options.Set("cancelable", true)
+		options.Set("view", goja.Null())
+		options.Set("detail", 0)
+		options.Set("screenX", 0)
+		options.Set("screenY", 0)
+		options.Set("clientX", 0)
+		options.Set("clientY", 0)
+		options.Set("ctrlKey", false)
+		options.Set("shiftKey", false)
+		options.Set("altKey", false)
+		options.Set("metaKey", false)
+		options.Set("button", 0)
+		options.Set("buttons", 0)
+		options.Set("relatedTarget", goja.Null())
+
+		// Create the event
+		event, err := ctor(nil, vm.ToValue("click"), options)
+		if err != nil {
+			return goja.Undefined()
+		}
+
+		// isTrusted should be false for synthetic events (events created via script)
+		event.Set("isTrusted", false)
+
+		// Dispatch the event using dispatchEvent on the element
+		dispatchEvent := thisObj.Get("dispatchEvent")
+		if dispatchEvent == nil || goja.IsUndefined(dispatchEvent) {
+			return goja.Undefined()
+		}
+
+		fn, ok := goja.AssertFunction(dispatchEvent)
+		if !ok {
+			return goja.Undefined()
+		}
+
+		fn(thisObj, event)
+
+		return goja.Undefined()
+	})
+
+	// focus() - Gives focus to the element
+	// Per HTML spec: https://html.spec.whatwg.org/multipage/interaction.html#dom-focus
+	b.htmlElementProto.Set("focus", func(call goja.FunctionCall) goja.Value {
+		// For now, this is a stub - focus handling requires more infrastructure
+		return goja.Undefined()
+	})
+
+	// blur() - Removes focus from the element
+	// Per HTML spec: https://html.spec.whatwg.org/multipage/interaction.html#dom-blur
+	b.htmlElementProto.Set("blur", func(call goja.FunctionCall) goja.Value {
+		// For now, this is a stub - blur handling requires more infrastructure
+		return goja.Undefined()
+	})
 }
 
 // getHTMLElementPrototype returns the appropriate prototype for a given tag name.
