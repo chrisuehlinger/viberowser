@@ -541,6 +541,31 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 		return b.BindDocumentFragment(frag)
 	})
 
+	jsDoc.Set("createAttribute", func(call goja.FunctionCall) goja.Value {
+		name := ""
+		if len(call.Arguments) > 0 {
+			name = call.Arguments[0].String()
+		}
+		attr, err := doc.CreateAttributeWithError(name)
+		if err != nil {
+			panic(b.createDOMException("InvalidCharacterError", err.Error()))
+		}
+		return b.BindAttr(attr)
+	})
+
+	jsDoc.Set("createAttributeNS", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			panic(vm.NewTypeError("Failed to execute 'createAttributeNS' on 'Document': 2 arguments required."))
+		}
+		namespaceURI := ""
+		if !goja.IsNull(call.Arguments[0]) {
+			namespaceURI = call.Arguments[0].String()
+		}
+		qualifiedName := call.Arguments[1].String()
+		attr := doc.CreateAttributeNS(namespaceURI, qualifiedName)
+		return b.BindAttr(attr)
+	})
+
 	jsDoc.Set("importNode", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
 			return goja.Null()
@@ -819,6 +844,31 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 	jsDoc.Set("createDocumentFragment", func(call goja.FunctionCall) goja.Value {
 		frag := doc.CreateDocumentFragment()
 		return b.BindDocumentFragment(frag)
+	})
+
+	jsDoc.Set("createAttribute", func(call goja.FunctionCall) goja.Value {
+		name := ""
+		if len(call.Arguments) > 0 {
+			name = call.Arguments[0].String()
+		}
+		attr, err := doc.CreateAttributeWithError(name)
+		if err != nil {
+			panic(b.createDOMException("InvalidCharacterError", err.Error()))
+		}
+		return b.BindAttr(attr)
+	})
+
+	jsDoc.Set("createAttributeNS", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			panic(vm.NewTypeError("Failed to execute 'createAttributeNS' on 'Document': 2 arguments required."))
+		}
+		namespaceURI := ""
+		if !goja.IsNull(call.Arguments[0]) {
+			namespaceURI = call.Arguments[0].String()
+		}
+		qualifiedName := call.Arguments[1].String()
+		attr := doc.CreateAttributeNS(namespaceURI, qualifiedName)
+		return b.BindAttr(attr)
 	})
 
 	jsDoc.Set("importNode", func(call goja.FunctionCall) goja.Value {
@@ -2943,6 +2993,93 @@ func (b *DOMBinder) createEmptyHTMLCollection() *goja.Object {
 // ClearCache clears the node binding cache.
 func (b *DOMBinder) ClearCache() {
 	b.nodeMap = make(map[*dom.Node]*goja.Object)
+}
+
+// BindAttr creates a JavaScript object from a DOM Attr.
+// Attr objects have specific properties: value, nodeValue, textContent, localName,
+// namespaceURI, prefix, name, nodeName, specified, ownerElement.
+func (b *DOMBinder) BindAttr(attr *dom.Attr) *goja.Object {
+	if attr == nil {
+		return nil
+	}
+
+	vm := b.runtime.vm
+	jsAttr := vm.NewObject()
+
+	// Node-like properties
+	jsAttr.Set("nodeType", int(dom.AttributeNode))
+	jsAttr.Set("nodeName", attr.Name())
+
+	// Value property with getter/setter
+	jsAttr.DefineAccessorProperty("value", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(attr.Value())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			attr.SetValue(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// nodeValue - same as value for Attr
+	jsAttr.DefineAccessorProperty("nodeValue", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(attr.Value())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			attr.SetValue(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// textContent - same as value for Attr
+	jsAttr.DefineAccessorProperty("textContent", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(attr.Value())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			attr.SetValue(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// Read-only properties
+	jsAttr.DefineAccessorProperty("localName", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(attr.LocalName())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsAttr.DefineAccessorProperty("namespaceURI", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		ns := attr.NamespaceURI()
+		if ns == "" {
+			return goja.Null()
+		}
+		return vm.ToValue(ns)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsAttr.DefineAccessorProperty("prefix", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		p := attr.Prefix()
+		if p == "" {
+			return goja.Null()
+		}
+		return vm.ToValue(p)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsAttr.DefineAccessorProperty("name", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(attr.Name())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// specified is always true (historical)
+	jsAttr.DefineAccessorProperty("specified", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(true)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// ownerElement - null for newly created attributes
+	jsAttr.DefineAccessorProperty("ownerElement", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		owner := attr.OwnerElement()
+		if owner == nil {
+			return goja.Null()
+		}
+		return b.BindElement(owner)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	return jsAttr
 }
 
 // convertJSNodesToGo converts JavaScript arguments to Go interface{} slice for ParentNode/ChildNode methods.

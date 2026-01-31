@@ -278,8 +278,31 @@ func (d *Document) CreateDocumentFragment() *DocumentFragment {
 }
 
 // CreateAttribute creates a new attribute with the given name.
+// For HTML documents, the name is lowercased per the spec.
+// Returns nil if the name is empty.
 func (d *Document) CreateAttribute(name string) *Attr {
-	return NewAttr(name, "")
+	attr, _ := d.CreateAttributeWithError(name)
+	return attr
+}
+
+// CreateAttributeWithError creates a new attribute with the given name.
+// For HTML documents, the name is lowercased per the spec.
+// Returns an InvalidCharacterError if the name is empty.
+func (d *Document) CreateAttributeWithError(name string) (*Attr, error) {
+	// Per DOM spec, if localName does not match the Name production, throw InvalidCharacterError
+	// In practice, browsers only check for empty string
+	if name == "" {
+		return nil, ErrInvalidCharacter("The string contains invalid characters.")
+	}
+
+	// For HTML documents, lowercase the name
+	localName := name
+	if d.IsHTML() {
+		localName = strings.ToLower(name)
+	}
+
+	attr := NewAttr(localName, "")
+	return attr, nil
 }
 
 // CreateAttributeNS creates a new attribute with the given namespace.
