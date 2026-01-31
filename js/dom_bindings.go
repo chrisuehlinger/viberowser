@@ -123,6 +123,8 @@ type DOMBinder struct {
 	documentFragmentProto        *goja.Object
 	domExceptionProto            *goja.Object
 	domImplementationProto       *goja.Object
+	htmlCollectionProto          *goja.Object
+	nodeListProto                *goja.Object
 	domImplementationCache       map[*dom.DOMImplementation]*goja.Object
 }
 
@@ -343,6 +345,26 @@ func (b *DOMBinder) setupPrototypes() {
 	domImplConstructorObj.Set("prototype", b.domImplementationProto)
 	b.domImplementationProto.Set("constructor", domImplConstructorObj)
 	vm.Set("DOMImplementation", domImplConstructorObj)
+
+	// Create HTMLCollection prototype
+	b.htmlCollectionProto = vm.NewObject()
+	htmlCollectionConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		panic(vm.NewTypeError("Illegal constructor"))
+	})
+	htmlCollectionConstructorObj := htmlCollectionConstructor.ToObject(vm)
+	htmlCollectionConstructorObj.Set("prototype", b.htmlCollectionProto)
+	b.htmlCollectionProto.Set("constructor", htmlCollectionConstructorObj)
+	vm.Set("HTMLCollection", htmlCollectionConstructorObj)
+
+	// Create NodeList prototype
+	b.nodeListProto = vm.NewObject()
+	nodeListConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		panic(vm.NewTypeError("Illegal constructor"))
+	})
+	nodeListConstructorObj := nodeListConstructor.ToObject(vm)
+	nodeListConstructorObj.Set("prototype", b.nodeListProto)
+	b.nodeListProto.Set("constructor", nodeListConstructorObj)
+	vm.Set("NodeList", nodeListConstructorObj)
 }
 
 // BindDocument creates a JavaScript document object from a DOM document.
@@ -651,6 +673,14 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 		return goja.Undefined()
 	})
 
+	// textContent is null for Document (per spec) and setting it does nothing
+	jsDoc.DefineAccessorProperty("textContent", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return goja.Null()
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Setting textContent has no effect on Document nodes
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
 	// Child node properties (document can have children)
 	b.bindNodeProperties(jsDoc, doc.AsNode())
 
@@ -956,6 +986,14 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 		return goja.Undefined()
 	})
 
+	// textContent is null for Document (per spec) and setting it does nothing
+	jsDoc.DefineAccessorProperty("textContent", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return goja.Null()
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Setting textContent has no effect on Document nodes
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
 	// Child node properties (document can have children)
 	b.bindNodeProperties(jsDoc, doc.AsNode())
 
@@ -1137,7 +1175,15 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		return vm.ToValue(el.TextContent())
 	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) > 0 {
-			el.SetTextContent(call.Arguments[0].String())
+			arg := call.Arguments[0]
+			// Per spec, null and undefined are treated as empty string
+			var value string
+			if goja.IsNull(arg) || goja.IsUndefined(arg) {
+				value = ""
+			} else {
+				value = arg.String()
+			}
+			el.SetTextContent(value)
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
@@ -2347,6 +2393,24 @@ func (b *DOMBinder) BindDocumentFragment(frag *dom.DocumentFragment) *goja.Objec
 		return goja.Undefined()
 	})
 
+	// textContent - like Element, returns concatenated text and allows setting
+	jsFrag.DefineAccessorProperty("textContent", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(node.TextContent())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			arg := call.Arguments[0]
+			// Per spec, null and undefined are treated as empty string
+			var value string
+			if goja.IsNull(arg) || goja.IsUndefined(arg) {
+				value = ""
+			} else {
+				value = arg.String()
+			}
+			node.SetTextContent(value)
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
 	b.bindNodeProperties(jsFrag, node)
 
 	// Cache the binding
@@ -2662,6 +2726,11 @@ func (b *DOMBinder) BindNodeList(nodeList *dom.NodeList) *goja.Object {
 	vm := b.runtime.vm
 	jsList := vm.NewObject()
 
+	// Set prototype for instanceof to work
+	if b.nodeListProto != nil {
+		jsList.SetPrototype(b.nodeListProto)
+	}
+
 	jsList.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		return vm.ToValue(nodeList.Length())
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
@@ -2743,6 +2812,11 @@ func (b *DOMBinder) bindStaticNodeList(nodes []*dom.Node) *goja.Object {
 	vm := b.runtime.vm
 	jsList := vm.NewObject()
 
+	// Set prototype for instanceof to work
+	if b.nodeListProto != nil {
+		jsList.SetPrototype(b.nodeListProto)
+	}
+
 	length := len(nodes)
 
 	jsList.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
@@ -2797,6 +2871,11 @@ func (b *DOMBinder) bindStaticNodeList(nodes []*dom.Node) *goja.Object {
 func (b *DOMBinder) BindHTMLCollection(collection *dom.HTMLCollection) *goja.Object {
 	vm := b.runtime.vm
 	jsCol := vm.NewObject()
+
+	// Set prototype for instanceof to work
+	if b.htmlCollectionProto != nil {
+		jsCol.SetPrototype(b.htmlCollectionProto)
+	}
 
 	jsCol.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		return vm.ToValue(collection.Length())
@@ -2980,6 +3059,10 @@ func (b *DOMBinder) createEmptyNodeList() *goja.Object {
 func (b *DOMBinder) createEmptyHTMLCollection() *goja.Object {
 	vm := b.runtime.vm
 	jsCol := vm.NewObject()
+	// Set prototype for instanceof to work
+	if b.htmlCollectionProto != nil {
+		jsCol.SetPrototype(b.htmlCollectionProto)
+	}
 	jsCol.Set("length", 0)
 	jsCol.Set("item", func(call goja.FunctionCall) goja.Value {
 		return goja.Null()
