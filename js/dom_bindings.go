@@ -3961,10 +3961,16 @@ func (b *DOMBinder) createEventForInterface(interfaceName string) *goja.Object {
 		return event
 	}
 
+	// Per DOM spec: Events created via createEvent() must NOT be initialized.
+	// The initEvent() method must be called before dispatch.
+	event.Set("_initialized", false)
+
 	return event
 }
 
 // initEventObject initializes a plain event object with required properties.
+// Events created via createEvent() start with _initialized=false and must have
+// initEvent() called before they can be dispatched.
 func (b *DOMBinder) initEventObject(event *goja.Object) {
 	vm := b.runtime.vm
 	event.Set("type", "")
@@ -3977,6 +3983,10 @@ func (b *DOMBinder) initEventObject(event *goja.Object) {
 	event.Set("composed", false)
 	event.Set("isTrusted", false)
 	event.Set("timeStamp", float64(0))
+
+	// Internal flags for event dispatch
+	event.Set("_initialized", false)
+	event.Set("_dispatch", false)
 
 	// Methods
 	event.Set("preventDefault", func(call goja.FunctionCall) goja.Value {
@@ -3999,6 +4009,51 @@ func (b *DOMBinder) initEventObject(event *goja.Object) {
 
 	event.Set("composedPath", func(call goja.FunctionCall) goja.Value {
 		return vm.ToValue([]interface{}{})
+	})
+
+	// initEvent(type, bubbles, cancelable) - legacy method to initialize an event
+	// Per DOM spec, this must be called on events created via createEvent() before dispatch
+	event.Set("initEvent", func(call goja.FunctionCall) goja.Value {
+		// Get type argument (required, but defaults to empty string if missing)
+		eventType := ""
+		if len(call.Arguments) > 0 {
+			eventType = call.Arguments[0].String()
+		}
+
+		// Get bubbles argument (optional, defaults to false)
+		bubbles := false
+		if len(call.Arguments) > 1 {
+			bubbles = call.Arguments[1].ToBoolean()
+		}
+
+		// Get cancelable argument (optional, defaults to false)
+		cancelable := false
+		if len(call.Arguments) > 2 {
+			cancelable = call.Arguments[2].ToBoolean()
+		}
+
+		// Per DOM spec: If event's dispatch flag is set, terminate these steps
+		dispatchFlag := event.Get("_dispatch")
+		if dispatchFlag != nil && dispatchFlag.ToBoolean() {
+			return goja.Undefined()
+		}
+
+		// Set the initialized flag
+		event.Set("_initialized", true)
+
+		// Clear the stop propagation flag
+		event.Set("_stopPropagation", false)
+		event.Set("_stopImmediate", false)
+
+		// Reset default prevented
+		event.Set("defaultPrevented", false)
+
+		// Set the event properties
+		event.Set("type", eventType)
+		event.Set("bubbles", bubbles)
+		event.Set("cancelable", cancelable)
+
+		return goja.Undefined()
 	})
 
 	// Constants

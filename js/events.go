@@ -265,6 +265,21 @@ func (eb *EventBinder) BindEventTarget(obj *goja.Object) {
 			return vm.ToValue(false)
 		}
 
+		// Per DOM spec: If event's dispatch flag is set, throw InvalidStateError
+		dispatchFlag := event.Get("_dispatch")
+		if dispatchFlag != nil && dispatchFlag.ToBoolean() {
+			panic(eb.createDOMException("InvalidStateError", "The event is already being dispatched."))
+		}
+
+		// Per DOM spec: If event's initialized flag is not set, throw InvalidStateError
+		initializedFlag := event.Get("_initialized")
+		if initializedFlag != nil && !initializedFlag.ToBoolean() {
+			panic(eb.createDOMException("InvalidStateError", "The event object was not properly initialized."))
+		}
+
+		// Set dispatch flag
+		event.Set("_dispatch", true)
+
 		// Set target and currentTarget
 		event.Set("target", obj)
 		event.Set("currentTarget", obj)
@@ -272,11 +287,16 @@ func (eb *EventBinder) BindEventTarget(obj *goja.Object) {
 
 		target := eb.GetOrCreateTarget(obj)
 		result := target.DispatchEvent(vm, event, EventPhaseAtTarget)
+
+		// Clear dispatch flag
+		event.Set("_dispatch", false)
+
 		return vm.ToValue(result)
 	})
 }
 
 // CreateEvent creates a new Event object with the given prototype.
+// Events created via the Event constructor (new Event(type)) are initialized by default.
 func (eb *EventBinder) CreateEvent(eventType string, options map[string]interface{}) *goja.Object {
 	vm := eb.runtime.vm
 	event := vm.NewObject()
@@ -295,6 +315,9 @@ func (eb *EventBinder) CreateEvent(eventType string, options map[string]interfac
 	// Internal flags
 	event.Set("_stopPropagation", false)
 	event.Set("_stopImmediate", false)
+	// Events created via constructor are initialized
+	event.Set("_initialized", true)
+	event.Set("_dispatch", false)
 
 	// Apply options
 	if options != nil {
@@ -334,6 +357,44 @@ func (eb *EventBinder) CreateEvent(eventType string, options map[string]interfac
 	event.Set("composedPath", func(call goja.FunctionCall) goja.Value {
 		// Return the path of targets
 		return vm.ToValue([]interface{}{})
+	})
+
+	// initEvent(type, bubbles, cancelable) - legacy method
+	event.Set("initEvent", func(call goja.FunctionCall) goja.Value {
+		// Per DOM spec: If event's dispatch flag is set, terminate these steps
+		dispatchFlag := event.Get("_dispatch")
+		if dispatchFlag != nil && dispatchFlag.ToBoolean() {
+			return goja.Undefined()
+		}
+
+		// Get type argument
+		newType := ""
+		if len(call.Arguments) > 0 {
+			newType = call.Arguments[0].String()
+		}
+
+		// Get bubbles argument
+		bubbles := false
+		if len(call.Arguments) > 1 {
+			bubbles = call.Arguments[1].ToBoolean()
+		}
+
+		// Get cancelable argument
+		cancelable := false
+		if len(call.Arguments) > 2 {
+			cancelable = call.Arguments[2].ToBoolean()
+		}
+
+		// Set the initialized flag
+		event.Set("_initialized", true)
+		event.Set("_stopPropagation", false)
+		event.Set("_stopImmediate", false)
+		event.Set("defaultPrevented", false)
+		event.Set("type", newType)
+		event.Set("bubbles", bubbles)
+		event.Set("cancelable", cancelable)
+
+		return goja.Undefined()
 	})
 
 	// Constants
@@ -708,4 +769,63 @@ func (eb *EventBinder) ClearTargets() {
 	eb.mu.Lock()
 	defer eb.mu.Unlock()
 	eb.targetMap = make(map[*goja.Object]*EventTarget)
+}
+
+// createDOMException creates a DOMException using the global constructor.
+// This ensures the exception has the proper prototype chain for assert_throws_dom.
+func (eb *EventBinder) createDOMException(name, message string) goja.Value {
+	vm := eb.runtime.vm
+
+	// Try to use the global DOMException constructor
+	domExcCtor := vm.Get("DOMException")
+	if domExcCtor != nil && !goja.IsUndefined(domExcCtor) {
+		ctor, ok := goja.AssertConstructor(domExcCtor)
+		if ok {
+			exc, err := ctor(nil, vm.ToValue(message), vm.ToValue(name))
+			if err == nil {
+				return exc
+			}
+		}
+	}
+
+	// Fallback: create a plain object with name and message
+	exc := vm.NewObject()
+	exc.Set("name", name)
+	exc.Set("message", message)
+
+	// Set the appropriate error code
+	errorCodes := map[string]int{
+		"IndexSizeError":             1,
+		"DOMStringSizeError":         2,
+		"HierarchyRequestError":      3,
+		"WrongDocumentError":         4,
+		"InvalidCharacterError":      5,
+		"NoDataAllowedError":         6,
+		"NoModificationAllowedError": 7,
+		"NotFoundError":              8,
+		"NotSupportedError":          9,
+		"InUseAttributeError":        10,
+		"InvalidStateError":          11,
+		"SyntaxError":                12,
+		"InvalidModificationError":   13,
+		"NamespaceError":             14,
+		"InvalidAccessError":         15,
+		"ValidationError":            16,
+		"TypeMismatchError":          17,
+		"SecurityError":              18,
+		"NetworkError":               19,
+		"AbortError":                 20,
+		"URLMismatchError":           21,
+		"QuotaExceededError":         22,
+		"TimeoutError":               23,
+		"InvalidNodeTypeError":       24,
+		"DataCloneError":             25,
+	}
+	if code, ok := errorCodes[name]; ok {
+		exc.Set("code", code)
+	} else {
+		exc.Set("code", 0)
+	}
+
+	return exc
 }
