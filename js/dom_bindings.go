@@ -3833,6 +3833,8 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		// Process any existing event handler content attributes
 		// This handles elements created from HTML parsing or template cloning
 		b.processEventHandlerContentAttributes(jsEl, el)
+		// Add HTML global attributes (title, lang, hidden, dir, tabIndex, etc.)
+		b.bindHTMLGlobalAttributes(jsEl, el)
 	}
 
 	// Cache the binding
@@ -4006,6 +4008,259 @@ func (b *DOMBinder) bindInputProperties(jsEl *goja.Object, el *dom.Element) {
 	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) > 0 {
 			el.SetDefaultValue(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+}
+
+// bindHTMLGlobalAttributes adds HTMLElement global attributes.
+// Per HTML spec: https://html.spec.whatwg.org/multipage/dom.html#global-attributes
+// These are available on all HTML elements.
+func (b *DOMBinder) bindHTMLGlobalAttributes(jsEl *goja.Object, el *dom.Element) {
+	vm := b.runtime.vm
+
+	// title - reflects the title attribute (advisory information/tooltip)
+	jsEl.DefineAccessorProperty("title", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.GetAttribute("title"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("title", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// lang - reflects the lang attribute (language)
+	jsEl.DefineAccessorProperty("lang", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.GetAttribute("lang"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("lang", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// dir - reflects the dir attribute (text direction: ltr, rtl, auto)
+	jsEl.DefineAccessorProperty("dir", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.GetAttribute("dir"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("dir", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// hidden - boolean reflecting the hidden attribute
+	jsEl.DefineAccessorProperty("hidden", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.HasAttribute("hidden"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			if call.Arguments[0].ToBoolean() {
+				el.SetAttribute("hidden", "")
+			} else {
+				el.RemoveAttribute("hidden")
+			}
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// tabIndex - reflects the tabindex attribute
+	// Default is -1 for most elements, 0 for interactive elements
+	jsEl.DefineAccessorProperty("tabIndex", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if el.HasAttribute("tabindex") {
+			val := el.GetAttribute("tabindex")
+			// Parse as integer
+			var tabIndex int
+			_, err := fmt.Sscanf(val, "%d", &tabIndex)
+			if err == nil {
+				return vm.ToValue(tabIndex)
+			}
+		}
+		// Default tabindex based on element type
+		// Interactive elements (a with href, button, input, select, textarea) default to 0
+		// Others default to -1
+		localName := el.LocalName()
+		switch localName {
+		case "a":
+			if el.HasAttribute("href") {
+				return vm.ToValue(0)
+			}
+		case "button", "input", "select", "textarea":
+			return vm.ToValue(0)
+		case "summary":
+			return vm.ToValue(0)
+		}
+		return vm.ToValue(-1)
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			val := call.Arguments[0].ToInteger()
+			el.SetAttribute("tabindex", fmt.Sprintf("%d", val))
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// accessKey - reflects the accesskey attribute
+	jsEl.DefineAccessorProperty("accessKey", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.GetAttribute("accesskey"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("accesskey", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// draggable - boolean-ish reflecting the draggable attribute
+	// Can be true, false, or auto (default)
+	jsEl.DefineAccessorProperty("draggable", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		val := el.GetAttribute("draggable")
+		if val == "true" {
+			return vm.ToValue(true)
+		}
+		// Default: img and a elements with href are draggable
+		if val == "" {
+			localName := el.LocalName()
+			if localName == "img" {
+				return vm.ToValue(true)
+			}
+			if localName == "a" && el.HasAttribute("href") {
+				return vm.ToValue(true)
+			}
+		}
+		return vm.ToValue(false)
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			if call.Arguments[0].ToBoolean() {
+				el.SetAttribute("draggable", "true")
+			} else {
+				el.SetAttribute("draggable", "false")
+			}
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// spellcheck - boolean reflecting the spellcheck attribute
+	// Default is element-dependent
+	jsEl.DefineAccessorProperty("spellcheck", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		val := el.GetAttribute("spellcheck")
+		if val == "false" {
+			return vm.ToValue(false)
+		}
+		if val == "true" {
+			return vm.ToValue(true)
+		}
+		// Default: true for editable elements
+		return vm.ToValue(true)
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			if call.Arguments[0].ToBoolean() {
+				el.SetAttribute("spellcheck", "true")
+			} else {
+				el.SetAttribute("spellcheck", "false")
+			}
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// translate - boolean reflecting the translate attribute
+	jsEl.DefineAccessorProperty("translate", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		val := el.GetAttribute("translate")
+		if val == "no" {
+			return vm.ToValue(false)
+		}
+		// Default is true (inherit from parent or true)
+		return vm.ToValue(true)
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			if call.Arguments[0].ToBoolean() {
+				el.SetAttribute("translate", "yes")
+			} else {
+				el.SetAttribute("translate", "no")
+			}
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// contentEditable - reflects the contenteditable attribute
+	jsEl.DefineAccessorProperty("contentEditable", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		val := el.GetAttribute("contenteditable")
+		if val == "" {
+			return vm.ToValue("inherit")
+		}
+		if val == "true" || val == "" {
+			return vm.ToValue("true")
+		}
+		if val == "false" {
+			return vm.ToValue("false")
+		}
+		return vm.ToValue("inherit")
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			val := call.Arguments[0].String()
+			if val == "inherit" {
+				el.RemoveAttribute("contenteditable")
+			} else {
+				el.SetAttribute("contenteditable", val)
+			}
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// isContentEditable - returns whether element is editable (read-only)
+	jsEl.DefineAccessorProperty("isContentEditable", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Walk up the tree to find if any ancestor has contenteditable="true"
+		current := el
+		for current != nil {
+			val := current.GetAttribute("contenteditable")
+			if val == "true" {
+				return vm.ToValue(true)
+			}
+			if val == "false" {
+				return vm.ToValue(false)
+			}
+			parent := current.AsNode().ParentElement()
+			if parent == nil {
+				break
+			}
+			current = parent
+		}
+		return vm.ToValue(false)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// inputMode - reflects the inputmode attribute
+	jsEl.DefineAccessorProperty("inputMode", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.GetAttribute("inputmode"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("inputmode", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// enterKeyHint - reflects the enterkeyhint attribute
+	jsEl.DefineAccessorProperty("enterKeyHint", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.GetAttribute("enterkeyhint"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("enterkeyhint", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// autocapitalize - reflects the autocapitalize attribute
+	jsEl.DefineAccessorProperty("autocapitalize", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.GetAttribute("autocapitalize"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("autocapitalize", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// nonce - reflects the nonce attribute (used for CSP)
+	jsEl.DefineAccessorProperty("nonce", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.GetAttribute("nonce"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("nonce", call.Arguments[0].String())
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
