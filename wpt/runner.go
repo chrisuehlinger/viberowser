@@ -160,7 +160,7 @@ func (r *Runner) RunTestFile(testPath string) TestSuiteResult {
 	// Use file:// URL if loading from local WPT path, otherwise use HTTP base URL
 	var baseURL string
 	if r.WPTPath != "" {
-		baseURL = "file://" + r.WPTPath + testPath
+		baseURL = "file://" + filepath.Join(r.WPTPath, testPath)
 	} else {
 		baseURL = r.BaseURL + "/" + strings.TrimPrefix(testPath, "/")
 	}
