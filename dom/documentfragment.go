@@ -150,13 +150,41 @@ func (df *DocumentFragment) Prepend(nodes ...interface{}) {
 }
 
 // ReplaceChildren replaces all children with the given nodes.
+// For error handling, use ReplaceChildrenWithError.
 func (df *DocumentFragment) ReplaceChildren(nodes ...interface{}) {
-	// Remove all children
+	_ = df.ReplaceChildrenWithError(nodes...)
+}
+
+// ReplaceChildrenWithError replaces all children with the given nodes.
+// Returns an error if any validation fails (e.g., HierarchyRequestError).
+// Implements the ParentNode.replaceChildren() algorithm from the DOM spec.
+// Per spec, validation happens BEFORE any children are removed.
+func (df *DocumentFragment) ReplaceChildrenWithError(nodes ...interface{}) error {
+	// Step 1: Convert nodes/strings into a single node (or document fragment)
+	var node *Node
+	if len(nodes) > 0 {
+		node = df.AsNode().convertNodesToFragment(nodes)
+	}
+
+	// Step 2: Validate the insertion BEFORE removing any children
+	// This ensures we throw HierarchyRequestError before any mutation
+	if node != nil {
+		if err := df.AsNode().validatePreInsertion(node, nil); err != nil {
+			return err
+		}
+	}
+
+	// Step 3: Remove all existing children
 	for df.AsNode().firstChild != nil {
 		df.AsNode().RemoveChild(df.AsNode().firstChild)
 	}
-	// Append new children
-	df.Append(nodes...)
+
+	// Step 4: Insert the new node(s)
+	if node != nil {
+		df.AsNode().AppendChild(node)
+	}
+
+	return nil
 }
 
 // CloneNode clones this document fragment.

@@ -1279,7 +1279,12 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 
 	jsDoc.Set("replaceChildren", func(call goja.FunctionCall) goja.Value {
 		nodes := b.convertJSNodesToGo(call.Arguments)
-		doc.ReplaceChildren(nodes...)
+		if err := doc.ReplaceChildrenWithError(nodes...); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("HierarchyRequestError", err.Error()))
+		}
 		return goja.Undefined()
 	})
 
@@ -1659,7 +1664,12 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 
 	jsDoc.Set("replaceChildren", func(call goja.FunctionCall) goja.Value {
 		nodes := b.convertJSNodesToGo(call.Arguments)
-		doc.ReplaceChildren(nodes...)
+		if err := doc.ReplaceChildrenWithError(nodes...); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("HierarchyRequestError", err.Error()))
+		}
 		return goja.Undefined()
 	})
 
@@ -2335,7 +2345,12 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 
 	jsEl.Set("replaceChildren", func(call goja.FunctionCall) goja.Value {
 		nodes := b.convertJSNodesToGo(call.Arguments)
-		el.ReplaceChildren(nodes...)
+		if err := el.ReplaceChildrenWithError(nodes...); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("HierarchyRequestError", err.Error()))
+		}
 		return goja.Undefined()
 	})
 
@@ -3373,7 +3388,12 @@ func (b *DOMBinder) BindDocumentFragment(frag *dom.DocumentFragment) *goja.Objec
 
 	jsFrag.Set("replaceChildren", func(call goja.FunctionCall) goja.Value {
 		nodes := b.convertJSNodesToGo(call.Arguments)
-		frag.ReplaceChildren(nodes...)
+		if err := frag.ReplaceChildrenWithError(nodes...); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("HierarchyRequestError", err.Error()))
+		}
 		return goja.Undefined()
 	})
 

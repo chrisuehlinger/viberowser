@@ -566,13 +566,41 @@ func (d *Document) PrependWithError(nodes ...interface{}) error {
 }
 
 // ReplaceChildren replaces all children with the given nodes.
+// For error handling, use ReplaceChildrenWithError.
 func (d *Document) ReplaceChildren(nodes ...interface{}) {
-	// Remove all children
+	_ = d.ReplaceChildrenWithError(nodes...)
+}
+
+// ReplaceChildrenWithError replaces all children with the given nodes.
+// Returns an error if any validation fails (e.g., HierarchyRequestError).
+// Implements the ParentNode.replaceChildren() algorithm from the DOM spec.
+// Per spec, validation happens BEFORE any children are removed.
+func (d *Document) ReplaceChildrenWithError(nodes ...interface{}) error {
+	// Step 1: Convert nodes/strings into a single node (or document fragment)
+	var node *Node
+	if len(nodes) > 0 {
+		node = d.AsNode().convertNodesToFragment(nodes)
+	}
+
+	// Step 2: Validate the insertion BEFORE removing any children
+	// This ensures we throw HierarchyRequestError before any mutation
+	if node != nil {
+		if err := d.AsNode().validatePreInsertion(node, nil); err != nil {
+			return err
+		}
+	}
+
+	// Step 3: Remove all existing children
 	for d.AsNode().firstChild != nil {
 		d.AsNode().RemoveChild(d.AsNode().firstChild)
 	}
-	// Append new children
-	d.Append(nodes...)
+
+	// Step 4: Insert the new node(s)
+	if node != nil {
+		d.AsNode().AppendChild(node)
+	}
+
+	return nil
 }
 
 // ImportNode imports a node from another document.

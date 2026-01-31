@@ -1023,13 +1023,41 @@ func (e *Element) Remove() {
 }
 
 // ReplaceChildren replaces all children with the given nodes.
+// For error handling, use ReplaceChildrenWithError.
 func (e *Element) ReplaceChildren(nodes ...interface{}) {
-	// Remove all children
+	_ = e.ReplaceChildrenWithError(nodes...)
+}
+
+// ReplaceChildrenWithError replaces all children with the given nodes.
+// Returns an error if any validation fails (e.g., HierarchyRequestError).
+// Implements the ParentNode.replaceChildren() algorithm from the DOM spec.
+// Per spec, validation happens BEFORE any children are removed.
+func (e *Element) ReplaceChildrenWithError(nodes ...interface{}) error {
+	// Step 1: Convert nodes/strings into a single node (or document fragment)
+	var node *Node
+	if len(nodes) > 0 {
+		node = e.AsNode().convertNodesToFragment(nodes)
+	}
+
+	// Step 2: Validate the insertion BEFORE removing any children
+	// This ensures we throw HierarchyRequestError before any mutation
+	if node != nil {
+		if err := e.AsNode().validatePreInsertion(node, nil); err != nil {
+			return err
+		}
+	}
+
+	// Step 3: Remove all existing children
 	for e.AsNode().firstChild != nil {
 		e.AsNode().RemoveChild(e.AsNode().firstChild)
 	}
-	// Append new children
-	e.Append(nodes...)
+
+	// Step 4: Insert the new node(s)
+	if node != nil {
+		e.AsNode().AppendChild(node)
+	}
+
+	return nil
 }
 
 // InsertAdjacentElement inserts an element at the specified position relative to this element.
