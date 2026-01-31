@@ -353,9 +353,10 @@ func (n *Node) validateDocumentInsertion(node, child *Node) error {
 			if n.hasElementChild() {
 				return ErrHierarchyRequest("Document already has a document element.")
 			}
-			// Check if a doctype follows the reference child
-			if child != nil && n.doctypeFollows(child) {
-				return ErrHierarchyRequest("Cannot insert element before document element when doctype follows.")
+			// Check if the reference child is a doctype or a doctype follows the reference child
+			// Per DOM spec: cannot insert element before a doctype
+			if child != nil && (child.nodeType == DocumentTypeNode || n.doctypeFollows(child)) {
+				return ErrHierarchyRequest("Cannot insert element before doctype.")
 			}
 		}
 
@@ -364,8 +365,9 @@ func (n *Node) validateDocumentInsertion(node, child *Node) error {
 		if n.hasElementChild() {
 			return ErrHierarchyRequest("Document already has a document element.")
 		}
-		// Check if a doctype follows the reference child
-		if child != nil && n.doctypeFollows(child) {
+		// Check if the reference child is a doctype or a doctype follows the reference child
+		// Per DOM spec: cannot insert element before a doctype
+		if child != nil && (child.nodeType == DocumentTypeNode || n.doctypeFollows(child)) {
 			return ErrHierarchyRequest("Cannot insert element before doctype.")
 		}
 
