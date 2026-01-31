@@ -1,7 +1,7 @@
 #!/bin/bash -ex
 
 sudo apt-get update
-sudo apt-get install -y build-essential xvfb
+sudo apt-get install -y build-essential xvfb libgl1-mesa-dev xorg-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libxxf86vm-dev
 
 echo "export PATH=\"$PATH:$HOME/go/bin\"" >> $HOME/.bashrc
 echo "export PATH=\"$PATH:$HOME/go/bin\"" >> $HOME/.zshrc
