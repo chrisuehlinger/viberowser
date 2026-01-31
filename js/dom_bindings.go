@@ -3080,7 +3080,7 @@ func (b *DOMBinder) bindNodeProperties(jsObj *goja.Object, node *dom.Node) {
 			}
 			return goja.Null()
 		}
-		delete(b.nodeMap, result)
+		// Return the existing JS binding for the removed node to preserve object identity
 		return b.BindNode(result)
 	})
 
@@ -3337,7 +3337,7 @@ func (b *DOMBinder) setupNodePrototypeMethods() {
 			}
 			return goja.Null()
 		}
-		delete(b.nodeMap, result)
+		// Return the existing JS binding for the removed node to preserve object identity
 		return b.BindNode(result)
 	})
 

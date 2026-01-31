@@ -311,6 +311,45 @@ func TestWPTNodeChildNodes(t *testing.T) {
 	}
 }
 
+// TestWPTNodeReplaceChild tests the Node.replaceChild WPT test
+func TestWPTNodeReplaceChild(t *testing.T) {
+	wptPath := "/workspaces/wpt"
+
+	// Check if WPT exists
+	if _, err := os.Stat(wptPath); os.IsNotExist(err) {
+		t.Skip("WPT not available")
+	}
+
+	runner := NewRunner(wptPath)
+	runner.Timeout = 10 * time.Second
+
+	result := runner.RunTestFile("/dom/nodes/Node-replaceChild.html")
+
+	t.Logf("HarnessStatus: %s", result.HarnessStatus)
+	t.Logf("Error: %s", result.Error)
+	t.Logf("Duration: %v", result.Duration)
+	t.Logf("Tests: %d", len(result.Tests))
+
+	passed := 0
+	failed := 0
+	for _, test := range result.Tests {
+		statusStr := "PASS"
+		if test.Status != StatusPass {
+			statusStr = "FAIL"
+			failed++
+		} else {
+			passed++
+		}
+		t.Logf("  [%s] %s: %s", statusStr, test.Name, test.Message)
+	}
+
+	t.Logf("Summary: %d passed, %d failed", passed, failed)
+
+	if len(result.Tests) == 0 {
+		t.Errorf("Expected some test results, got none")
+	}
+}
+
 // TestWPTManual manually steps through WPT loading to diagnose issues
 func TestWPTManual(t *testing.T) {
 	wptPath := "/workspaces/wpt"
