@@ -53,6 +53,14 @@ func NewScriptExecutor(runtime *Runtime) *ScriptExecutor {
 		// Get the parent node
 		parentNode := goNode.ParentNode()
 		if parentNode == nil {
+			// If this is the main document (has a browsing context), return the window
+			// This allows events to bubble from Document to Window
+			if goNode.NodeType() == dom.DocumentNode {
+				goDoc := (*dom.Document)(goNode)
+				if domBinder.IsMainDocument(goDoc) {
+					return runtime.vm.Get("window").ToObject(runtime.vm)
+				}
+			}
 			return nil
 		}
 		// Return the JS binding for the parent node
@@ -171,6 +179,9 @@ func (se *ScriptExecutor) SetupDocument(doc *dom.Document) {
 	// Store current document and register mutation callback
 	se.currentDocument = doc
 	dom.RegisterMutationCallback(doc, se.mutationObserverManager)
+
+	// Mark this as the main document (associated with window) for event bubbling
+	se.domBinder.SetMainDocument(doc)
 
 	jsDoc := se.domBinder.BindDocument(doc)
 

@@ -528,3 +528,151 @@ func TestPrependHierarchyErrorViaImplementation(t *testing.T) {
 		t.Fatalf("Script failed: %v", err)
 	}
 }
+
+// TestEventBubblingToWindow tests that events on the main document bubble to the window
+func TestEventBubblingToWindow(t *testing.T) {
+	r := NewRuntime()
+	executor := NewScriptExecutor(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body>
+	<div id="target">Click me</div>
+</body>
+</html>`)
+
+	executor.SetupDocument(doc)
+
+	// Set up capturing and bubbling listeners on window, document, body, and target
+	_, err := r.Execute(`
+		var targets = [];
+		var phases = [];
+
+		function handler(e) {
+			targets.push(e.currentTarget);
+			phases.push(e.eventPhase);
+		}
+
+		// Add listeners in the expected order: window, document, body, target
+		window.addEventListener('test', handler, true);  // capturing
+		window.addEventListener('test', handler, false); // bubbling
+		document.addEventListener('test', handler, true);
+		document.addEventListener('test', handler, false);
+		document.body.addEventListener('test', handler, true);
+		document.body.addEventListener('test', handler, false);
+		var target = document.getElementById('target');
+		target.addEventListener('test', handler, true);
+		target.addEventListener('test', handler, false);
+	`)
+	if err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+
+	// Dispatch a bubbling event on the target
+	_, err = r.Execute(`
+		var event = new Event('test', { bubbles: true });
+		target.dispatchEvent(event);
+	`)
+	if err != nil {
+		t.Fatalf("dispatchEvent failed: %v", err)
+	}
+
+	// Check the targets length - should be 8 (capturing + bubbling for each of 4 targets)
+	targetsLen, err := r.Execute("targets.length")
+	if err != nil {
+		t.Fatalf("Failed to get targets.length: %v", err)
+	}
+	if targetsLen.ToInteger() != 8 {
+		t.Errorf("Expected 8 targets, got %d", targetsLen.ToInteger())
+	}
+
+	// Check that window was the first target (capturing phase)
+	firstTarget, err := r.Execute("targets[0] === window")
+	if err != nil {
+		t.Fatalf("Failed to check first target: %v", err)
+	}
+	if !firstTarget.ToBoolean() {
+		t.Error("First target should be window (capturing)")
+	}
+
+	// Check that window was the last target (bubbling phase)
+	lastTarget, err := r.Execute("targets[7] === window")
+	if err != nil {
+		t.Fatalf("Failed to check last target: %v", err)
+	}
+	if !lastTarget.ToBoolean() {
+		t.Error("Last target should be window (bubbling)")
+	}
+
+	// Verify the phases
+	phases, err := r.Execute("JSON.stringify(phases)")
+	if err != nil {
+		t.Fatalf("Failed to get phases: %v", err)
+	}
+	expected := "[1,1,1,2,2,3,3,3]" // 1=capturing, 2=at_target, 3=bubbling
+	if phases.String() != expected {
+		t.Errorf("Expected phases %s, got %s", expected, phases.String())
+	}
+}
+
+// TestEventBubblingStandaloneDocument tests that events on standalone documents don't bubble to window
+func TestEventBubblingStandaloneDocument(t *testing.T) {
+	r := NewRuntime()
+	executor := NewScriptExecutor(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body></body>
+</html>`)
+
+	executor.SetupDocument(doc)
+
+	// Create a standalone document via createHTMLDocument and verify window is not in path
+	_, err := r.Execute(`
+		var standaloneDoc = document.implementation.createHTMLDocument("Test");
+		var target = standaloneDoc.createElement("div");
+		standaloneDoc.body.appendChild(target);
+
+		var targets = [];
+		function handler(e) {
+			targets.push(e.currentTarget);
+		}
+
+		// Add listeners on window and on the standalone document
+		window.addEventListener('test', handler, true);
+		window.addEventListener('test', handler, false);
+		standaloneDoc.addEventListener('test', handler, true);
+		standaloneDoc.addEventListener('test', handler, false);
+		standaloneDoc.body.addEventListener('test', handler, true);
+		standaloneDoc.body.addEventListener('test', handler, false);
+		target.addEventListener('test', handler, true);
+		target.addEventListener('test', handler, false);
+
+		// Dispatch event on target in standalone document
+		var event = new Event('test', { bubbles: true });
+		target.dispatchEvent(event);
+	`)
+	if err != nil {
+		t.Fatalf("Script failed: %v", err)
+	}
+
+	// The targets should NOT include window (only 6 targets: standalone doc, body, target x 2)
+	targetsLen, err := r.Execute("targets.length")
+	if err != nil {
+		t.Fatalf("Failed to get targets.length: %v", err)
+	}
+	if targetsLen.ToInteger() != 6 {
+		t.Errorf("Expected 6 targets (no window), got %d", targetsLen.ToInteger())
+	}
+
+	// Verify window is not in the targets
+	windowInTargets, err := r.Execute("targets.indexOf(window) === -1")
+	if err != nil {
+		t.Fatalf("Failed to check if window in targets: %v", err)
+	}
+	if !windowInTargets.ToBoolean() {
+		t.Error("Window should NOT be in targets for standalone document events")
+	}
+}

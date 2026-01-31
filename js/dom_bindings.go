@@ -299,6 +299,7 @@ type DOMBinder struct {
 	nodeMap               map[*dom.Node]*goja.Object  // Cache to return same JS object for same DOM node
 	document              *dom.Document               // Current document for creating new nodes
 	globalDocumentSet     bool                        // Track if global document has been set
+	mainDocument          *dom.Document               // Main document associated with window (for event bubbling)
 
 	// Style resolver for getComputedStyle
 	styleResolver *css.StyleResolver
@@ -2160,11 +2161,10 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 		return goja.Null()
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 
-	// defaultView returns the window object for documents with a browsing context
-	// For the main document, this is the global window object
+	// defaultView returns null for documents without a browsing context
+	// (bindDocumentInternal is used for createHTMLDocument, createDocument, new Document(), cloneNode, etc.)
 	jsDoc.DefineAccessorProperty("defaultView", vm.ToValue(func(call goja.FunctionCall) goja.Value {
-		// Return the global window object
-		return vm.GlobalObject()
+		return goja.Null()
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	// Document methods
@@ -7753,6 +7753,18 @@ func (b *DOMBinder) SetEventBinder(eb *EventBinder) {
 // SetIframeContentProvider sets the callback for providing iframe contentWindow/contentDocument.
 func (b *DOMBinder) SetIframeContentProvider(provider IframeContentProvider) {
 	b.iframeContentProvider = provider
+}
+
+// SetMainDocument sets the document that is associated with the window.
+// This document will have events bubble to the window object.
+func (b *DOMBinder) SetMainDocument(doc *dom.Document) {
+	b.mainDocument = doc
+}
+
+// IsMainDocument returns true if the given document is the main document
+// associated with the window (for event bubbling purposes).
+func (b *DOMBinder) IsMainDocument(doc *dom.Document) bool {
+	return b.mainDocument != nil && b.mainDocument == doc
 }
 
 // GetComputedStyle returns the computed style for an element.
