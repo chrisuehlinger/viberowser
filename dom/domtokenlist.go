@@ -17,7 +17,7 @@ func newDOMTokenList(element *Element, attrName string) *DOMTokenList {
 	}
 }
 
-// tokens returns the current list of tokens.
+// tokens returns the current list of tokens (deduplicated, preserving order).
 func (dtl *DOMTokenList) tokens() []string {
 	if dtl.element == nil {
 		return nil
@@ -26,7 +26,17 @@ func (dtl *DOMTokenList) tokens() []string {
 	if value == "" {
 		return nil
 	}
-	return strings.Fields(value)
+	// Split by whitespace and deduplicate while preserving order
+	allTokens := strings.Fields(value)
+	seen := make(map[string]bool)
+	result := make([]string, 0, len(allTokens))
+	for _, token := range allTokens {
+		if !seen[token] {
+			seen[token] = true
+			result = append(result, token)
+		}
+	}
+	return result
 }
 
 // setTokens sets the tokens back to the attribute.
@@ -148,15 +158,35 @@ func (dtl *DOMTokenList) Replace(oldToken, newToken string) bool {
 		return false
 	}
 
+	// If old and new are the same, no change needed
+	if oldToken == newToken {
+		return dtl.Contains(oldToken)
+	}
+
 	current := dtl.tokens()
+	oldIdx := -1
 	for i, t := range current {
 		if t == oldToken {
-			current[i] = newToken
-			dtl.setTokens(current)
-			return true
+			oldIdx = i
+			break
 		}
 	}
-	return false
+
+	if oldIdx == -1 {
+		return false
+	}
+
+	// Replace at the old position and remove any subsequent occurrences of newToken
+	result := make([]string, 0, len(current))
+	for i, t := range current {
+		if i == oldIdx {
+			result = append(result, newToken)
+		} else if t != newToken {
+			result = append(result, t)
+		}
+	}
+	dtl.setTokens(result)
+	return true
 }
 
 // Supports returns true if the given token is supported.

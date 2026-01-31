@@ -2279,7 +2279,7 @@ func (b *DOMBinder) BindHTMLCollection(collection *dom.HTMLCollection) *goja.Obj
 	return jsCol
 }
 
-// BindDOMTokenList creates a JavaScript DOMTokenList object.
+// BindDOMTokenList creates a JavaScript DOMTokenList object with dynamic numeric indexing.
 func (b *DOMBinder) BindDOMTokenList(tokenList *dom.DOMTokenList) *goja.Object {
 	vm := b.runtime.vm
 	jsList := vm.NewObject()
@@ -2353,34 +2353,58 @@ func (b *DOMBinder) BindDOMTokenList(tokenList *dom.DOMTokenList) *goja.Object {
 	})
 
 	jsList.Set("supports", func(call goja.FunctionCall) goja.Value {
-		// Most token lists don't have a defined set of supported tokens
-		return vm.ToValue(true)
+		// classList doesn't have a defined set of supported tokens, so supports() throws TypeError
+		// Per spec: https://dom.spec.whatwg.org/#dom-domtokenlist-supports
+		panic(vm.NewTypeError("classList.supports is not supported"))
 	})
 
 	jsList.Set("toString", func(call goja.FunctionCall) goja.Value {
 		return vm.ToValue(tokenList.Value())
 	})
 
-	jsList.Set("forEach", func(call goja.FunctionCall) goja.Value {
-		if len(call.Arguments) < 1 {
-			return goja.Undefined()
-		}
-		callback, ok := goja.AssertFunction(call.Arguments[0])
-		if !ok {
-			return goja.Undefined()
-		}
-		var thisArg goja.Value = goja.Undefined()
-		if len(call.Arguments) > 1 {
-			thisArg = call.Arguments[1]
-		}
-		for i := 0; i < tokenList.Length(); i++ {
-			token := tokenList.Item(i)
-			callback(thisArg, vm.ToValue(token), vm.ToValue(i), jsList)
-		}
-		return goja.Undefined()
+	// Create a proxy to intercept numeric index access (e.g., classList[0])
+	proxy := vm.NewProxy(jsList, &goja.ProxyTrapConfig{
+		GetIdx: func(target *goja.Object, property int, receiver goja.Value) goja.Value {
+			// Handle numeric index access: classList[0] returns token or undefined
+			if property < 0 || property >= tokenList.Length() {
+				return goja.Undefined()
+			}
+			token := tokenList.Item(property)
+			return vm.ToValue(token)
+		},
+		HasIdx: func(target *goja.Object, property int) bool {
+			// Check if numeric index exists
+			return property >= 0 && property < tokenList.Length()
+		},
+		OwnKeys: func(target *goja.Object) *goja.Object {
+			// Return array of keys including numeric indices
+			length := tokenList.Length()
+			keys := make([]interface{}, 0, length+5)
+			// Add numeric indices first
+			for i := 0; i < length; i++ {
+				keys = append(keys, vm.ToValue(i).String())
+			}
+			// Add named properties
+			keys = append(keys, "length", "value", "item", "contains", "add", "remove", "toggle", "replace", "supports", "toString", "forEach")
+			return vm.ToValue(keys).ToObject(vm)
+		},
+		GetOwnPropertyDescriptorIdx: func(target *goja.Object, prop int) goja.PropertyDescriptor {
+			if prop >= 0 && prop < tokenList.Length() {
+				return goja.PropertyDescriptor{
+					Value:        vm.ToValue(tokenList.Item(prop)),
+					Writable:     goja.FLAG_FALSE,
+					Enumerable:   goja.FLAG_TRUE,
+					Configurable: goja.FLAG_TRUE,
+				}
+			}
+			return goja.PropertyDescriptor{}
+		},
 	})
 
-	return jsList
+	// Get the proxy object
+	proxyObj := vm.ToValue(proxy).ToObject(vm)
+
+	return proxyObj
 }
 
 // createEmptyNodeList returns an empty NodeList-like object.

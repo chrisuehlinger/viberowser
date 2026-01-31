@@ -985,3 +985,108 @@ func TestDOMImplementation(t *testing.T) {
 		t.Error("Different documents should have different implementations")
 	}
 }
+
+func TestDOMTokenList_IndexAccess(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body><div id="test" class="foo bar baz">Test</div></body>
+</html>`)
+
+	binder.BindDocument(doc)
+
+	// Test numeric index access
+	result, err := r.Execute("document.getElementById('test').classList[0]")
+	if err != nil {
+		t.Fatalf("Error accessing classList[0]: %v", err)
+	}
+	if result.String() != "foo" {
+		t.Errorf("Expected classList[0] to be 'foo', got '%s'", result.String())
+	}
+
+	result, err = r.Execute("document.getElementById('test').classList[1]")
+	if err != nil {
+		t.Fatalf("Error accessing classList[1]: %v", err)
+	}
+	if result.String() != "bar" {
+		t.Errorf("Expected classList[1] to be 'bar', got '%s'", result.String())
+	}
+
+	result, err = r.Execute("document.getElementById('test').classList[2]")
+	if err != nil {
+		t.Fatalf("Error accessing classList[2]: %v", err)
+	}
+	if result.String() != "baz" {
+		t.Errorf("Expected classList[2] to be 'baz', got '%s'", result.String())
+	}
+
+	// Test out of bounds - should return undefined
+	result, err = r.Execute("document.getElementById('test').classList[3]")
+	if err != nil {
+		t.Fatalf("Error accessing classList[3]: %v", err)
+	}
+	if result.String() != "undefined" {
+		t.Errorf("Expected classList[3] to be undefined, got '%s'", result.String())
+	}
+
+	// Test that item() still works
+	result, err = r.Execute("document.getElementById('test').classList.item(0)")
+	if err != nil {
+		t.Fatalf("Error calling classList.item(0): %v", err)
+	}
+	if result.String() != "foo" {
+		t.Errorf("Expected classList.item(0) to be 'foo', got '%s'", result.String())
+	}
+
+	// Test item() out of bounds - should return null
+	result, err = r.Execute("document.getElementById('test').classList.item(99)")
+	if err != nil {
+		t.Fatalf("Error calling classList.item(99): %v", err)
+	}
+	if result.String() != "null" {
+		t.Errorf("Expected classList.item(99) to be null, got '%s'", result.String())
+	}
+
+	// Test length
+	result, err = r.Execute("document.getElementById('test').classList.length")
+	if err != nil {
+		t.Fatalf("Error accessing classList.length: %v", err)
+	}
+	if result.ToInteger() != 3 {
+		t.Errorf("Expected classList.length to be 3, got %d", result.ToInteger())
+	}
+}
+
+func TestDOMTokenList_Deduplication(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body><div id="test" class="a a">Test</div></body>
+</html>`)
+
+	binder.BindDocument(doc)
+
+	// Test that duplicate classes are deduplicated
+	result, err := r.Execute("document.getElementById('test').classList.length")
+	if err != nil {
+		t.Fatalf("Error accessing classList.length: %v", err)
+	}
+	if result.ToInteger() != 1 {
+		t.Errorf("Expected classList.length to be 1 for 'a a', got %d", result.ToInteger())
+	}
+
+	// Test that index access works correctly after deduplication
+	result, err = r.Execute("document.getElementById('test').classList[0]")
+	if err != nil {
+		t.Fatalf("Error accessing classList[0]: %v", err)
+	}
+	if result.String() != "a" {
+		t.Errorf("Expected classList[0] to be 'a', got '%s'", result.String())
+	}
+}

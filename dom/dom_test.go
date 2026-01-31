@@ -851,3 +851,39 @@ func TestNodeList(t *testing.T) {
 		t.Errorf("Live NodeList should have 3 items, got %d", childNodes.Length())
 	}
 }
+
+func TestDOMTokenList_Deduplication(t *testing.T) {
+	doc := NewDocument()
+	el := doc.CreateElement("div")
+
+	// Test that duplicate classes are deduplicated
+	el.SetAttribute("class", "a a")
+	classList := el.ClassList()
+
+	// Per spec, 'a a' should have length 1 (duplicates removed)
+	if classList.Length() != 1 {
+		t.Errorf("Expected length 1 for 'a a', got %d", classList.Length())
+	}
+
+	// Test that Item(0) returns "a"
+	if classList.Item(0) != "a" {
+		t.Errorf("Expected Item(0) to be 'a', got '%s'", classList.Item(0))
+	}
+
+	// Test with more duplicates
+	el.SetAttribute("class", "a b a c b a")
+	if classList.Length() != 3 {
+		t.Errorf("Expected length 3 for 'a b a c b a', got %d", classList.Length())
+	}
+
+	// Order should be preserved (first occurrence)
+	if classList.Item(0) != "a" {
+		t.Errorf("Expected Item(0) to be 'a', got '%s'", classList.Item(0))
+	}
+	if classList.Item(1) != "b" {
+		t.Errorf("Expected Item(1) to be 'b', got '%s'", classList.Item(1))
+	}
+	if classList.Item(2) != "c" {
+		t.Errorf("Expected Item(2) to be 'c', got '%s'", classList.Item(2))
+	}
+}
