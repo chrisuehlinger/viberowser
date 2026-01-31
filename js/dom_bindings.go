@@ -2898,6 +2898,26 @@ func (b *DOMBinder) bindNodeProperties(jsObj *goja.Object, node *dom.Node) {
 		return vm.ToValue(node.IsConnected())
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 
+	// nodeValue - returns null for Element, Document, DocumentFragment, DocumentType
+	// Text, Comment, ProcessingInstruction, CDATASection override this in their own bindings
+	jsObj.DefineAccessorProperty("nodeValue", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		switch node.NodeType() {
+		case dom.TextNode, dom.CommentNode, dom.ProcessingInstructionNode, dom.CDATASectionNode:
+			return vm.ToValue(node.NodeValue())
+		default:
+			return goja.Null()
+		}
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			val := ""
+			if !goja.IsNull(call.Arguments[0]) && !goja.IsUndefined(call.Arguments[0]) {
+				val = call.Arguments[0].String()
+			}
+			node.SetNodeValue(val)
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
 	// Child methods
 	jsObj.Set("hasChildNodes", func(call goja.FunctionCall) goja.Value {
 		return vm.ToValue(node.HasChildNodes())
