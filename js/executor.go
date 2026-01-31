@@ -21,12 +21,14 @@ type IframeContentLoader func(src string) *dom.Document
 
 // ScriptExecutor handles executing scripts in an HTML document.
 type ScriptExecutor struct {
-	runtime             *Runtime
-	domBinder           *DOMBinder
-	eventBinder         *EventBinder
-	iframeWindows       map[*dom.Element]goja.Value    // Cache of content windows per iframe element (legacy)
-	iframeContents      map[*dom.Element]*iframeContent // Cache of content windows/documents per iframe
-	iframeContentLoader IframeContentLoader             // Callback for loading iframe content
+	runtime                  *Runtime
+	domBinder                *DOMBinder
+	eventBinder              *EventBinder
+	mutationObserverManager  *MutationObserverManager
+	iframeWindows            map[*dom.Element]goja.Value    // Cache of content windows per iframe element (legacy)
+	iframeContents           map[*dom.Element]*iframeContent // Cache of content windows/documents per iframe
+	iframeContentLoader      IframeContentLoader             // Callback for loading iframe content
+	currentDocument          *dom.Document                   // Currently bound document
 }
 
 // NewScriptExecutor creates a new script executor.
@@ -38,16 +40,23 @@ func NewScriptExecutor(runtime *Runtime) *ScriptExecutor {
 	// Set the event binder on DOM binder so all nodes get EventTarget methods
 	domBinder.SetEventBinder(eventBinder)
 
+	// Create mutation observer manager
+	mutationManager := NewMutationObserverManager()
+
 	se := &ScriptExecutor{
-		runtime:        runtime,
-		domBinder:      domBinder,
-		eventBinder:    eventBinder,
-		iframeWindows:  make(map[*dom.Element]goja.Value),
-		iframeContents: make(map[*dom.Element]*iframeContent),
+		runtime:                 runtime,
+		domBinder:               domBinder,
+		eventBinder:             eventBinder,
+		mutationObserverManager: mutationManager,
+		iframeWindows:           make(map[*dom.Element]goja.Value),
+		iframeContents:          make(map[*dom.Element]*iframeContent),
 	}
 
 	// Set the iframe content provider on DOM binder
 	domBinder.SetIframeContentProvider(se.getIframeContent)
+
+	// Set up MutationObserver constructor
+	SetupMutationObserver(runtime, domBinder, mutationManager)
 
 	return se
 }
@@ -135,6 +144,15 @@ func (se *ScriptExecutor) setupGetComputedStyle() {
 
 // SetupDocument sets up the document object and returns the JS document.
 func (se *ScriptExecutor) SetupDocument(doc *dom.Document) {
+	// Clear previous document's mutation callback if any
+	if se.currentDocument != nil {
+		dom.UnregisterMutationCallback(se.currentDocument, se.mutationObserverManager)
+	}
+
+	// Store current document and register mutation callback
+	se.currentDocument = doc
+	dom.RegisterMutationCallback(doc, se.mutationObserverManager)
+
 	jsDoc := se.domBinder.BindDocument(doc)
 
 	// Add event target methods to document

@@ -97,19 +97,28 @@ func (n *Node) NodeValue() string {
 // SetNodeValue sets the value of the node.
 // This only has an effect on text, comment, CDATASection, and processing instruction nodes.
 func (n *Node) SetNodeValue(value string) {
+	var oldValue string
 	switch n.nodeType {
 	case TextNode, CDATASectionNode:
 		if n.textData != nil {
+			oldValue = *n.textData
 			*n.textData = value
 		}
 		n.nodeValue = &value
+		notifyCharacterDataMutation(n, oldValue)
 	case CommentNode:
 		if n.commentData != nil {
+			oldValue = *n.commentData
 			*n.commentData = value
 		}
 		n.nodeValue = &value
+		notifyCharacterDataMutation(n, oldValue)
 	case ProcessingInstructionNode:
+		if n.nodeValue != nil {
+			oldValue = *n.nodeValue
+		}
 		n.nodeValue = &value
+		notifyCharacterDataMutation(n, oldValue)
 	}
 	// For other node types, this is a no-op per the spec
 }
@@ -491,8 +500,23 @@ func (n *Node) insertBefore(newChild, refChild *Node) *Node {
 		for child := newChild.firstChild; child != nil; child = child.nextSibling {
 			children = append(children, child)
 		}
+
+		// Get sibling info for mutation notification before any insertions
+		var prevSib *Node
+		if refChild != nil {
+			prevSib = refChild.prevSibling
+		} else {
+			prevSib = n.lastChild
+		}
+
+		// Insert all children without individual notifications
 		for _, child := range children {
-			n.insertBefore(child, refChild)
+			n.insertBeforeNoNotify(child, refChild)
+		}
+
+		// Send a single mutation notification for all children
+		if len(children) > 0 {
+			notifyChildListMutation(n, children, nil, prevSib, refChild)
 		}
 		return newChild
 	}
@@ -502,7 +526,15 @@ func (n *Node) insertBefore(newChild, refChild *Node) *Node {
 		return newChild
 	}
 
-	// Remove from current parent if necessary
+	// Get sibling info before any modifications for mutation notification
+	var prevSib *Node
+	if refChild != nil {
+		prevSib = refChild.prevSibling
+	} else {
+		prevSib = n.lastChild
+	}
+
+	// Remove from current parent if necessary (this will trigger its own mutation notification)
 	if newChild.parentNode != nil {
 		newChild.parentNode.RemoveChild(newChild)
 	}
@@ -541,7 +573,56 @@ func (n *Node) insertBefore(newChild, refChild *Node) *Node {
 		refChild.prevSibling = newChild
 	}
 
+	// Notify about the insertion
+	notifyChildListMutation(n, []*Node{newChild}, nil, prevSib, refChild)
+
 	return newChild
+}
+
+// insertBeforeNoNotify inserts a node without triggering mutation notifications.
+// Used for batch operations like DocumentFragment insertion.
+func (n *Node) insertBeforeNoNotify(newChild, refChild *Node) {
+	if newChild == nil {
+		return
+	}
+
+	// Remove from current parent if necessary (without notification)
+	if newChild.parentNode != nil {
+		newChild.parentNode.removeChildInternal(newChild)
+	}
+
+	// Set the new parent
+	newChild.parentNode = n
+
+	// Adopt the node to this document if needed
+	if n.ownerDoc != nil && newChild.ownerDoc != n.ownerDoc {
+		adoptNode(newChild, n.ownerDoc)
+	} else if n.nodeType == DocumentNode {
+		doc := (*Document)(n)
+		adoptNode(newChild, doc)
+	}
+
+	if refChild == nil {
+		// Append to the end
+		newChild.prevSibling = n.lastChild
+		newChild.nextSibling = nil
+		if n.lastChild != nil {
+			n.lastChild.nextSibling = newChild
+		} else {
+			n.firstChild = newChild
+		}
+		n.lastChild = newChild
+	} else {
+		// Insert before refChild
+		newChild.prevSibling = refChild.prevSibling
+		newChild.nextSibling = refChild
+		if refChild.prevSibling != nil {
+			refChild.prevSibling.nextSibling = newChild
+		} else {
+			n.firstChild = newChild
+		}
+		refChild.prevSibling = newChild
+	}
 }
 
 // adoptNode recursively sets the ownerDocument for a node and its descendants.
@@ -569,7 +650,15 @@ func (n *Node) RemoveChildWithError(child *Node) (*Node, error) {
 		return nil, ErrNotFound("The node to be removed is not a child of this node.")
 	}
 
+	// Capture sibling info before removal for mutation notification
+	prevSib := child.prevSibling
+	nextSib := child.nextSibling
+
 	n.removeChildInternal(child)
+
+	// Notify about the removal
+	notifyChildListMutation(n, nil, []*Node{child}, prevSib, nextSib)
+
 	return child, nil
 }
 
@@ -664,6 +753,10 @@ func (n *Node) ReplaceChildWithError(newChild, oldChild *Node) (*Node, error) {
 		return oldChild, nil
 	}
 
+	// Capture sibling info before any modifications for mutation notification
+	prevSib := oldChild.prevSibling
+	nextSib := oldChild.nextSibling
+
 	// Get the next sibling of oldChild before any tree modifications
 	referenceChild := oldChild.nextSibling
 
@@ -689,6 +782,9 @@ func (n *Node) ReplaceChildWithError(newChild, oldChild *Node) (*Node, error) {
 			n.insertBeforeInternal(child, referenceChild)
 		}
 
+		// Notify about the replacement (removed oldChild, added all fragment children)
+		notifyChildListMutation(n, children, []*Node{oldChild}, prevSib, nextSib)
+
 		return oldChild, nil
 	}
 
@@ -703,6 +799,9 @@ func (n *Node) ReplaceChildWithError(newChild, oldChild *Node) (*Node, error) {
 
 	// Insert newChild at oldChild's position
 	n.insertBeforeInternal(newChild, referenceChild)
+
+	// Notify about the replacement
+	notifyChildListMutation(n, []*Node{newChild}, []*Node{oldChild}, prevSib, nextSib)
 
 	return oldChild, nil
 }

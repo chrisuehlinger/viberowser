@@ -86,14 +86,23 @@ func (nm *NamedNodeMap) setAttr(attr *Attr) *Attr {
 	// Check if an attribute with this namespace + localName already exists
 	for i, existing := range nm.attrs {
 		if existing.namespaceURI == attr.namespaceURI && existing.localName == attr.localName {
+			oldValue := existing.value
 			nm.attrs[i] = attr
 			existing.ownerElement = nil
+			// Notify about attribute change
+			if nm.ownerElement != nil {
+				notifyAttributeMutation(nm.ownerElement.AsNode(), attr.name, attr.namespaceURI, oldValue)
+			}
 			return existing
 		}
 	}
 
 	// Add new attribute
 	nm.attrs = append(nm.attrs, attr)
+	// Notify about new attribute (old value is empty for new attributes)
+	if nm.ownerElement != nil {
+		notifyAttributeMutation(nm.ownerElement.AsNode(), attr.name, attr.namespaceURI, "")
+	}
 	return nil
 }
 
@@ -107,7 +116,12 @@ func (nm *NamedNodeMap) SetAttr(attr *Attr) *Attr {
 func (nm *NamedNodeMap) RemoveNamedItem(name string) *Attr {
 	for i, attr := range nm.attrs {
 		if attr.name == name {
+			oldValue := attr.value
 			nm.attrs = append(nm.attrs[:i], nm.attrs[i+1:]...)
+			// Notify about attribute removal before clearing owner
+			if nm.ownerElement != nil {
+				notifyAttributeMutation(nm.ownerElement.AsNode(), name, attr.namespaceURI, oldValue)
+			}
 			attr.ownerElement = nil
 			return attr
 		}
@@ -119,7 +133,12 @@ func (nm *NamedNodeMap) RemoveNamedItem(name string) *Attr {
 func (nm *NamedNodeMap) RemoveNamedItemNS(namespaceURI, localName string) *Attr {
 	for i, attr := range nm.attrs {
 		if attr.namespaceURI == namespaceURI && attr.localName == localName {
+			oldValue := attr.value
 			nm.attrs = append(nm.attrs[:i], nm.attrs[i+1:]...)
+			// Notify about attribute removal before clearing owner
+			if nm.ownerElement != nil {
+				notifyAttributeMutation(nm.ownerElement.AsNode(), attr.name, namespaceURI, oldValue)
+			}
 			attr.ownerElement = nil
 			return attr
 		}
@@ -141,7 +160,12 @@ func (nm *NamedNodeMap) GetValue(name string) string {
 func (nm *NamedNodeMap) SetValue(name, value string) {
 	attr := nm.GetNamedItem(name)
 	if attr != nil {
+		oldValue := attr.value
 		attr.value = value
+		// Notify about attribute change
+		if nm.ownerElement != nil {
+			notifyAttributeMutation(nm.ownerElement.AsNode(), name, attr.namespaceURI, oldValue)
+		}
 	} else {
 		nm.setAttr(NewAttr(name, value))
 	}

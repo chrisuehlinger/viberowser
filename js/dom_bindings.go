@@ -513,6 +513,20 @@ func (b *DOMBinder) setupPrototypes() {
 		return b.BindElement(el)
 	})
 
+	// Add Symbol.iterator to make HTMLCollection iterable (uses Array.prototype's iterator)
+	arrayProto := vm.Get("Array").ToObject(vm).Get("prototype").ToObject(vm)
+	symbolSetup, _ := vm.RunString(`
+		(function(target, arrayProto) {
+			target[Symbol.iterator] = arrayProto[Symbol.iterator];
+		})
+	`)
+	if symbolSetup != nil {
+		fn, _ := goja.AssertFunction(symbolSetup)
+		if fn != nil {
+			fn(goja.Undefined(), b.htmlCollectionProto, arrayProto)
+		}
+	}
+
 	vm.Set("HTMLCollection", htmlCollectionConstructorObj)
 
 	// Create NodeList prototype
