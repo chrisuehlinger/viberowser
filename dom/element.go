@@ -1014,6 +1014,74 @@ func (e *Element) ReplaceChildren(nodes ...interface{}) {
 	e.Append(nodes...)
 }
 
+// InsertAdjacentElement inserts an element at the specified position relative to this element.
+// Position can be: "beforebegin", "afterbegin", "beforeend", "afterend"
+// Returns the inserted element, or nil if insertion fails (e.g., no parent for beforebegin/afterend).
+func (e *Element) InsertAdjacentElement(position string, element *Element) (*Element, error) {
+	if element == nil {
+		return nil, nil
+	}
+	node := element.AsNode()
+	err := e.insertAdjacentNode(position, node)
+	if err != nil {
+		return nil, err
+	}
+	return element, nil
+}
+
+// InsertAdjacentText inserts a text node at the specified position relative to this element.
+// Position can be: "beforebegin", "afterbegin", "beforeend", "afterend"
+func (e *Element) InsertAdjacentText(position string, data string) error {
+	doc := e.AsNode().ownerDoc
+	if doc == nil {
+		return ErrHierarchyRequest("element has no owner document")
+	}
+	textNode := doc.CreateTextNode(data)
+	return e.insertAdjacentNode(position, textNode)
+}
+
+// insertAdjacentNode is the internal implementation for insertAdjacent* methods.
+func (e *Element) insertAdjacentNode(position string, node *Node) error {
+	// Normalize position to lowercase for case-insensitive comparison
+	pos := strings.ToLower(position)
+
+	switch pos {
+	case "beforebegin":
+		// Insert before this element
+		parent := e.AsNode().parentNode
+		if parent == nil {
+			// No parent, nothing to do (per spec, we just return)
+			return nil
+		}
+		_, err := parent.InsertBeforeWithError(node, e.AsNode())
+		return err
+
+	case "afterbegin":
+		// Insert as first child
+		_, err := e.AsNode().InsertBeforeWithError(node, e.AsNode().firstChild)
+		return err
+
+	case "beforeend":
+		// Insert as last child (same as appendChild)
+		_, err := e.AsNode().AppendChildWithError(node)
+		return err
+
+	case "afterend":
+		// Insert after this element
+		parent := e.AsNode().parentNode
+		if parent == nil {
+			// No parent, nothing to do (per spec, we just return)
+			return nil
+		}
+		_, err := parent.InsertBeforeWithError(node, e.AsNode().nextSibling)
+		return err
+
+	default:
+		// Invalid position
+		return ErrSyntax("The value provided ('" + position + "') is not one of 'beforebegin', 'afterbegin', 'beforeend', or 'afterend'.")
+	}
+}
+
 // CloneNode clones this element.
 func (e *Element) CloneNode(deep bool) *Element {
 	clonedNode := e.AsNode().CloneNode(deep)

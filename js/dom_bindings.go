@@ -2297,6 +2297,60 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		return goja.Undefined()
 	})
 
+	// insertAdjacentElement
+	jsEl.Set("insertAdjacentElement", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			return goja.Undefined()
+		}
+		position := call.Arguments[0].String()
+		// Get the element argument
+		elementArg := call.Arguments[1]
+		if goja.IsNull(elementArg) || goja.IsUndefined(elementArg) {
+			return goja.Null()
+		}
+		// Convert to Element
+		elementObj := elementArg.ToObject(b.runtime.vm)
+		nodeVal := elementObj.Get("_goNode")
+		if nodeVal == nil || goja.IsUndefined(nodeVal) || goja.IsNull(nodeVal) {
+			return goja.Null()
+		}
+		goNode, ok := nodeVal.Export().(*dom.Node)
+		if !ok || goNode == nil {
+			return goja.Null()
+		}
+		if goNode.NodeType() != dom.ElementNode {
+			return goja.Null()
+		}
+		insertedEl, err := el.InsertAdjacentElement(position, (*dom.Element)(goNode))
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				b.throwDOMError(b.runtime.vm, domErr)
+			}
+			panic(b.runtime.vm.NewGoError(err))
+		}
+		if insertedEl == nil {
+			return goja.Null()
+		}
+		return b.BindElement(insertedEl)
+	})
+
+	// insertAdjacentText
+	jsEl.Set("insertAdjacentText", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			return goja.Undefined()
+		}
+		position := call.Arguments[0].String()
+		data := call.Arguments[1].String()
+		err := el.InsertAdjacentText(position, data)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				b.throwDOMError(b.runtime.vm, domErr)
+			}
+			panic(b.runtime.vm.NewGoError(err))
+		}
+		return goja.Undefined()
+	})
+
 	// Bind common node properties and methods
 	b.bindNodeProperties(jsEl, node)
 

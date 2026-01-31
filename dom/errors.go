@@ -58,3 +58,8 @@ func ErrNamespace(message string) *DOMError {
 func ErrInUseAttribute(message string) *DOMError {
 	return &DOMError{Name: "InUseAttributeError", Message: message}
 }
+
+// ErrSyntax creates a SyntaxError.
+func ErrSyntax(message string) *DOMError {
+	return &DOMError{Name: "SyntaxError", Message: message}
+}
