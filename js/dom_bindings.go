@@ -1259,6 +1259,13 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 		return goja.Null()
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 
+	// defaultView returns the window object for documents with a browsing context
+	// For the main document, this is the global window object
+	jsDoc.DefineAccessorProperty("defaultView", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Return the global window object
+		return vm.GlobalObject()
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
 	// Document methods
 	jsDoc.Set("getElementById", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
@@ -1658,6 +1665,13 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 	// location is null for documents without a browsing context (per spec)
 	jsDoc.DefineAccessorProperty("location", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		return goja.Null()
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// defaultView returns the window object for documents with a browsing context
+	// For the main document, this is the global window object
+	jsDoc.DefineAccessorProperty("defaultView", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Return the global window object
+		return vm.GlobalObject()
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	// Document methods
@@ -2944,6 +2958,80 @@ func (b *DOMBinder) BindTextNode(node *dom.Node, proto *goja.Object) *goja.Objec
 
 	// CharacterData mutation methods
 	b.bindCharacterDataMethods(jsNode, node)
+
+	// Text-specific methods
+	// splitText(offset) - splits the Text node at offset and returns the remainder
+	jsNode.Set("splitText", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'splitText' on 'Text': 1 argument required"))
+		}
+
+		offset := toUint32(call.Arguments[0])
+		data := node.NodeValue()
+		length := uint32(utf16Length(data))
+
+		// Check offset bounds - per spec, throw IndexSizeError if offset > length
+		if offset > length {
+			b.throwIndexSizeError(vm)
+		}
+
+		// Get the count of characters to extract
+		count := length - offset
+
+		// Extract the new data for the new text node
+		newData := utf16Substring(data, int(offset), int(count))
+
+		// Create a new Text node with the extracted data
+		var newTextNode *dom.Node
+		if b.document != nil {
+			newTextNode = b.document.CreateTextNode(newData)
+		} else {
+			newTextNode = dom.NewTextNode(newData)
+		}
+
+		// If this node has a parent, insert the new node after this node
+		if parent := node.ParentNode(); parent != nil {
+			nextSibling := node.NextSibling()
+			if nextSibling != nil {
+				parent.InsertBefore(newTextNode, nextSibling)
+			} else {
+				parent.AppendChild(newTextNode)
+			}
+		}
+
+		// Truncate the current node's data at offset
+		node.SetNodeValue(utf16Substring(data, 0, int(offset)))
+
+		return b.BindTextNode(newTextNode, nil)
+	})
+
+	// wholeText - returns text of all logically adjacent Text nodes
+	jsNode.DefineAccessorProperty("wholeText", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Collect text from all adjacent Text nodes
+		var result string
+
+		// Go backwards to find the start
+		current := node.PreviousSibling()
+		var textNodes []*dom.Node
+		for current != nil && current.NodeType() == dom.TextNode {
+			textNodes = append([]*dom.Node{current}, textNodes...)
+			current = current.PreviousSibling()
+		}
+		// Add this node
+		textNodes = append(textNodes, node)
+		// Go forwards
+		current = node.NextSibling()
+		for current != nil && current.NodeType() == dom.TextNode {
+			textNodes = append(textNodes, current)
+			current = current.NextSibling()
+		}
+
+		// Concatenate all text content
+		for _, textNode := range textNodes {
+			result += textNode.NodeValue()
+		}
+		return vm.ToValue(result)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	// ChildNode mixin methods
 	b.bindCharacterDataChildNodeMixin(jsNode, node)
