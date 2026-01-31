@@ -152,6 +152,8 @@ type DOMBinder struct {
 	nodeListCache                map[*dom.NodeList]*goja.Object
 	domTokenListCache            map[*dom.DOMTokenList]*goja.Object
 	attrCache                    map[*dom.Attr]*goja.Object
+	rangeProto                   *goja.Object
+	rangeCache                   map[*dom.Range]*goja.Object
 }
 
 // NewDOMBinder creates a new DOM binder for the given runtime.
@@ -167,6 +169,7 @@ func NewDOMBinder(runtime *Runtime) *DOMBinder {
 		nodeListCache:          make(map[*dom.NodeList]*goja.Object),
 		domTokenListCache:      make(map[*dom.DOMTokenList]*goja.Object),
 		attrCache:              make(map[*dom.Attr]*goja.Object),
+		rangeCache:             make(map[*dom.Range]*goja.Object),
 	}
 	b.setupPrototypes()
 	return b
@@ -452,6 +455,34 @@ func (b *DOMBinder) setupPrototypes() {
 	domImplConstructorObj.Set("prototype", b.domImplementationProto)
 	b.domImplementationProto.Set("constructor", domImplConstructorObj)
 	vm.Set("DOMImplementation", domImplConstructorObj)
+
+	// Create Range prototype
+	b.rangeProto = vm.NewObject()
+	rangeConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		// Range can be constructed with new Range()
+		// Per spec, it creates a Range whose start and end are set to (current document, 0)
+		if b.document != nil {
+			r := dom.NewRange(b.document)
+			return b.BindRange(r)
+		}
+		// If no document, return empty object with prototype
+		return call.This
+	})
+	rangeConstructorObj := rangeConstructor.ToObject(vm)
+	rangeConstructorObj.Set("prototype", b.rangeProto)
+	b.rangeProto.Set("constructor", rangeConstructorObj)
+
+	// Range constants
+	rangeConstructorObj.Set("START_TO_START", dom.StartToStart)
+	rangeConstructorObj.Set("START_TO_END", dom.StartToEnd)
+	rangeConstructorObj.Set("END_TO_END", dom.EndToEnd)
+	rangeConstructorObj.Set("END_TO_START", dom.EndToStart)
+	b.rangeProto.Set("START_TO_START", dom.StartToStart)
+	b.rangeProto.Set("START_TO_END", dom.StartToEnd)
+	b.rangeProto.Set("END_TO_END", dom.EndToEnd)
+	b.rangeProto.Set("END_TO_START", dom.EndToStart)
+
+	vm.Set("Range", rangeConstructorObj)
 
 	// Create HTMLCollection prototype with item and namedItem methods
 	b.htmlCollectionProto = vm.NewObject()
@@ -1175,6 +1206,11 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 		return b.BindDocumentFragment(frag)
 	})
 
+	jsDoc.Set("createRange", func(call goja.FunctionCall) goja.Value {
+		r := doc.CreateRange()
+		return b.BindRange(r)
+	})
+
 	jsDoc.Set("createAttribute", func(call goja.FunctionCall) goja.Value {
 		name := ""
 		if len(call.Arguments) > 0 {
@@ -1558,6 +1594,11 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 	jsDoc.Set("createDocumentFragment", func(call goja.FunctionCall) goja.Value {
 		frag := doc.CreateDocumentFragment()
 		return b.BindDocumentFragment(frag)
+	})
+
+	jsDoc.Set("createRange", func(call goja.FunctionCall) goja.Value {
+		r := doc.CreateRange()
+		return b.BindRange(r)
 	})
 
 	jsDoc.Set("createAttribute", func(call goja.FunctionCall) goja.Value {
@@ -3441,6 +3482,452 @@ func (b *DOMBinder) BindDocumentFragment(frag *dom.DocumentFragment) *goja.Objec
 	b.nodeMap[node] = jsFrag
 
 	return jsFrag
+}
+
+// BindRange creates a JavaScript object from a DOM Range.
+func (b *DOMBinder) BindRange(r *dom.Range) *goja.Object {
+	if r == nil {
+		return nil
+	}
+
+	// Check cache
+	if jsObj, ok := b.rangeCache[r]; ok {
+		return jsObj
+	}
+
+	vm := b.runtime.vm
+	jsRange := vm.NewObject()
+
+	// Set prototype for instanceof to work
+	if b.rangeProto != nil {
+		jsRange.SetPrototype(b.rangeProto)
+	}
+
+	jsRange.Set("_goRange", r)
+
+	// Range constants
+	jsRange.Set("START_TO_START", dom.StartToStart)
+	jsRange.Set("START_TO_END", dom.StartToEnd)
+	jsRange.Set("END_TO_END", dom.EndToEnd)
+	jsRange.Set("END_TO_START", dom.EndToStart)
+
+	// Accessor properties
+	jsRange.DefineAccessorProperty("startContainer", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		container := r.StartContainer()
+		if container == nil {
+			return goja.Null()
+		}
+		return b.BindNode(container)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsRange.DefineAccessorProperty("startOffset", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(r.StartOffset())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsRange.DefineAccessorProperty("endContainer", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		container := r.EndContainer()
+		if container == nil {
+			return goja.Null()
+		}
+		return b.BindNode(container)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsRange.DefineAccessorProperty("endOffset", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(r.EndOffset())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsRange.DefineAccessorProperty("collapsed", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(r.Collapsed())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsRange.DefineAccessorProperty("commonAncestorContainer", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		container := r.CommonAncestorContainer()
+		if container == nil {
+			return goja.Null()
+		}
+		return b.BindNode(container)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// Methods
+	jsRange.Set("setStart", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			panic(vm.NewTypeError("Failed to execute 'setStart' on 'Range': 2 arguments required."))
+		}
+		nodeArg := call.Arguments[0]
+		if goja.IsNull(nodeArg) || goja.IsUndefined(nodeArg) {
+			panic(vm.NewTypeError("Failed to execute 'setStart' on 'Range': parameter 1 is not of type 'Node'."))
+		}
+		node := b.getGoNode(nodeArg.ToObject(vm))
+		if node == nil {
+			panic(vm.NewTypeError("Failed to execute 'setStart' on 'Range': parameter 1 is not of type 'Node'."))
+		}
+		offset := int(call.Arguments[1].ToInteger())
+		if err := r.SetStart(node, offset); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("IndexSizeError", err.Error()))
+		}
+		return goja.Undefined()
+	})
+
+	jsRange.Set("setEnd", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			panic(vm.NewTypeError("Failed to execute 'setEnd' on 'Range': 2 arguments required."))
+		}
+		nodeArg := call.Arguments[0]
+		if goja.IsNull(nodeArg) || goja.IsUndefined(nodeArg) {
+			panic(vm.NewTypeError("Failed to execute 'setEnd' on 'Range': parameter 1 is not of type 'Node'."))
+		}
+		node := b.getGoNode(nodeArg.ToObject(vm))
+		if node == nil {
+			panic(vm.NewTypeError("Failed to execute 'setEnd' on 'Range': parameter 1 is not of type 'Node'."))
+		}
+		offset := int(call.Arguments[1].ToInteger())
+		if err := r.SetEnd(node, offset); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("IndexSizeError", err.Error()))
+		}
+		return goja.Undefined()
+	})
+
+	jsRange.Set("setStartBefore", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'setStartBefore' on 'Range': 1 argument required."))
+		}
+		nodeArg := call.Arguments[0]
+		if goja.IsNull(nodeArg) || goja.IsUndefined(nodeArg) {
+			panic(vm.NewTypeError("Failed to execute 'setStartBefore' on 'Range': parameter 1 is not of type 'Node'."))
+		}
+		node := b.getGoNode(nodeArg.ToObject(vm))
+		if node == nil {
+			panic(vm.NewTypeError("Failed to execute 'setStartBefore' on 'Range': parameter 1 is not of type 'Node'."))
+		}
+		if err := r.SetStartBefore(node); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("InvalidNodeTypeError", err.Error()))
+		}
+		return goja.Undefined()
+	})
+
+	jsRange.Set("setStartAfter", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'setStartAfter' on 'Range': 1 argument required."))
+		}
+		nodeArg := call.Arguments[0]
+		if goja.IsNull(nodeArg) || goja.IsUndefined(nodeArg) {
+			panic(vm.NewTypeError("Failed to execute 'setStartAfter' on 'Range': parameter 1 is not of type 'Node'."))
+		}
+		node := b.getGoNode(nodeArg.ToObject(vm))
+		if node == nil {
+			panic(vm.NewTypeError("Failed to execute 'setStartAfter' on 'Range': parameter 1 is not of type 'Node'."))
+		}
+		if err := r.SetStartAfter(node); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("InvalidNodeTypeError", err.Error()))
+		}
+		return goja.Undefined()
+	})
+
+	jsRange.Set("setEndBefore", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'setEndBefore' on 'Range': 1 argument required."))
+		}
+		nodeArg := call.Arguments[0]
+		if goja.IsNull(nodeArg) || goja.IsUndefined(nodeArg) {
+			panic(vm.NewTypeError("Failed to execute 'setEndBefore' on 'Range': parameter 1 is not of type 'Node'."))
+		}
+		node := b.getGoNode(nodeArg.ToObject(vm))
+		if node == nil {
+			panic(vm.NewTypeError("Failed to execute 'setEndBefore' on 'Range': parameter 1 is not of type 'Node'."))
+		}
+		if err := r.SetEndBefore(node); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("InvalidNodeTypeError", err.Error()))
+		}
+		return goja.Undefined()
+	})
+
+	jsRange.Set("setEndAfter", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'setEndAfter' on 'Range': 1 argument required."))
+		}
+		nodeArg := call.Arguments[0]
+		if goja.IsNull(nodeArg) || goja.IsUndefined(nodeArg) {
+			panic(vm.NewTypeError("Failed to execute 'setEndAfter' on 'Range': parameter 1 is not of type 'Node'."))
+		}
+		node := b.getGoNode(nodeArg.ToObject(vm))
+		if node == nil {
+			panic(vm.NewTypeError("Failed to execute 'setEndAfter' on 'Range': parameter 1 is not of type 'Node'."))
+		}
+		if err := r.SetEndAfter(node); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("InvalidNodeTypeError", err.Error()))
+		}
+		return goja.Undefined()
+	})
+
+	jsRange.Set("collapse", func(call goja.FunctionCall) goja.Value {
+		toStart := false
+		if len(call.Arguments) > 0 {
+			toStart = call.Arguments[0].ToBoolean()
+		}
+		r.Collapse(toStart)
+		return goja.Undefined()
+	})
+
+	jsRange.Set("selectNode", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'selectNode' on 'Range': 1 argument required."))
+		}
+		nodeArg := call.Arguments[0]
+		if goja.IsNull(nodeArg) || goja.IsUndefined(nodeArg) {
+			panic(vm.NewTypeError("Failed to execute 'selectNode' on 'Range': parameter 1 is not of type 'Node'."))
+		}
+		node := b.getGoNode(nodeArg.ToObject(vm))
+		if node == nil {
+			panic(vm.NewTypeError("Failed to execute 'selectNode' on 'Range': parameter 1 is not of type 'Node'."))
+		}
+		if err := r.SelectNode(node); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("InvalidNodeTypeError", err.Error()))
+		}
+		return goja.Undefined()
+	})
+
+	jsRange.Set("selectNodeContents", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'selectNodeContents' on 'Range': 1 argument required."))
+		}
+		nodeArg := call.Arguments[0]
+		if goja.IsNull(nodeArg) || goja.IsUndefined(nodeArg) {
+			panic(vm.NewTypeError("Failed to execute 'selectNodeContents' on 'Range': parameter 1 is not of type 'Node'."))
+		}
+		node := b.getGoNode(nodeArg.ToObject(vm))
+		if node == nil {
+			panic(vm.NewTypeError("Failed to execute 'selectNodeContents' on 'Range': parameter 1 is not of type 'Node'."))
+		}
+		if err := r.SelectNodeContents(node); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("InvalidNodeTypeError", err.Error()))
+		}
+		return goja.Undefined()
+	})
+
+	jsRange.Set("compareBoundaryPoints", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			panic(vm.NewTypeError("Failed to execute 'compareBoundaryPoints' on 'Range': 2 arguments required."))
+		}
+		how := int(call.Arguments[0].ToInteger())
+		rangeArg := call.Arguments[1]
+		if goja.IsNull(rangeArg) || goja.IsUndefined(rangeArg) {
+			panic(vm.NewTypeError("Failed to execute 'compareBoundaryPoints' on 'Range': parameter 2 is not of type 'Range'."))
+		}
+		rangeObj := rangeArg.ToObject(vm)
+		sourceRange := b.getGoRange(rangeObj)
+		if sourceRange == nil {
+			panic(vm.NewTypeError("Failed to execute 'compareBoundaryPoints' on 'Range': parameter 2 is not of type 'Range'."))
+		}
+		result, err := r.CompareBoundaryPoints(how, sourceRange)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("WrongDocumentError", err.Error()))
+		}
+		return vm.ToValue(result)
+	})
+
+	jsRange.Set("deleteContents", func(call goja.FunctionCall) goja.Value {
+		if err := r.DeleteContents(); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("HierarchyRequestError", err.Error()))
+		}
+		return goja.Undefined()
+	})
+
+	jsRange.Set("extractContents", func(call goja.FunctionCall) goja.Value {
+		frag, err := r.ExtractContents()
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("HierarchyRequestError", err.Error()))
+		}
+		return b.BindDocumentFragment(frag)
+	})
+
+	jsRange.Set("cloneContents", func(call goja.FunctionCall) goja.Value {
+		frag, err := r.CloneContents()
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("HierarchyRequestError", err.Error()))
+		}
+		return b.BindDocumentFragment(frag)
+	})
+
+	jsRange.Set("insertNode", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'insertNode' on 'Range': 1 argument required."))
+		}
+		nodeArg := call.Arguments[0]
+		if goja.IsNull(nodeArg) || goja.IsUndefined(nodeArg) {
+			panic(vm.NewTypeError("Failed to execute 'insertNode' on 'Range': parameter 1 is not of type 'Node'."))
+		}
+		node := b.getGoNode(nodeArg.ToObject(vm))
+		if node == nil {
+			panic(vm.NewTypeError("Failed to execute 'insertNode' on 'Range': parameter 1 is not of type 'Node'."))
+		}
+		if err := r.InsertNode(node); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("HierarchyRequestError", err.Error()))
+		}
+		return goja.Undefined()
+	})
+
+	jsRange.Set("surroundContents", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'surroundContents' on 'Range': 1 argument required."))
+		}
+		nodeArg := call.Arguments[0]
+		if goja.IsNull(nodeArg) || goja.IsUndefined(nodeArg) {
+			panic(vm.NewTypeError("Failed to execute 'surroundContents' on 'Range': parameter 1 is not of type 'Node'."))
+		}
+		node := b.getGoNode(nodeArg.ToObject(vm))
+		if node == nil {
+			panic(vm.NewTypeError("Failed to execute 'surroundContents' on 'Range': parameter 1 is not of type 'Node'."))
+		}
+		if err := r.SurroundContents(node); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("InvalidStateError", err.Error()))
+		}
+		return goja.Undefined()
+	})
+
+	jsRange.Set("cloneRange", func(call goja.FunctionCall) goja.Value {
+		clone := r.CloneRange()
+		return b.BindRange(clone)
+	})
+
+	jsRange.Set("detach", func(call goja.FunctionCall) goja.Value {
+		r.Detach()
+		return goja.Undefined()
+	})
+
+	jsRange.Set("toString", func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(r.ToString())
+	})
+
+	jsRange.Set("createContextualFragment", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'createContextualFragment' on 'Range': 1 argument required."))
+		}
+		fragment := call.Arguments[0].String()
+		frag, err := r.CreateContextualFragment(fragment)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("SyntaxError", err.Error()))
+		}
+		return b.BindDocumentFragment(frag)
+	})
+
+	jsRange.Set("isPointInRange", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			panic(vm.NewTypeError("Failed to execute 'isPointInRange' on 'Range': 2 arguments required."))
+		}
+		nodeArg := call.Arguments[0]
+		if goja.IsNull(nodeArg) || goja.IsUndefined(nodeArg) {
+			return vm.ToValue(false)
+		}
+		node := b.getGoNode(nodeArg.ToObject(vm))
+		if node == nil {
+			return vm.ToValue(false)
+		}
+		offset := int(call.Arguments[1].ToInteger())
+		return vm.ToValue(r.IsPointInRange(node, offset))
+	})
+
+	jsRange.Set("comparePoint", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			panic(vm.NewTypeError("Failed to execute 'comparePoint' on 'Range': 2 arguments required."))
+		}
+		nodeArg := call.Arguments[0]
+		if goja.IsNull(nodeArg) || goja.IsUndefined(nodeArg) {
+			panic(vm.NewTypeError("Failed to execute 'comparePoint' on 'Range': parameter 1 is not of type 'Node'."))
+		}
+		node := b.getGoNode(nodeArg.ToObject(vm))
+		if node == nil {
+			panic(vm.NewTypeError("Failed to execute 'comparePoint' on 'Range': parameter 1 is not of type 'Node'."))
+		}
+		offset := int(call.Arguments[1].ToInteger())
+		result, err := r.ComparePoint(node, offset)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("WrongDocumentError", err.Error()))
+		}
+		return vm.ToValue(result)
+	})
+
+	jsRange.Set("intersectsNode", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'intersectsNode' on 'Range': 1 argument required."))
+		}
+		nodeArg := call.Arguments[0]
+		if goja.IsNull(nodeArg) || goja.IsUndefined(nodeArg) {
+			return vm.ToValue(false)
+		}
+		node := b.getGoNode(nodeArg.ToObject(vm))
+		if node == nil {
+			return vm.ToValue(false)
+		}
+		return vm.ToValue(r.IntersectsNode(node))
+	})
+
+	// Cache the binding
+	b.rangeCache[r] = jsRange
+
+	return jsRange
+}
+
+// getGoRange extracts the Go Range from a JavaScript object.
+func (b *DOMBinder) getGoRange(obj *goja.Object) *dom.Range {
+	if obj == nil {
+		return nil
+	}
+	goRange := obj.Get("_goRange")
+	if goRange == nil || goja.IsUndefined(goRange) || goja.IsNull(goRange) {
+		return nil
+	}
+	if r, ok := goRange.Export().(*dom.Range); ok {
+		return r
+	}
+	return nil
 }
 
 // bindNodeProperties adds common Node interface properties and methods to a JS object.

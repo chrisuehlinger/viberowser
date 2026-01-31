@@ -1979,3 +1979,320 @@ func TestHTMLElementTypeConstructors(t *testing.T) {
 		}
 	}
 }
+
+func TestDOMBinderRange(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc := dom.NewDocument()
+	binder.BindDocument(doc)
+
+	// Create a document structure
+	_, err := r.Execute(`
+		var div = document.createElement('div');
+		document.documentElement = div;
+		var text = document.createTextNode('Hello World');
+		div.appendChild(text);
+	`)
+	if err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+
+	// Test createRange
+	result, err := r.Execute("typeof document.createRange")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "function" {
+		t.Errorf("Expected 'function', got %v", result.String())
+	}
+
+	// Create a range
+	_, err = r.Execute("var range = document.createRange()")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Test Range instanceof
+	result, err = r.Execute("range instanceof Range")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("range should be instanceof Range")
+	}
+
+	// Test Range constants
+	tests := []struct {
+		code     string
+		expected int64
+	}{
+		{"Range.START_TO_START", 0},
+		{"Range.START_TO_END", 1},
+		{"Range.END_TO_END", 2},
+		{"Range.END_TO_START", 3},
+		{"range.START_TO_START", 0},
+		{"range.START_TO_END", 1},
+		{"range.END_TO_END", 2},
+		{"range.END_TO_START", 3},
+	}
+
+	for _, tt := range tests {
+		result, err := r.Execute(tt.code)
+		if err != nil {
+			t.Errorf("%s: error: %v", tt.code, err)
+			continue
+		}
+		if result.ToInteger() != tt.expected {
+			t.Errorf("%s: expected %d, got %d", tt.code, tt.expected, result.ToInteger())
+		}
+	}
+
+	// Test collapsed property on new range
+	result, err = r.Execute("range.collapsed")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("New range should be collapsed")
+	}
+}
+
+func TestDOMBinderRangeSetStartEnd(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc := dom.NewDocument()
+	binder.BindDocument(doc)
+
+	// Setup
+	_, err := r.Execute(`
+		var div = document.createElement('div');
+		var text = document.createTextNode('Hello World');
+		div.appendChild(text);
+		var range = document.createRange();
+	`)
+	if err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+
+	// Set start and end
+	_, err = r.Execute(`
+		range.setStart(text, 0);
+		range.setEnd(text, 5);
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Test startOffset
+	result, err := r.Execute("range.startOffset")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 0 {
+		t.Errorf("Expected startOffset 0, got %d", result.ToInteger())
+	}
+
+	// Test endOffset
+	result, err = r.Execute("range.endOffset")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 5 {
+		t.Errorf("Expected endOffset 5, got %d", result.ToInteger())
+	}
+
+	// Test collapsed is false
+	result, err = r.Execute("range.collapsed")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToBoolean() {
+		t.Error("Range should not be collapsed")
+	}
+
+	// Test toString
+	result, err = r.Execute("range.toString()")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "Hello" {
+		t.Errorf("Expected 'Hello', got '%s'", result.String())
+	}
+}
+
+func TestDOMBinderRangeCollapse(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc := dom.NewDocument()
+	binder.BindDocument(doc)
+
+	// Setup
+	_, err := r.Execute(`
+		var div = document.createElement('div');
+		var text = document.createTextNode('Hello');
+		div.appendChild(text);
+		var range = document.createRange();
+		range.setStart(text, 0);
+		range.setEnd(text, 5);
+	`)
+	if err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+
+	// Collapse to start
+	_, err = r.Execute("range.collapse(true)")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	result, err := r.Execute("range.collapsed")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Range should be collapsed")
+	}
+
+	result, err = r.Execute("range.endOffset")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 0 {
+		t.Errorf("Expected endOffset 0 after collapse to start, got %d", result.ToInteger())
+	}
+}
+
+func TestDOMBinderRangeCloneRange(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc := dom.NewDocument()
+	binder.BindDocument(doc)
+
+	// Setup
+	_, err := r.Execute(`
+		var div = document.createElement('div');
+		var text = document.createTextNode('Hello');
+		div.appendChild(text);
+		var range = document.createRange();
+		range.setStart(text, 1);
+		range.setEnd(text, 4);
+		var clone = range.cloneRange();
+	`)
+	if err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+
+	// Test clone has same offsets
+	result, err := r.Execute("clone.startOffset")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 1 {
+		t.Errorf("Expected startOffset 1, got %d", result.ToInteger())
+	}
+
+	result, err = r.Execute("clone.endOffset")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 4 {
+		t.Errorf("Expected endOffset 4, got %d", result.ToInteger())
+	}
+
+	// Test clone is independent
+	_, err = r.Execute("range.setStart(text, 0)")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	result, err = r.Execute("clone.startOffset")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 1 {
+		t.Errorf("Clone should be independent, expected startOffset 1, got %d", result.ToInteger())
+	}
+}
+
+func TestDOMBinderRangeExtractContents(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc := dom.NewDocument()
+	binder.BindDocument(doc)
+
+	// Setup
+	_, err := r.Execute(`
+		var div = document.createElement('div');
+		var text = document.createTextNode('Hello World');
+		div.appendChild(text);
+		var range = document.createRange();
+		range.setStart(text, 0);
+		range.setEnd(text, 5);
+		var frag = range.extractContents();
+	`)
+	if err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+
+	// Test fragment is DocumentFragment
+	result, err := r.Execute("frag instanceof DocumentFragment")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("extractContents should return a DocumentFragment")
+	}
+
+	// Test original text was modified
+	result, err = r.Execute("text.nodeValue")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != " World" {
+		t.Errorf("Expected ' World', got '%s'", result.String())
+	}
+}
+
+func TestDOMBinderRangeCreateContextualFragment(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc := dom.NewDocument()
+	binder.BindDocument(doc)
+
+	// Setup
+	_, err := r.Execute(`
+		var div = document.createElement('div');
+		var text = document.createTextNode('Test');
+		div.appendChild(text);
+		var range = document.createRange();
+		range.setStart(text, 0);
+		var frag = range.createContextualFragment('<span>New Content</span>');
+	`)
+	if err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+
+	// Test fragment is DocumentFragment
+	result, err := r.Execute("frag instanceof DocumentFragment")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("createContextualFragment should return a DocumentFragment")
+	}
+
+	// Test fragment has content
+	result, err = r.Execute("frag.firstChild.tagName")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "SPAN" {
+		t.Errorf("Expected 'SPAN', got '%s'", result.String())
+	}
+}

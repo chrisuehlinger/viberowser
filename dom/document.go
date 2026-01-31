@@ -1143,3 +1143,8 @@ func ParseXHTML(xhtmlContent string) (*Document, error) {
 
 	return doc, nil
 }
+
+// CreateRange creates a new Range with both boundary points set to the beginning of the document.
+func (d *Document) CreateRange() *Range {
+	return NewRange(d)
+}
