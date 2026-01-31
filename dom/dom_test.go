@@ -174,7 +174,9 @@ func TestElement_ClassList(t *testing.T) {
 
 	classList := el.ClassList()
 
-	classList.Add("foo", "bar", "baz")
+	if err := classList.Add("foo", "bar", "baz"); err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
 	if !classList.Contains("foo") {
 		t.Error("Expected classList to contain 'foo'")
 	}
@@ -185,12 +187,17 @@ func TestElement_ClassList(t *testing.T) {
 		t.Errorf("Expected 3 classes, got %d", classList.Length())
 	}
 
-	classList.Remove("bar")
+	if err := classList.Remove("bar"); err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
 	if classList.Contains("bar") {
 		t.Error("Expected classList not to contain 'bar' after removal")
 	}
 
-	result := classList.Toggle("qux")
+	result, err := classList.Toggle("qux")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
 	if !result {
 		t.Error("Expected toggle to return true when adding")
 	}
@@ -198,7 +205,10 @@ func TestElement_ClassList(t *testing.T) {
 		t.Error("Expected classList to contain 'qux'")
 	}
 
-	result = classList.Toggle("qux")
+	result, err = classList.Toggle("qux")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
 	if result {
 		t.Error("Expected toggle to return false when removing")
 	}
@@ -207,8 +217,10 @@ func TestElement_ClassList(t *testing.T) {
 	}
 
 	// Test Replace
-	classList.Add("old")
-	if !classList.Replace("old", "new") {
+	if err := classList.Add("old"); err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if replaced, _ := classList.Replace("old", "new"); !replaced {
 		t.Error("Expected Replace to return true")
 	}
 	if classList.Contains("old") {
@@ -216,6 +228,43 @@ func TestElement_ClassList(t *testing.T) {
 	}
 	if !classList.Contains("new") {
 		t.Error("Expected classList to contain 'new' after replace")
+	}
+
+	// Test validation errors
+	// Empty string should throw SyntaxError
+	if err := classList.Add(""); err == nil {
+		t.Error("Expected error for empty token")
+	} else if err.Type != "SyntaxError" {
+		t.Errorf("Expected SyntaxError, got %s", err.Type)
+	}
+
+	// Whitespace should throw InvalidCharacterError
+	if err := classList.Add("foo bar"); err == nil {
+		t.Error("Expected error for token with whitespace")
+	} else if err.Type != "InvalidCharacterError" {
+		t.Errorf("Expected InvalidCharacterError, got %s", err.Type)
+	}
+
+	// Tab should throw InvalidCharacterError
+	if err := classList.Add("foo\tbar"); err == nil {
+		t.Error("Expected error for token with tab")
+	} else if err.Type != "InvalidCharacterError" {
+		t.Errorf("Expected InvalidCharacterError, got %s", err.Type)
+	}
+
+	// Toggle empty should throw SyntaxError
+	if _, err := classList.Toggle(""); err == nil {
+		t.Error("Expected error for empty token in toggle")
+	} else if err.Type != "SyntaxError" {
+		t.Errorf("Expected SyntaxError, got %s", err.Type)
+	}
+
+	// Contains returns false for invalid tokens (per spec, no error)
+	if classList.Contains("") {
+		t.Error("Expected contains to return false for empty token")
+	}
+	if classList.Contains(" ") {
+		t.Error("Expected contains to return false for whitespace token")
 	}
 }
 

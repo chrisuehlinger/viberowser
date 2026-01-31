@@ -137,6 +137,7 @@ type DOMBinder struct {
 	styleDeclarationCache        map[*dom.CSSStyleDeclaration]*goja.Object
 	htmlCollectionMap            map[*goja.Object]*dom.HTMLCollection
 	nodeListCache                map[*dom.NodeList]*goja.Object
+	domTokenListCache            map[*dom.DOMTokenList]*goja.Object
 }
 
 // NewDOMBinder creates a new DOM binder for the given runtime.
@@ -149,6 +150,7 @@ func NewDOMBinder(runtime *Runtime) *DOMBinder {
 		htmlCollectionMap:      make(map[*goja.Object]*dom.HTMLCollection),
 		htmlElementProtoMap:    make(map[string]*goja.Object),
 		nodeListCache:          make(map[*dom.NodeList]*goja.Object),
+		domTokenListCache:      make(map[*dom.DOMTokenList]*goja.Object),
 	}
 	b.setupPrototypes()
 	return b
@@ -1486,7 +1488,13 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 
 	jsEl.DefineAccessorProperty("classList", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		return b.BindDOMTokenList(el.ClassList())
-	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Per spec, assigning to classList sets the class attribute value
+		if len(call.Arguments) > 0 {
+			el.SetClassName(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	jsEl.DefineAccessorProperty("style", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		return b.BindCSSStyleDeclaration(el.Style())
@@ -3851,7 +3859,13 @@ func (b *DOMBinder) BindHTMLCollection(collection *dom.HTMLCollection) *goja.Obj
 }
 
 // BindDOMTokenList creates a JavaScript DOMTokenList object with dynamic numeric indexing.
+// The binding is cached so that the same JS object is returned for the same DOMTokenList.
 func (b *DOMBinder) BindDOMTokenList(tokenList *dom.DOMTokenList) *goja.Object {
+	// Check cache first
+	if cached, ok := b.domTokenListCache[tokenList]; ok {
+		return cached
+	}
+
 	vm := b.runtime.vm
 	jsList := vm.NewObject()
 
@@ -3889,15 +3903,23 @@ func (b *DOMBinder) BindDOMTokenList(tokenList *dom.DOMTokenList) *goja.Object {
 	})
 
 	jsList.Set("add", func(call goja.FunctionCall) goja.Value {
-		for _, arg := range call.Arguments {
-			tokenList.Add(arg.String())
+		tokens := make([]string, len(call.Arguments))
+		for i, arg := range call.Arguments {
+			tokens[i] = arg.String()
+		}
+		if err := tokenList.Add(tokens...); err != nil {
+			panic(b.createDOMException(err.Type, err.Message))
 		}
 		return goja.Undefined()
 	})
 
 	jsList.Set("remove", func(call goja.FunctionCall) goja.Value {
-		for _, arg := range call.Arguments {
-			tokenList.Remove(arg.String())
+		tokens := make([]string, len(call.Arguments))
+		for i, arg := range call.Arguments {
+			tokens[i] = arg.String()
+		}
+		if err := tokenList.Remove(tokens...); err != nil {
+			panic(b.createDOMException(err.Type, err.Message))
 		}
 		return goja.Undefined()
 	})
@@ -3907,11 +3929,18 @@ func (b *DOMBinder) BindDOMTokenList(tokenList *dom.DOMTokenList) *goja.Object {
 			return vm.ToValue(false)
 		}
 		token := call.Arguments[0].String()
+		var result bool
+		var err *dom.TokenValidationError
 		if len(call.Arguments) > 1 {
 			force := call.Arguments[1].ToBoolean()
-			return vm.ToValue(tokenList.Toggle(token, force))
+			result, err = tokenList.Toggle(token, force)
+		} else {
+			result, err = tokenList.Toggle(token)
 		}
-		return vm.ToValue(tokenList.Toggle(token))
+		if err != nil {
+			panic(b.createDOMException(err.Type, err.Message))
+		}
+		return vm.ToValue(result)
 	})
 
 	jsList.Set("replace", func(call goja.FunctionCall) goja.Value {
@@ -3920,7 +3949,11 @@ func (b *DOMBinder) BindDOMTokenList(tokenList *dom.DOMTokenList) *goja.Object {
 		}
 		oldToken := call.Arguments[0].String()
 		newToken := call.Arguments[1].String()
-		return vm.ToValue(tokenList.Replace(oldToken, newToken))
+		result, err := tokenList.Replace(oldToken, newToken)
+		if err != nil {
+			panic(b.createDOMException(err.Type, err.Message))
+		}
+		return vm.ToValue(result)
 	})
 
 	jsList.Set("supports", func(call goja.FunctionCall) goja.Value {
@@ -3974,6 +4007,9 @@ func (b *DOMBinder) BindDOMTokenList(tokenList *dom.DOMTokenList) *goja.Object {
 
 	// Get the proxy object
 	proxyObj := vm.ToValue(proxy).ToObject(vm)
+
+	// Cache the binding
+	b.domTokenListCache[tokenList] = proxyObj
 
 	return proxyObj
 }
