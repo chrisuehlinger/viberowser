@@ -58,7 +58,11 @@ func (df *DocumentFragment) LastElementChild() *Element {
 }
 
 // GetElementById returns the element with the given id.
+// Per spec, an empty string id always returns nil.
 func (df *DocumentFragment) GetElementById(id string) *Element {
+	if id == "" {
+		return nil
+	}
 	return df.findElementById(df.AsNode(), id)
 }
 

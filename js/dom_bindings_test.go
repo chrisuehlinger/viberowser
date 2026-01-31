@@ -1032,6 +1032,33 @@ func TestDocumentFragmentGetElementById(t *testing.T) {
 	if !result.ToBoolean() {
 		t.Errorf("Expected null for non-existent ID")
 	}
+
+	// Test empty string ID returns null (per spec)
+	result, err = r.Execute("frag.getElementById('') === null")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Errorf("Expected null for empty string ID")
+	}
+
+	// Test that getElementById exists on the prototype
+	result, err = r.Execute("typeof DocumentFragment.prototype.getElementById")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "function" {
+		t.Errorf("Expected DocumentFragment.prototype.getElementById to be a function, got %v", result.String())
+	}
+
+	// Test that getElementById can be called via prototype
+	result, err = r.Execute("DocumentFragment.prototype.getElementById.call(frag, 'myDiv') === frag.getElementById('myDiv')")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Errorf("Expected prototype method to work when called with call()")
+	}
 }
 
 func TestDOMImplementation(t *testing.T) {

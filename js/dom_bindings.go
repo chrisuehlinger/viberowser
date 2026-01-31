@@ -463,6 +463,9 @@ func (b *DOMBinder) setupPrototypes() {
 	b.documentFragmentProto.Set("constructor", docFragConstructorObj)
 	vm.Set("DocumentFragment", docFragConstructorObj)
 
+	// Add DocumentFragment prototype methods
+	b.setupDocumentFragmentPrototypeMethods()
+
 	// Create DOMImplementation prototype
 	b.domImplementationProto = vm.NewObject()
 	domImplConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
@@ -4259,18 +4262,8 @@ func (b *DOMBinder) BindDocumentFragment(frag *dom.DocumentFragment) *goja.Objec
 		return goja.Undefined()
 	})
 
-	// getElementById - search for element by ID within the fragment
-	jsFrag.Set("getElementById", func(call goja.FunctionCall) goja.Value {
-		if len(call.Arguments) < 1 {
-			return goja.Null()
-		}
-		id := call.Arguments[0].String()
-		el := frag.GetElementById(id)
-		if el == nil {
-			return goja.Null()
-		}
-		return b.BindElement(el)
-	})
+	// getElementById is now on the prototype (setupDocumentFragmentPrototypeMethods)
+	// but we keep an instance method for efficiency since it can directly access frag
 
 	// textContent - like Element, returns concatenated text and allows setting
 	jsFrag.DefineAccessorProperty("textContent", vm.ToValue(func(call goja.FunctionCall) goja.Value {
@@ -5802,6 +5795,89 @@ func (b *DOMBinder) setupNodePrototypeMethods() {
 			return goja.Null()
 		}
 		return vm.ToValue(result)
+	})
+}
+
+// setupDocumentFragmentPrototypeMethods adds methods to DocumentFragment.prototype.
+// This ensures that DocumentFragment.prototype.getElementById exists as a function,
+// which is required by WPT tests like dom/nodes/DocumentFragment-getElementById.html.
+func (b *DOMBinder) setupDocumentFragmentPrototypeMethods() {
+	vm := b.runtime.vm
+
+	// getElementById - gets the fragment from 'this' and searches for element by ID
+	b.documentFragmentProto.Set("getElementById", func(call goja.FunctionCall) goja.Value {
+		thisObj := call.This.ToObject(vm)
+
+		// Get the DocumentFragment from the JS object
+		fragVal := thisObj.Get("_goFragment")
+		if fragVal == nil || goja.IsUndefined(fragVal) || goja.IsNull(fragVal) {
+			panic(vm.NewTypeError("Illegal invocation"))
+		}
+		frag, ok := fragVal.Export().(*dom.DocumentFragment)
+		if !ok || frag == nil {
+			panic(vm.NewTypeError("Illegal invocation"))
+		}
+
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		id := call.Arguments[0].String()
+
+		// Per spec, empty string ID returns null
+		if id == "" {
+			return goja.Null()
+		}
+
+		el := frag.GetElementById(id)
+		if el == nil {
+			return goja.Null()
+		}
+		return b.BindElement(el)
+	})
+
+	// querySelector - prototype method
+	b.documentFragmentProto.Set("querySelector", func(call goja.FunctionCall) goja.Value {
+		thisObj := call.This.ToObject(vm)
+
+		fragVal := thisObj.Get("_goFragment")
+		if fragVal == nil || goja.IsUndefined(fragVal) || goja.IsNull(fragVal) {
+			panic(vm.NewTypeError("Illegal invocation"))
+		}
+		frag, ok := fragVal.Export().(*dom.DocumentFragment)
+		if !ok || frag == nil {
+			panic(vm.NewTypeError("Illegal invocation"))
+		}
+
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		selector := call.Arguments[0].String()
+		el := frag.QuerySelector(selector)
+		if el == nil {
+			return goja.Null()
+		}
+		return b.BindElement(el)
+	})
+
+	// querySelectorAll - prototype method
+	b.documentFragmentProto.Set("querySelectorAll", func(call goja.FunctionCall) goja.Value {
+		thisObj := call.This.ToObject(vm)
+
+		fragVal := thisObj.Get("_goFragment")
+		if fragVal == nil || goja.IsUndefined(fragVal) || goja.IsNull(fragVal) {
+			panic(vm.NewTypeError("Illegal invocation"))
+		}
+		frag, ok := fragVal.Export().(*dom.DocumentFragment)
+		if !ok || frag == nil {
+			panic(vm.NewTypeError("Illegal invocation"))
+		}
+
+		if len(call.Arguments) < 1 {
+			return b.createEmptyNodeList()
+		}
+		selector := call.Arguments[0].String()
+		nodeList := frag.QuerySelectorAll(selector)
+		return b.bindStaticNodeList(nodeList.ToSlice())
 	})
 }
 
