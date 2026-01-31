@@ -4735,7 +4735,9 @@ func (b *DOMBinder) bindCharacterDataMethods(jsNode *goja.Object, node *dom.Node
 		}
 
 		// Build result: before + after
-		newUnits := make([]uint16, 0, len(currentUnits)-int(count))
+		// Calculate actual deletion size (end - offset, which is clamped)
+		actualDeleteCount := end - int(offset)
+		newUnits := make([]uint16, 0, len(currentUnits)-actualDeleteCount)
 		newUnits = append(newUnits, currentUnits[:offset]...)
 		newUnits = append(newUnits, currentUnits[end:]...)
 
@@ -4768,7 +4770,9 @@ func (b *DOMBinder) bindCharacterDataMethods(jsNode *goja.Object, node *dom.Node
 		}
 
 		// Build result: before + replacement + after
-		newUnits := make([]uint16, 0, len(currentUnits)-int(count)+len(replaceUnits))
+		// Calculate actual deletion size (end - offset, which is clamped)
+		actualDeleteCount := end - int(offset)
+		newUnits := make([]uint16, 0, len(currentUnits)-actualDeleteCount+len(replaceUnits))
 		newUnits = append(newUnits, currentUnits[:offset]...)
 		newUnits = append(newUnits, replaceUnits...)
 		newUnits = append(newUnits, currentUnits[end:]...)
