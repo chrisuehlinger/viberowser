@@ -196,6 +196,43 @@ func asciiLowercase(s string) string {
 	return string(result)
 }
 
+// querySelectorWithContext finds the first descendant element matching a selector with context.
+// This is used for scoped queries where :scope should match the element querySelector was called on.
+func querySelectorWithContext(root *dom.Node, selector *css.CSSSelector, ctx *css.MatchContext, firstOnly bool) *dom.Element {
+	// Traverse descendants
+	for child := root.FirstChild(); child != nil; child = child.NextSibling() {
+		if child.NodeType() == dom.ElementNode {
+			el := (*dom.Element)(child)
+			if selector.MatchElementWithContext(el, ctx) {
+				return el
+			}
+			if result := querySelectorWithContext(child, selector, ctx, firstOnly); result != nil {
+				return result
+			}
+		}
+	}
+	return nil
+}
+
+// querySelectorAllWithContext finds all descendant elements matching a selector with context.
+func querySelectorAllWithContext(root *dom.Node, selector *css.CSSSelector, ctx *css.MatchContext) []*dom.Element {
+	var results []*dom.Element
+	querySelectorAllWithContextHelper(root, selector, ctx, &results)
+	return results
+}
+
+func querySelectorAllWithContextHelper(root *dom.Node, selector *css.CSSSelector, ctx *css.MatchContext, results *[]*dom.Element) {
+	for child := root.FirstChild(); child != nil; child = child.NextSibling() {
+		if child.NodeType() == dom.ElementNode {
+			el := (*dom.Element)(child)
+			if selector.MatchElementWithContext(el, ctx) {
+				*results = append(*results, el)
+			}
+			querySelectorAllWithContextHelper(child, selector, ctx, results)
+		}
+	}
+}
+
 // domExceptionCode returns the legacy exception code for a DOMException name.
 func domExceptionCode(name string) int {
 	codes := map[string]int{
@@ -1608,21 +1645,58 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 		if len(call.Arguments) < 1 {
 			return goja.Null()
 		}
-		selector := call.Arguments[0].String()
-		el := doc.QuerySelector(selector)
-		if el == nil {
+		selectorStr := call.Arguments[0].String()
+		parsed, err := css.ParseSelector(selectorStr)
+		if err != nil {
 			return goja.Null()
 		}
-		return b.BindElement(el)
+		// For document queries, :scope matches the document root
+		ctx := &css.MatchContext{ScopeElement: nil}
+		// Search from document element
+		docEl := doc.DocumentElement()
+		if docEl == nil {
+			return goja.Null()
+		}
+		// Check document element itself
+		if parsed.MatchElementWithContext(docEl, ctx) {
+			return b.BindElement(docEl)
+		}
+		found := querySelectorWithContext(docEl.AsNode(), parsed, ctx, true)
+		if found == nil {
+			return goja.Null()
+		}
+		return b.BindElement(found)
 	})
 
 	jsDoc.Set("querySelectorAll", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
 			return b.createEmptyNodeList()
 		}
-		selector := call.Arguments[0].String()
-		nodeList := doc.QuerySelectorAll(selector)
-		return b.BindNodeList(nodeList)
+		selectorStr := call.Arguments[0].String()
+		parsed, err := css.ParseSelector(selectorStr)
+		if err != nil {
+			return b.createEmptyNodeList()
+		}
+		// For document queries, :scope matches the document root
+		ctx := &css.MatchContext{ScopeElement: nil}
+		// Search from document element
+		docEl := doc.DocumentElement()
+		if docEl == nil {
+			return b.createEmptyNodeList()
+		}
+		var results []*dom.Element
+		// Check document element itself
+		if parsed.MatchElementWithContext(docEl, ctx) {
+			results = append(results, docEl)
+		}
+		// Get descendant matches
+		descendantResults := querySelectorAllWithContext(docEl.AsNode(), parsed, ctx)
+		results = append(results, descendantResults...)
+		nodes := make([]*dom.Node, len(results))
+		for i, result := range results {
+			nodes[i] = result.AsNode()
+		}
+		return b.BindNodeList(dom.NewStaticNodeList(nodes))
 	})
 
 	jsDoc.Set("createElement", func(call goja.FunctionCall) goja.Value {
@@ -2132,21 +2206,58 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 		if len(call.Arguments) < 1 {
 			return goja.Null()
 		}
-		selector := call.Arguments[0].String()
-		el := doc.QuerySelector(selector)
-		if el == nil {
+		selectorStr := call.Arguments[0].String()
+		parsed, err := css.ParseSelector(selectorStr)
+		if err != nil {
 			return goja.Null()
 		}
-		return b.BindElement(el)
+		// For document queries, :scope matches the document root
+		ctx := &css.MatchContext{ScopeElement: nil}
+		// Search from document element
+		docEl := doc.DocumentElement()
+		if docEl == nil {
+			return goja.Null()
+		}
+		// Check document element itself
+		if parsed.MatchElementWithContext(docEl, ctx) {
+			return b.BindElement(docEl)
+		}
+		found := querySelectorWithContext(docEl.AsNode(), parsed, ctx, true)
+		if found == nil {
+			return goja.Null()
+		}
+		return b.BindElement(found)
 	})
 
 	jsDoc.Set("querySelectorAll", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
 			return b.createEmptyNodeList()
 		}
-		selector := call.Arguments[0].String()
-		nodeList := doc.QuerySelectorAll(selector)
-		return b.BindNodeList(nodeList)
+		selectorStr := call.Arguments[0].String()
+		parsed, err := css.ParseSelector(selectorStr)
+		if err != nil {
+			return b.createEmptyNodeList()
+		}
+		// For document queries, :scope matches the document root
+		ctx := &css.MatchContext{ScopeElement: nil}
+		// Search from document element
+		docEl := doc.DocumentElement()
+		if docEl == nil {
+			return b.createEmptyNodeList()
+		}
+		var results []*dom.Element
+		// Check document element itself
+		if parsed.MatchElementWithContext(docEl, ctx) {
+			results = append(results, docEl)
+		}
+		// Get descendant matches
+		descendantResults := querySelectorAllWithContext(docEl.AsNode(), parsed, ctx)
+		results = append(results, descendantResults...)
+		nodes := make([]*dom.Node, len(results))
+		for i, result := range results {
+			nodes[i] = result.AsNode()
+		}
+		return b.BindNodeList(dom.NewStaticNodeList(nodes))
 	})
 
 	jsDoc.Set("createElement", func(call goja.FunctionCall) goja.Value {
@@ -2966,13 +3077,19 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		return b.BindAttr(removedAttr)
 	})
 
-	// Query methods
+	// Query methods - use CSS matcher with scope context for proper :scope support
 	jsEl.Set("querySelector", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
 			return goja.Null()
 		}
-		selector := call.Arguments[0].String()
-		found := el.QuerySelector(selector)
+		selectorStr := call.Arguments[0].String()
+		parsed, err := css.ParseSelector(selectorStr)
+		if err != nil {
+			return goja.Null()
+		}
+		// Create scope context pointing to the element querySelector was called on
+		ctx := &css.MatchContext{ScopeElement: el}
+		found := querySelectorWithContext(el.AsNode(), parsed, ctx, true)
 		if found == nil {
 			return goja.Null()
 		}
@@ -2983,9 +3100,19 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		if len(call.Arguments) < 1 {
 			return b.createEmptyNodeList()
 		}
-		selector := call.Arguments[0].String()
-		nodeList := el.QuerySelectorAll(selector)
-		return b.BindNodeList(nodeList)
+		selectorStr := call.Arguments[0].String()
+		parsed, err := css.ParseSelector(selectorStr)
+		if err != nil {
+			return b.createEmptyNodeList()
+		}
+		// Create scope context pointing to the element querySelectorAll was called on
+		ctx := &css.MatchContext{ScopeElement: el}
+		results := querySelectorAllWithContext(el.AsNode(), parsed, ctx)
+		nodes := make([]*dom.Node, len(results))
+		for i, result := range results {
+			nodes[i] = result.AsNode()
+		}
+		return b.BindNodeList(dom.NewStaticNodeList(nodes))
 	})
 
 	jsEl.Set("getElementsByTagName", func(call goja.FunctionCall) goja.Value {
@@ -3080,7 +3207,7 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		return b.BindShadowRoot(sr)
 	})
 
-	jsEl.Set("matches", func(call goja.FunctionCall) goja.Value {
+	matchesFunc := func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
 			return vm.ToValue(false)
 		}
@@ -3093,7 +3220,9 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		// For matches(), scope is the element itself
 		ctx := &css.MatchContext{ScopeElement: el}
 		return vm.ToValue(parsed.MatchElementWithContext(el, ctx))
-	})
+	}
+	jsEl.Set("matches", matchesFunc)
+	jsEl.Set("webkitMatchesSelector", matchesFunc)
 
 	jsEl.Set("closest", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
