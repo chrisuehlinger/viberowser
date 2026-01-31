@@ -4401,8 +4401,6 @@ func (b *DOMBinder) BindTextNode(node *dom.Node, proto *goja.Object) *goja.Objec
 		return utf16ToGojaValue(vm, stringToUTF16(node.NodeValue()))
 	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) > 0 {
-			oldUnits := stringToUTF16(node.NodeValue())
-			oldLength := len(oldUnits)
 			var newValue string
 			if goja.IsNull(call.Arguments[0]) {
 				newValue = ""
@@ -4410,8 +4408,7 @@ func (b *DOMBinder) BindTextNode(node *dom.Node, proto *goja.Object) *goja.Objec
 				units := gojaValueToUTF16(call.Arguments[0])
 				newValue = utf16ToString(units)
 			}
-			// Notify ReplaceData: full data replacement is replaceData(0, oldLength, newValue)
-			dom.NotifyReplaceData(node, 0, oldLength, newValue)
+			// SetNodeValue handles NotifyReplaceData and notifyCharacterDataMutation internally
 			node.SetNodeValue(newValue)
 		}
 		return goja.Undefined()
@@ -4422,8 +4419,6 @@ func (b *DOMBinder) BindTextNode(node *dom.Node, proto *goja.Object) *goja.Objec
 		return utf16ToGojaValue(vm, stringToUTF16(node.NodeValue()))
 	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) > 0 {
-			oldUnits := stringToUTF16(node.NodeValue())
-			oldLength := len(oldUnits)
 			var newValue string
 			if goja.IsNull(call.Arguments[0]) {
 				newValue = ""
@@ -4431,8 +4426,7 @@ func (b *DOMBinder) BindTextNode(node *dom.Node, proto *goja.Object) *goja.Objec
 				units := gojaValueToUTF16(call.Arguments[0])
 				newValue = utf16ToString(units)
 			}
-			// Notify ReplaceData: full data replacement is replaceData(0, oldLength, newValue)
-			dom.NotifyReplaceData(node, 0, oldLength, newValue)
+			// SetNodeValue handles NotifyReplaceData and notifyCharacterDataMutation internally
 			node.SetNodeValue(newValue)
 		}
 		return goja.Undefined()
@@ -4442,14 +4436,11 @@ func (b *DOMBinder) BindTextNode(node *dom.Node, proto *goja.Object) *goja.Objec
 		return vm.ToValue(node.TextContent())
 	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) > 0 {
-			oldUnits := stringToUTF16(node.NodeValue())
-			oldLength := len(oldUnits)
 			val := ""
 			if !goja.IsNull(call.Arguments[0]) {
 				val = call.Arguments[0].String()
 			}
-			// Notify ReplaceData: full data replacement is replaceData(0, oldLength, newValue)
-			dom.NotifyReplaceData(node, 0, oldLength, val)
+			// SetTextContent eventually calls SetNodeValue which handles notifications
 			node.SetTextContent(val)
 		}
 		return goja.Undefined()

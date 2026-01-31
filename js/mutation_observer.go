@@ -91,20 +91,19 @@ func (m *MutationObserverManager) OnCharacterDataMutation(
 }
 
 // OnReplaceData handles the "replace data" algorithm notification.
-// For MutationObserver purposes, this is treated the same as a character data mutation.
+// This is used for Range boundary point adjustments, NOT for MutationObserver.
+// MutationObserver notifications are handled separately via OnCharacterDataMutation
+// which receives the correct oldValue.
 func (m *MutationObserverManager) OnReplaceData(
 	target *dom.Node,
 	offset int,
 	count int,
 	data string,
 ) {
-	// MutationObserver doesn't care about the specific offset/count/data -
-	// it just needs to know that character data changed.
-	// Get the current value to pass as "oldValue" (though it's actually the new value
-	// at this point since the DOM was already updated).
-	// Note: For proper MutationObserver support, we might need the old value,
-	// but for now we just notify that a change occurred.
-	m.NotifyCharacterDataMutation(target, target.NodeValue())
+	// No-op for MutationObserver purposes.
+	// The OnCharacterDataMutation callback (called separately by the DOM layer)
+	// handles MutationObserver notifications with the correct oldValue.
+	// OnReplaceData is only used by RangeMutationHandler for boundary updates.
 }
 
 // Register adds an observer to the manager.
