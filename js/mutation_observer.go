@@ -106,6 +106,19 @@ func (m *MutationObserverManager) OnReplaceData(
 	// OnReplaceData is only used by RangeMutationHandler for boundary updates.
 }
 
+// OnSplitText handles the splitText algorithm notification.
+// This is used for Range boundary point adjustments, NOT for MutationObserver.
+// MutationObserver handles splitText through the childList mutation (insertion)
+// and characterData mutation (truncation).
+func (m *MutationObserverManager) OnSplitText(
+	oldNode *dom.Node,
+	splitOffset int,
+	newNode *dom.Node,
+) {
+	// No-op for MutationObserver purposes.
+	// OnSplitText is only used by RangeMutationHandler for boundary updates.
+}
+
 // Register adds an observer to the manager.
 func (m *MutationObserverManager) Register(observer *MutationObserver) {
 	m.mu.Lock()

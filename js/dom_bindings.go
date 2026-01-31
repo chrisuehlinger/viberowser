@@ -4484,7 +4484,18 @@ func (b *DOMBinder) BindTextNode(node *dom.Node, proto *goja.Object) *goja.Objec
 			newTextNode = dom.NewTextNode(newData)
 		}
 
-		// If this node has a parent, insert the new node after this node
+		// Per spec order:
+		// 1. Call "replace data" to truncate the old node (offset, count, "")
+		// 2. Insert the new node (if parent is not null)
+		// 3. Move range boundary points from old to new node
+
+		// Step 1: Notify replace data mutation before truncating
+		dom.NotifyReplaceData(node, int(offset), int(count), "")
+
+		// Truncate the current node's data at offset without triggering another notification
+		node.SetNodeValueRaw(utf16Substring(data, 0, int(offset)))
+
+		// Step 2 & 3: If this node has a parent, insert the new node and update ranges
 		if parent := node.ParentNode(); parent != nil {
 			nextSibling := node.NextSibling()
 			if nextSibling != nil {
@@ -4492,10 +4503,11 @@ func (b *DOMBinder) BindTextNode(node *dom.Node, proto *goja.Object) *goja.Objec
 			} else {
 				parent.AppendChild(newTextNode)
 			}
-		}
 
-		// Truncate the current node's data at offset
-		node.SetNodeValue(utf16Substring(data, 0, int(offset)))
+			// Step 3: Move range boundary points from old node to new node
+			// This must happen after the insertion
+			dom.NotifySplitText(node, int(offset), newTextNode)
+		}
 
 		return b.BindTextNode(newTextNode, nil)
 	})
@@ -5284,8 +5296,8 @@ func (b *DOMBinder) bindCharacterDataMethods(jsNode *goja.Object, node *dom.Node
 
 		// Concatenate
 		newUnits := append(currentUnits, appendUnits...)
-		// Store as WTF-8
-		node.SetNodeValue(utf16ToString(newUnits))
+		// Store as WTF-8 without triggering another notification
+		node.SetNodeValueRaw(utf16ToString(newUnits))
 		return goja.Undefined()
 	})
 
@@ -5315,7 +5327,8 @@ func (b *DOMBinder) bindCharacterDataMethods(jsNode *goja.Object, node *dom.Node
 		newUnits = append(newUnits, insertUnits...)
 		newUnits = append(newUnits, currentUnits[offset:]...)
 
-		node.SetNodeValue(utf16ToString(newUnits))
+		// Set value without triggering another notification
+		node.SetNodeValueRaw(utf16ToString(newUnits))
 		return goja.Undefined()
 	})
 
@@ -5353,7 +5366,8 @@ func (b *DOMBinder) bindCharacterDataMethods(jsNode *goja.Object, node *dom.Node
 		newUnits = append(newUnits, currentUnits[:offset]...)
 		newUnits = append(newUnits, currentUnits[end:]...)
 
-		node.SetNodeValue(utf16ToString(newUnits))
+		// Set value without triggering another notification
+		node.SetNodeValueRaw(utf16ToString(newUnits))
 		return goja.Undefined()
 	})
 
@@ -5393,7 +5407,8 @@ func (b *DOMBinder) bindCharacterDataMethods(jsNode *goja.Object, node *dom.Node
 		newUnits = append(newUnits, replaceUnits...)
 		newUnits = append(newUnits, currentUnits[end:]...)
 
-		node.SetNodeValue(utf16ToString(newUnits))
+		// Set value without triggering another notification
+		node.SetNodeValueRaw(utf16ToString(newUnits))
 		return goja.Undefined()
 	})
 }

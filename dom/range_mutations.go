@@ -176,6 +176,85 @@ func (h *rangeMutationHandler) OnReplaceData(
 	}
 }
 
+// OnSplitText handles the splitText algorithm for Text nodes.
+// Per DOM spec, when a Text node is split, Ranges that reference the old node
+// with offset > splitOffset should have their container moved to the new node.
+func (h *rangeMutationHandler) OnSplitText(
+	oldNode *Node,
+	splitOffset int,
+	newNode *Node,
+) {
+	registryMu.RLock()
+	registry := rangeRegistries[h.doc]
+	registryMu.RUnlock()
+
+	if registry == nil {
+		return
+	}
+
+	registry.mu.RLock()
+	ranges := make([]*Range, 0, len(registry.ranges))
+	for r := range registry.ranges {
+		ranges = append(ranges, r)
+	}
+	registry.mu.RUnlock()
+
+	for _, r := range ranges {
+		updateRangeForSplitText(r, oldNode, splitOffset, newNode)
+	}
+}
+
+// updateRangeForSplitText updates a Range's boundary points after a Text node is split.
+// Implements the DOM spec splitText algorithm for live ranges:
+// https://dom.spec.whatwg.org/#concept-text-split
+//
+// If parent is not null:
+// - For ranges whose start node is oldNode and start offset > splitOffset,
+//   set start node to newNode and decrease start offset by splitOffset.
+// - For ranges whose end node is oldNode and end offset > splitOffset,
+//   set end node to newNode and decrease end offset by splitOffset.
+// - For ranges whose start node is parent and start offset == index of oldNode + 1,
+//   increase start offset by one.
+// - For ranges whose end node is parent and end offset == index of oldNode + 1,
+//   increase end offset by one.
+func updateRangeForSplitText(r *Range, oldNode *Node, splitOffset int, newNode *Node) {
+	// Only apply if the old node has a parent
+	parent := oldNode.parentNode
+	if parent == nil {
+		return
+	}
+
+	// Get the index of oldNode in parent (before new node was inserted, old node
+	// was at its current index, new node is now at oldNode's index + 1)
+	oldNodeIndex := indexOfChild(parent, oldNode)
+
+	// Step: For ranges whose start node is parent and start offset == index of oldNode + 1,
+	// increase start offset by one.
+	if r.startContainer == parent && r.startOffset == oldNodeIndex+1 {
+		r.startOffset++
+	}
+
+	// Step: For ranges whose end node is parent and end offset == index of oldNode + 1,
+	// increase end offset by one.
+	if r.endContainer == parent && r.endOffset == oldNodeIndex+1 {
+		r.endOffset++
+	}
+
+	// Step: For ranges whose start node is oldNode and start offset > splitOffset,
+	// set start node to newNode and decrease start offset by splitOffset.
+	if r.startContainer == oldNode && r.startOffset > splitOffset {
+		r.startContainer = newNode
+		r.startOffset = r.startOffset - splitOffset
+	}
+
+	// Step: For ranges whose end node is oldNode and end offset > splitOffset,
+	// set end node to newNode and decrease end offset by splitOffset.
+	if r.endContainer == oldNode && r.endOffset > splitOffset {
+		r.endContainer = newNode
+		r.endOffset = r.endOffset - splitOffset
+	}
+}
+
 // getOldIndex determines the index a removed node had before removal.
 // This is calculated based on the sibling information.
 func getOldIndex(removedNode *Node, previousSibling, nextSibling *Node) int {

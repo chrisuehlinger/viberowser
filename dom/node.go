@@ -191,6 +191,27 @@ func (n *Node) SetNodeValue(value string) {
 	// For other node types, this is a no-op per the spec
 }
 
+// SetNodeValueRaw sets the value of the node without triggering mutation notifications.
+// This should only be used when the caller has already called NotifyReplaceData
+// with the correct parameters.
+func (n *Node) SetNodeValueRaw(value string) {
+	switch n.nodeType {
+	case TextNode, CDATASectionNode:
+		if n.textData != nil {
+			*n.textData = value
+		}
+		n.nodeValue = &value
+	case CommentNode:
+		if n.commentData != nil {
+			*n.commentData = value
+		}
+		n.nodeValue = &value
+	case ProcessingInstructionNode:
+		n.nodeValue = &value
+	}
+	// For other node types, this is a no-op per the spec
+}
+
 // OwnerDocument returns the Document that owns this node.
 // For Document nodes, this returns nil.
 func (n *Node) OwnerDocument() *Document {

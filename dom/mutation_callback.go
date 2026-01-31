@@ -36,6 +36,16 @@ type MutationCallback interface {
 		count int,
 		data string,
 	)
+
+	// OnSplitText is called when Text.splitText() is invoked.
+	// This provides the old node, the split offset, and the new node.
+	// Per DOM spec, Ranges that reference the old node with offset > splitOffset
+	// should have their container moved to the new node (if parent is not null).
+	OnSplitText(
+		oldNode *Node,
+		splitOffset int,
+		newNode *Node,
+	)
 }
 
 // mutationCallbacks stores registered mutation callbacks for a document.
@@ -140,5 +150,21 @@ func NotifyReplaceData(
 	callbacks := mutationCallbacks[target.ownerDoc]
 	for _, cb := range callbacks {
 		cb.OnReplaceData(target, offset, count, data)
+	}
+}
+
+// NotifySplitText notifies all registered callbacks about a Text.splitText() operation.
+// This is exported for use by JavaScript bindings that need to trigger range mutations.
+func NotifySplitText(
+	oldNode *Node,
+	splitOffset int,
+	newNode *Node,
+) {
+	if oldNode == nil || oldNode.ownerDoc == nil {
+		return
+	}
+	callbacks := mutationCallbacks[oldNode.ownerDoc]
+	for _, cb := range callbacks {
+		cb.OnSplitText(oldNode, splitOffset, newNode)
 	}
 }
