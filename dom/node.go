@@ -82,6 +82,23 @@ type elementData struct {
 
 	// Template contents: for <template> elements, the DocumentFragment that holds the content
 	templateContent *DocumentFragment
+
+	// Input element state - for checkbox, radio, and other input types
+	inputData *InputData
+}
+
+// InputData holds state for HTMLInputElement.
+// The "checked" property is separate from the "checked" attribute (defaultChecked).
+// Similarly, "value" property is separate from "value" attribute (defaultValue).
+type InputData struct {
+	// Whether the checked state has been explicitly set (dirty checkedness flag)
+	checkedDirty bool
+	// The current checked state (for checkbox/radio)
+	checked bool
+	// Whether the value has been explicitly set (dirty value flag)
+	valueDirty bool
+	// The current value (for text, etc.)
+	value string
 }
 
 // documentData holds data specific to Document nodes.

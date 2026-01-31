@@ -194,13 +194,38 @@ func (et *EventTarget) HasEventListeners(eventType string) bool {
 // Given a JS object, it returns the parent JS object (or nil if no parent).
 type NodeResolver func(obj *goja.Object) *goja.Object
 
+// ActivationResult holds the result of a pre-activation step.
+type ActivationResult struct {
+	Element          *goja.Object // The element with activation behavior
+	PreviousChecked  bool         // Previous checked state (for checkbox/radio)
+	HasActivation    bool         // Whether activation behavior was triggered
+	ActivationType   string       // Type of activation ("checkbox", "radio", etc.)
+}
+
+// ActivationHandler is a function that handles activation behavior.
+// It takes the event path and returns the activation result (or nil if no activation).
+// If the event path contains an element with activation behavior, this handler runs
+// the pre-click activation step and returns the result for possible rollback.
+type ActivationHandler func(eventPath []*goja.Object, event *goja.Object) *ActivationResult
+
+// ActivationCancelHandler is called when activation is canceled (defaultPrevented).
+// It receives the activation result from the pre-activation step and reverts the state.
+type ActivationCancelHandler func(result *ActivationResult)
+
+// ActivationCompleteHandler is called when activation completes successfully (not canceled).
+// It receives the activation result and fires input/change events as appropriate.
+type ActivationCompleteHandler func(result *ActivationResult)
+
 // EventBinder provides methods to add event handling to JS objects.
 type EventBinder struct {
-	runtime      *Runtime
-	targetMap    map[*goja.Object]*EventTarget
-	mu           sync.RWMutex
-	eventProtos  map[string]*goja.Object // Map of event interface names to their prototypes
-	nodeResolver NodeResolver            // Function to resolve parent nodes for event propagation
+	runtime                     *Runtime
+	targetMap                   map[*goja.Object]*EventTarget
+	mu                          sync.RWMutex
+	eventProtos                 map[string]*goja.Object // Map of event interface names to their prototypes
+	nodeResolver                NodeResolver            // Function to resolve parent nodes for event propagation
+	activationHandler           ActivationHandler       // Handler for pre-click activation behavior
+	activationCancelHandler     ActivationCancelHandler // Handler for canceled activation
+	activationCompleteHandler   ActivationCompleteHandler // Handler for successful activation
 }
 
 // NewEventBinder creates a new event binder.
@@ -215,6 +240,16 @@ func NewEventBinder(runtime *Runtime) *EventBinder {
 // SetNodeResolver sets the function used to resolve parent nodes for event propagation.
 func (eb *EventBinder) SetNodeResolver(resolver NodeResolver) {
 	eb.nodeResolver = resolver
+}
+
+// SetActivationHandlers sets the handlers for activation behavior.
+// The activation handler runs pre-click activation for elements with activation behavior.
+// The cancel handler reverts the activation if defaultPrevented is set.
+// The complete handler fires input/change events after successful activation.
+func (eb *EventBinder) SetActivationHandlers(handler ActivationHandler, cancelHandler ActivationCancelHandler, completeHandler ActivationCompleteHandler) {
+	eb.activationHandler = handler
+	eb.activationCancelHandler = cancelHandler
+	eb.activationCompleteHandler = completeHandler
 }
 
 // GetOrCreateTarget gets or creates an EventTarget for a JS object.
@@ -371,6 +406,15 @@ func (eb *EventBinder) BindEventTarget(obj *goja.Object) {
 			return stopProp != nil && stopProp.ToBoolean()
 		}
 
+		// Pre-click activation behavior (for checkbox, radio, etc.)
+		// Per HTML spec, activation behavior runs BEFORE the click event is dispatched.
+		// This only applies to MouseEvent click events (not plain Event clicks).
+		// See: https://html.spec.whatwg.org/multipage/webappapis.html#activation-behavior
+		var activationResult *ActivationResult
+		if eb.activationHandler != nil {
+			activationResult = eb.activationHandler(eventPath, event)
+		}
+
 		// Phase 1: Capturing phase (root to target, excluding target)
 		// Walk from the end of eventPath (root) to the beginning (target)
 		for i := len(eventPath) - 1; i > 0; i-- {
@@ -416,11 +460,30 @@ func (eb *EventBinder) BindEventTarget(obj *goja.Object) {
 		event.Set("eventPhase", int(EventPhaseNone))
 		event.Set("currentTarget", goja.Null())
 
-		// Return true if default wasn't prevented
-		if defaultPrevented := event.Get("defaultPrevented"); defaultPrevented != nil {
-			return vm.ToValue(!defaultPrevented.ToBoolean())
+		// Check if default was prevented
+		defaultPrevented := false
+		if dp := event.Get("defaultPrevented"); dp != nil {
+			defaultPrevented = dp.ToBoolean()
 		}
-		return vm.ToValue(true)
+
+		// Handle post-activation behavior
+		if activationResult != nil && activationResult.HasActivation {
+			if defaultPrevented {
+				// Legacy-canceled-activation-behavior: revert the activation
+				// Per HTML spec, this reverts the checkbox/radio checked state if preventDefault was called
+				if eb.activationCancelHandler != nil {
+					eb.activationCancelHandler(activationResult)
+				}
+			} else {
+				// Activation completed successfully - fire input and change events
+				if eb.activationCompleteHandler != nil {
+					eb.activationCompleteHandler(activationResult)
+				}
+			}
+		}
+
+		// Return true if default wasn't prevented
+		return vm.ToValue(!defaultPrevented)
 	})
 }
 

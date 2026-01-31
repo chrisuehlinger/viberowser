@@ -1490,11 +1490,25 @@ func (b *DOMBinder) setupHTMLElementPrototypeMethods() {
 
 	// click() - Simulates a click on the element
 	// Per HTML spec: https://html.spec.whatwg.org/multipage/interaction.html#dom-click
-	// This method fires a click event at the element, even if it's disabled.
+	// "If this element is a form control that is disabled, then return."
 	b.htmlElementProto.Set("click", func(call goja.FunctionCall) goja.Value {
 		thisObj := call.This.ToObject(vm)
 		if thisObj == nil {
 			return goja.Undefined()
+		}
+
+		// Per HTML spec: "If this element is a form control that is disabled, then return."
+		// Check if this is a disabled form control
+		goNode := b.getGoNode(thisObj)
+		if goNode != nil && goNode.NodeType() == dom.ElementNode {
+			el := (*dom.Element)(goNode)
+			// Check if it's a form control (input, button, select, textarea) and disabled
+			localName := el.LocalName()
+			isFormControl := localName == "input" || localName == "button" ||
+				localName == "select" || localName == "textarea"
+			if isFormControl && el.Disabled() {
+				return goja.Undefined()
+			}
 		}
 
 		// Create a MouseEvent with type "click"
@@ -3804,6 +3818,11 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		b.bindAnchorProperties(jsEl, el)
 	}
 
+	// Add input-specific properties (type, checked, disabled, value, etc.)
+	if el.LocalName() == "input" && ns == dom.HTMLNamespace {
+		b.bindInputProperties(jsEl, el)
+	}
+
 	// Bind common node properties and methods
 	b.bindNodeProperties(jsEl, node)
 
@@ -3811,6 +3830,9 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 	// Only for HTML elements, per spec
 	if ns == dom.HTMLNamespace {
 		b.bindEventHandlerAttributes(jsEl)
+		// Process any existing event handler content attributes
+		// This handles elements created from HTML parsing or template cloning
+		b.processEventHandlerContentAttributes(jsEl, el)
 	}
 
 	// Cache the binding
@@ -3916,6 +3938,74 @@ func (b *DOMBinder) bindAnchorProperties(jsEl *goja.Object, el *dom.Element) {
 			hrefVal := call.Arguments[0].String()
 			// Store the URL as-is; encoding happens in the getter
 			el.SetAttribute("href", hrefVal)
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+}
+
+// bindInputProperties adds HTMLInputElement-specific properties.
+// Per HTML spec: https://html.spec.whatwg.org/multipage/input.html
+func (b *DOMBinder) bindInputProperties(jsEl *goja.Object, el *dom.Element) {
+	vm := b.runtime.vm
+
+	// type property - the type of input (checkbox, radio, text, etc.)
+	jsEl.DefineAccessorProperty("type", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.InputType())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetInputType(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// checked property - the current checked state for checkbox/radio
+	// Per HTML spec, this is the checkedness, not the checked attribute
+	jsEl.DefineAccessorProperty("checked", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.Checked())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetChecked(call.Arguments[0].ToBoolean())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// defaultChecked property - reflects the checked attribute
+	jsEl.DefineAccessorProperty("defaultChecked", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.DefaultChecked())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetDefaultChecked(call.Arguments[0].ToBoolean())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// disabled property - whether the input is disabled
+	jsEl.DefineAccessorProperty("disabled", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.Disabled())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetDisabled(call.Arguments[0].ToBoolean())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// value property - the current value
+	// Per HTML spec, this is separate from the value attribute (defaultValue)
+	jsEl.DefineAccessorProperty("value", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.InputValue())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetInputValue(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// defaultValue property - reflects the value attribute
+	jsEl.DefineAccessorProperty("defaultValue", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.DefaultValue())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetDefaultValue(call.Arguments[0].String())
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
@@ -9308,5 +9398,53 @@ func (b *DOMBinder) bindEventHandlerAttributes(jsObj *goja.Object) {
 			}),
 			goja.FLAG_FALSE, goja.FLAG_TRUE,
 		)
+	}
+}
+
+// processEventHandlerContentAttributes checks for existing event handler content attributes
+// (like oninput="...", onclick="...") and converts them to event listeners.
+// This is called during element binding to handle elements created from HTML or cloned.
+func (b *DOMBinder) processEventHandlerContentAttributes(jsEl *goja.Object, el *dom.Element) {
+	vm := b.runtime.vm
+
+	// Check each known event handler attribute
+	for _, attrName := range eventHandlerAttributes {
+		// Check if the element has this attribute set in the DOM
+		if !el.HasAttribute(attrName) {
+			continue
+		}
+
+		attrValue := el.GetAttribute(attrName)
+		if attrValue == "" {
+			continue
+		}
+
+		// Create an event handler function per HTML spec
+		// The handler should have 'this' bound to the element and scope chain including the element
+		handlerCode := fmt.Sprintf(`(function(__handler_el__) {
+			return function(event) {
+				with (__handler_el__) {
+					%s
+				}
+			};
+		})`, attrValue)
+
+		handlerFactory, err := vm.RunString(handlerCode)
+		if err != nil {
+			continue
+		}
+
+		factory, ok := goja.AssertFunction(handlerFactory)
+		if !ok {
+			continue
+		}
+
+		handlerVal, callErr := factory(goja.Undefined(), jsEl)
+		if callErr != nil {
+			continue
+		}
+
+		// Set the event handler via the IDL property (e.g., element.oninput = handlerVal)
+		jsEl.Set(attrName, handlerVal)
 	}
 }

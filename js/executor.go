@@ -67,6 +67,119 @@ func NewScriptExecutor(runtime *Runtime) *ScriptExecutor {
 		return domBinder.BindNode(parentNode)
 	})
 
+	// Set activation handlers for click events on checkbox/radio inputs
+	// Per HTML spec, activation behavior runs BEFORE onclick fires
+	eventBinder.SetActivationHandlers(
+		// Activation handler: runs pre-click activation for elements with activation behavior
+		func(eventPath []*goja.Object, event *goja.Object) *ActivationResult {
+			// Only handle MouseEvent click events
+			// Per spec, activation behavior only triggers for MouseEvent, not plain Event
+			eventType := ""
+			if typeVal := event.Get("type"); typeVal != nil {
+				eventType = typeVal.String()
+			}
+			if eventType != "click" {
+				return nil
+			}
+
+			// Check if this is a MouseEvent (has button property)
+			// Plain Event clicks should not trigger activation behavior
+			buttonVal := event.Get("button")
+			if buttonVal == nil || goja.IsUndefined(buttonVal) {
+				return nil
+			}
+
+			// Check if the event bubbles - if not, only check the target (first in path)
+			// Per HTML spec, non-bubbling events only trigger activation on the target
+			bubbles := false
+			if bubblesVal := event.Get("bubbles"); bubblesVal != nil {
+				bubbles = bubblesVal.ToBoolean()
+			}
+
+			// Determine which elements to check for activation behavior
+			// If event bubbles, check whole path; otherwise just the target
+			pathToCheck := eventPath
+			if !bubbles && len(eventPath) > 0 {
+				pathToCheck = eventPath[:1] // Only the target
+			}
+
+			// Find the first element in the path with activation behavior
+			// Per DOM spec, only one activation behavior runs per dispatch
+			for _, jsObj := range pathToCheck {
+				goNode := domBinder.getGoNode(jsObj)
+				if goNode == nil || goNode.NodeType() != dom.ElementNode {
+					continue
+				}
+				el := (*dom.Element)(goNode)
+
+				// Check for checkbox/radio activation behavior
+				if el.IsCheckable() {
+					// Pre-click activation: toggle the checked state BEFORE dispatch
+					previousChecked := el.Checked()
+					el.SetChecked(!previousChecked)
+
+					return &ActivationResult{
+						Element:         jsObj,
+						PreviousChecked: previousChecked,
+						HasActivation:   true,
+						ActivationType:  el.InputType(),
+					}
+				}
+			}
+			return nil
+		},
+		// Cancel handler: reverts activation if defaultPrevented
+		func(result *ActivationResult) {
+			if result == nil || !result.HasActivation {
+				return
+			}
+			// Get the Go element from the JS object
+			goNode := domBinder.getGoNode(result.Element)
+			if goNode == nil || goNode.NodeType() != dom.ElementNode {
+				return
+			}
+			el := (*dom.Element)(goNode)
+			// Revert to previous checked state
+			el.SetChecked(result.PreviousChecked)
+		},
+		// Complete handler: fires input and change events after successful activation
+		func(result *ActivationResult) {
+			if result == nil || !result.HasActivation || result.Element == nil {
+				return
+			}
+
+			vm := runtime.vm
+
+			// Fire 'input' event on the element
+			// Per HTML spec, input event bubbles but is not cancelable
+			inputEvent := eventBinder.CreateEvent("input", map[string]interface{}{
+				"bubbles":    true,
+				"cancelable": false,
+			})
+
+			dispatchEvent := result.Element.Get("dispatchEvent")
+			if dispatchEvent != nil && !goja.IsUndefined(dispatchEvent) {
+				if fn, ok := goja.AssertFunction(dispatchEvent); ok {
+					fn(result.Element, inputEvent)
+				}
+			}
+
+			// Fire 'change' event on the element
+			// Per HTML spec, change event bubbles but is not cancelable
+			changeEvent := eventBinder.CreateEvent("change", map[string]interface{}{
+				"bubbles":    true,
+				"cancelable": false,
+			})
+
+			if fn, ok := goja.AssertFunction(dispatchEvent); ok {
+				fn(result.Element, changeEvent)
+			}
+
+			// Avoid unused variable warning
+			_ = vm
+		},
+	)
+
 	// Create mutation observer manager
 	mutationManager := NewMutationObserverManager()
 

@@ -1453,3 +1453,122 @@ func (e *Element) SetTemplateContent(content *DocumentFragment) {
 	}
 	e.AsNode().elementData.templateContent = content
 }
+
+// InputData returns the input-specific data for this element, creating it if needed.
+// Returns nil for non-input elements (but the caller can still call this on any element).
+func (e *Element) InputData() *InputData {
+	if e.AsNode().elementData == nil {
+		e.AsNode().elementData = &elementData{}
+	}
+	if e.AsNode().elementData.inputData == nil {
+		e.AsNode().elementData.inputData = &InputData{}
+	}
+	return e.AsNode().elementData.inputData
+}
+
+// IsCheckable returns true if this is a checkbox or radio input.
+func (e *Element) IsCheckable() bool {
+	if e.LocalName() != "input" || e.NamespaceURI() != HTMLNamespace {
+		return false
+	}
+	inputType := strings.ToLower(e.GetAttribute("type"))
+	return inputType == "checkbox" || inputType == "radio"
+}
+
+// Checked returns the checked state for checkbox/radio inputs.
+// Per HTML spec, if the checkedness hasn't been set (dirty flag is false),
+// it reflects the presence of the checked attribute (defaultChecked).
+func (e *Element) Checked() bool {
+	if !e.IsCheckable() {
+		return false
+	}
+	data := e.InputData()
+	if data.checkedDirty {
+		return data.checked
+	}
+	// Not dirty - reflect the checked attribute (defaultChecked)
+	return e.HasAttribute("checked")
+}
+
+// SetChecked sets the checked state for checkbox/radio inputs.
+// This sets the dirty checkedness flag to true.
+func (e *Element) SetChecked(checked bool) {
+	data := e.InputData()
+	data.checkedDirty = true
+	data.checked = checked
+}
+
+// DefaultChecked returns whether the checked attribute is present.
+func (e *Element) DefaultChecked() bool {
+	return e.HasAttribute("checked")
+}
+
+// SetDefaultChecked sets or removes the checked attribute.
+func (e *Element) SetDefaultChecked(checked bool) {
+	if checked {
+		e.SetAttribute("checked", "")
+	} else {
+		e.RemoveAttribute("checked")
+	}
+}
+
+// InputType returns the type attribute value, defaulting to "text".
+func (e *Element) InputType() string {
+	if e.LocalName() != "input" {
+		return ""
+	}
+	t := e.GetAttribute("type")
+	if t == "" {
+		return "text"
+	}
+	return strings.ToLower(t)
+}
+
+// SetInputType sets the type attribute.
+func (e *Element) SetInputType(inputType string) {
+	e.SetAttribute("type", inputType)
+}
+
+// InputValue returns the current value for input elements.
+// Per HTML spec, if the value hasn't been set (dirty flag is false),
+// it reflects the value attribute (defaultValue).
+func (e *Element) InputValue() string {
+	data := e.InputData()
+	if data.valueDirty {
+		return data.value
+	}
+	// Not dirty - reflect the value attribute (defaultValue)
+	return e.GetAttribute("value")
+}
+
+// SetInputValue sets the current value for input elements.
+// This sets the dirty value flag to true.
+func (e *Element) SetInputValue(value string) {
+	data := e.InputData()
+	data.valueDirty = true
+	data.value = value
+}
+
+// DefaultValue returns the value attribute.
+func (e *Element) DefaultValue() string {
+	return e.GetAttribute("value")
+}
+
+// SetDefaultValue sets the value attribute.
+func (e *Element) SetDefaultValue(value string) {
+	e.SetAttribute("value", value)
+}
+
+// Disabled returns whether the disabled attribute is present.
+func (e *Element) Disabled() bool {
+	return e.HasAttribute("disabled")
+}
+
+// SetDisabled sets or removes the disabled attribute.
+func (e *Element) SetDisabled(disabled bool) {
+	if disabled {
+		e.SetAttribute("disabled", "")
+	} else {
+		e.RemoveAttribute("disabled")
+	}
+}

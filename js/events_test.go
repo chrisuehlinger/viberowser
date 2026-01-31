@@ -409,3 +409,154 @@ func TestHTMLElementClick(t *testing.T) {
 		t.Error("click event should be cancelable")
 	}
 }
+
+func TestCheckboxActivationBehavior(t *testing.T) {
+	se := NewScriptExecutor(NewRuntime())
+	doc := dom.NewDocument()
+	// Add HTML structure with body
+	html := doc.CreateElement("html")
+	body := doc.CreateElement("body")
+	doc.Append(html)
+	html.AsNode().AppendChild(body.AsNode())
+	se.SetupDocument(doc)
+
+	// Create a checkbox input
+	_, err := se.Runtime().Execute(`
+		var input = document.createElement('input');
+		input.type = 'checkbox';
+		document.body.appendChild(input);
+		var checkedDuringClick = null;
+		var inputFired = false;
+		var changeFired = false;
+		input.onclick = function() { checkedDuringClick = input.checked; };
+		input.oninput = function() { inputFired = true; };
+		input.onchange = function() { changeFired = true; };
+	`)
+	if err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+
+	// Click the checkbox
+	_, err = se.Runtime().Execute(`input.click();`)
+	if err != nil {
+		t.Fatalf("Click failed: %v", err)
+	}
+
+	// Check that checkbox is checked after click
+	result, err := se.Runtime().Execute("input.checked")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Checkbox should be checked after click")
+	}
+
+	// Check that checkbox was already checked during onclick
+	result, err = se.Runtime().Execute("checkedDuringClick")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Checkbox should be checked during onclick handler")
+	}
+
+	// Check that input and change events fired
+	result, err = se.Runtime().Execute("inputFired")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("input event should fire after checkbox click")
+	}
+
+	result, err = se.Runtime().Execute("changeFired")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("change event should fire after checkbox click")
+	}
+}
+
+func TestCheckboxPreventDefault(t *testing.T) {
+	se := NewScriptExecutor(NewRuntime())
+	doc := dom.NewDocument()
+	html := doc.CreateElement("html")
+	body := doc.CreateElement("body")
+	doc.Append(html)
+	html.AsNode().AppendChild(body.AsNode())
+	se.SetupDocument(doc)
+
+	// Create a checkbox input and prevent default on click
+	_, err := se.Runtime().Execute(`
+		var input = document.createElement('input');
+		input.type = 'checkbox';
+		document.body.appendChild(input);
+		input.onclick = function(e) { e.preventDefault(); };
+	`)
+	if err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+
+	// Click the checkbox (with MouseEvent to trigger activation)
+	_, err = se.Runtime().Execute(`input.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));`)
+	if err != nil {
+		t.Fatalf("Click failed: %v", err)
+	}
+
+	// Check that checkbox is NOT checked after preventDefault
+	result, err := se.Runtime().Execute("input.checked")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToBoolean() {
+		t.Error("Checkbox should NOT be checked after preventDefault")
+	}
+}
+
+func TestDisabledCheckboxClick(t *testing.T) {
+	se := NewScriptExecutor(NewRuntime())
+	doc := dom.NewDocument()
+	html := doc.CreateElement("html")
+	body := doc.CreateElement("body")
+	doc.Append(html)
+	html.AsNode().AppendChild(body.AsNode())
+	se.SetupDocument(doc)
+
+	// Create a disabled checkbox
+	_, err := se.Runtime().Execute(`
+		var input = document.createElement('input');
+		input.type = 'checkbox';
+		input.disabled = true;
+		document.body.appendChild(input);
+		var clicked = false;
+		input.onclick = function() { clicked = true; };
+	`)
+	if err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+
+	// Click() on disabled element should do nothing
+	_, err = se.Runtime().Execute(`input.click();`)
+	if err != nil {
+		t.Fatalf("Click failed: %v", err)
+	}
+
+	// Check that onclick was NOT called
+	result, err := se.Runtime().Execute("clicked")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToBoolean() {
+		t.Error("click() on disabled element should not fire click event")
+	}
+
+	// Check that checkbox is NOT checked
+	result, err = se.Runtime().Execute("input.checked")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToBoolean() {
+		t.Error("disabled checkbox should NOT be checked after click()")
+	}
+}
