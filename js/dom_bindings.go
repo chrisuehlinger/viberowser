@@ -5169,6 +5169,11 @@ func (b *DOMBinder) bindNodeProperties(jsObj *goja.Object, node *dom.Node) {
 		return b.BindDocument(doc)
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 
+	// baseURI - returns the absolute base URL of the node
+	jsObj.DefineAccessorProperty("baseURI", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(node.BaseURI())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
 	jsObj.DefineAccessorProperty("isConnected", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		return vm.ToValue(node.IsConnected())
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
@@ -6668,6 +6673,20 @@ func (b *DOMBinder) BindAttr(attr *dom.Attr) *goja.Object {
 			return goja.Null()
 		}
 		return b.BindElement(owner)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// ownerDocument - returns the document that owns this attribute
+	jsAttr.DefineAccessorProperty("ownerDocument", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		doc := attr.OwnerDocument()
+		if doc == nil {
+			return goja.Null()
+		}
+		return b.BindDocument(doc)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// baseURI - returns the absolute base URL of this attribute
+	jsAttr.DefineAccessorProperty("baseURI", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(attr.BaseURI())
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	// isSameNode - returns true if the given node is the same as this one

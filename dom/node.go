@@ -159,6 +159,29 @@ func (n *Node) OwnerDocument() *Document {
 	return n.ownerDoc
 }
 
+// BaseURI returns the absolute base URL of the node.
+// For nodes in a document, this returns the document's URL.
+// For detached nodes, this returns the owner document's URL.
+// For Document nodes, this returns the document's own URL.
+func (n *Node) BaseURI() string {
+	// For Document nodes, return the document's URL directly
+	if n.nodeType == DocumentNode && n.documentData != nil {
+		url := n.documentData.url
+		if url == "" {
+			return "about:blank"
+		}
+		return url
+	}
+
+	// For other nodes, get the URL from the owner document
+	if n.ownerDoc != nil {
+		return n.ownerDoc.URL()
+	}
+
+	// Fallback for nodes without an owner document
+	return "about:blank"
+}
+
 // ParentNode returns the parent of this node.
 func (n *Node) ParentNode() *Node {
 	return n.parentNode

@@ -65,6 +65,26 @@ func (a *Attr) OwnerElement() *Element {
 	return a.ownerElement
 }
 
+// OwnerDocument returns the Document that owns this attribute.
+// For Attr nodes, this is determined via the ownerElement.
+func (a *Attr) OwnerDocument() *Document {
+	if a.ownerElement != nil {
+		return a.ownerElement.AsNode().OwnerDocument()
+	}
+	return nil
+}
+
+// BaseURI returns the absolute base URL of this attribute.
+// For Attr nodes, this is the same as the ownerElement's baseURI,
+// or the owner document's URL if no owner element.
+func (a *Attr) BaseURI() string {
+	if a.ownerElement != nil {
+		return a.ownerElement.AsNode().BaseURI()
+	}
+	// For unattached attrs, return about:blank (no document context)
+	return "about:blank"
+}
+
 // NamespaceURI returns the namespace URI of the attribute.
 func (a *Attr) NamespaceURI() string {
 	return a.namespaceURI
