@@ -55,13 +55,54 @@ func newHTMLCollection(root *Node, filter func(*Element) bool) *HTMLCollection {
 }
 
 // NewHTMLCollectionByTagName creates an HTMLCollection of elements with the given tag name.
+// Per the DOM spec "list of elements with qualified name" algorithm:
+// - If qualifiedName is "*", match all descendant elements
+// - If root's node document is an HTML document:
+//   - For elements in HTML namespace: match if element's qualifiedName equals
+//     the search term ASCII-lowercased
+//   - For elements NOT in HTML namespace: match if element's qualifiedName equals
+//     the search term exactly (case-sensitive)
+// - Otherwise (non-HTML document): match if element's qualifiedName equals search term exactly
+//
+// Note: Only ASCII letters are affected by case conversion; non-ASCII characters remain unchanged.
 func NewHTMLCollectionByTagName(root *Node, tagName string) *HTMLCollection {
-	tagName = strings.ToUpper(tagName)
+	// Check if the document is an HTML document
+	var isHTMLDoc bool
+	if root.ownerDoc != nil {
+		isHTMLDoc = root.ownerDoc.IsHTML()
+	} else if root.nodeType == DocumentNode {
+		isHTMLDoc = (*Document)(root).IsHTML()
+	}
+
+	// Pre-compute ASCII lowercase version for HTML matching
+	tagNameLower := toASCIILowercase(tagName)
+
 	return newHTMLCollection(root, func(el *Element) bool {
 		if tagName == "*" {
 			return true
 		}
-		return el.TagName() == tagName
+
+		// Compute the element's qualified name (prefix:localName or just localName)
+		elQualifiedName := el.LocalName()
+		if prefix := el.Prefix(); prefix != "" {
+			elQualifiedName = prefix + ":" + elQualifiedName
+		}
+
+		// Check if this element is in the HTML namespace
+		ns := el.NamespaceURI()
+		if isHTMLDoc {
+			if ns == HTMLNamespace {
+				// For HTML elements in HTML documents:
+				// Match if element's qualifiedName equals the ASCII-lowercased search term
+				return elQualifiedName == tagNameLower
+			}
+			// For non-HTML namespace elements in HTML documents:
+			// Match if element's qualifiedName equals the search term exactly
+			return elQualifiedName == tagName
+		}
+
+		// For non-HTML documents: exact case-sensitive matching
+		return elQualifiedName == tagName
 	})
 }
 
