@@ -148,71 +148,67 @@ func (t *Text) IsElementContentWhitespace() bool {
 }
 
 // Before inserts nodes before this text node.
+// Implements the ChildNode.before() algorithm from DOM spec.
 func (t *Text) Before(nodes ...interface{}) {
 	parent := t.AsNode().parentNode
 	if parent == nil {
 		return
 	}
-	for _, item := range nodes {
-		var node *Node
-		switch v := item.(type) {
-		case *Node:
-			node = v
-		case *Element:
-			node = v.AsNode()
-		case string:
-			node = t.AsNode().ownerDoc.CreateTextNode(v)
-		}
-		if node != nil {
-			parent.InsertBefore(node, t.AsNode())
-		}
+	nodeSet := extractNodeSet(nodes)
+	viablePrevSibling := t.AsNode().findViablePreviousSibling(nodeSet)
+
+	node := t.AsNode().convertNodesToFragment(nodes)
+	if node == nil {
+		return
 	}
+
+	var refNode *Node
+	if viablePrevSibling == nil {
+		refNode = parent.firstChild
+	} else {
+		refNode = viablePrevSibling.nextSibling
+	}
+	parent.InsertBefore(node, refNode)
 }
 
 // After inserts nodes after this text node.
+// Implements the ChildNode.after() algorithm from DOM spec.
 func (t *Text) After(nodes ...interface{}) {
 	parent := t.AsNode().parentNode
 	if parent == nil {
 		return
 	}
-	ref := t.AsNode().nextSibling
-	for _, item := range nodes {
-		var node *Node
-		switch v := item.(type) {
-		case *Node:
-			node = v
-		case *Element:
-			node = v.AsNode()
-		case string:
-			node = t.AsNode().ownerDoc.CreateTextNode(v)
-		}
-		if node != nil {
-			parent.InsertBefore(node, ref)
-		}
+	nodeSet := extractNodeSet(nodes)
+	viableNextSibling := t.AsNode().findViableNextSibling(nodeSet)
+
+	node := t.AsNode().convertNodesToFragment(nodes)
+	if node == nil {
+		return
 	}
+
+	parent.InsertBefore(node, viableNextSibling)
 }
 
 // ReplaceWith replaces this text node with nodes.
+// Implements the ChildNode.replaceWith() algorithm from DOM spec.
 func (t *Text) ReplaceWith(nodes ...interface{}) {
 	parent := t.AsNode().parentNode
 	if parent == nil {
 		return
 	}
-	ref := t.AsNode().nextSibling
-	parent.RemoveChild(t.AsNode())
-	for _, item := range nodes {
-		var node *Node
-		switch v := item.(type) {
-		case *Node:
-			node = v
-		case *Element:
-			node = v.AsNode()
-		case string:
-			node = t.AsNode().ownerDoc.CreateTextNode(v)
-		}
+	nodeSet := extractNodeSet(nodes)
+	viableNextSibling := t.AsNode().findViableNextSibling(nodeSet)
+
+	node := t.AsNode().convertNodesToFragment(nodes)
+
+	if t.AsNode().parentNode == parent {
 		if node != nil {
-			parent.InsertBefore(node, ref)
+			parent.ReplaceChild(node, t.AsNode())
+		} else {
+			parent.RemoveChild(t.AsNode())
 		}
+	} else if node != nil {
+		parent.InsertBefore(node, viableNextSibling)
 	}
 }
 

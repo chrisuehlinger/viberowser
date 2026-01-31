@@ -763,71 +763,80 @@ func (e *Element) Prepend(nodes ...interface{}) {
 }
 
 // Before inserts nodes before this element.
+// Implements the ChildNode.before() algorithm from DOM spec.
 func (e *Element) Before(nodes ...interface{}) {
 	parent := e.AsNode().parentNode
 	if parent == nil {
 		return
 	}
-	for _, item := range nodes {
-		var node *Node
-		switch v := item.(type) {
-		case *Node:
-			node = v
-		case *Element:
-			node = v.AsNode()
-		case string:
-			node = e.AsNode().ownerDoc.CreateTextNode(v)
-		}
-		if node != nil {
-			parent.InsertBefore(node, e.AsNode())
-		}
+	// Step 3: Find viable previous sibling (first preceding sibling not in nodes)
+	nodeSet := extractNodeSet(nodes)
+	viablePrevSibling := e.AsNode().findViablePreviousSibling(nodeSet)
+
+	// Step 4: Convert nodes into a node
+	node := e.AsNode().convertNodesToFragment(nodes)
+	if node == nil {
+		return
 	}
+
+	// Step 5: Pre-insert node into parent before this element
+	// If viable previous sibling is null, insert as first child
+	// Otherwise, insert after viable previous sibling
+	var refNode *Node
+	if viablePrevSibling == nil {
+		refNode = parent.firstChild
+	} else {
+		refNode = viablePrevSibling.nextSibling
+	}
+	parent.InsertBefore(node, refNode)
 }
 
 // After inserts nodes after this element.
+// Implements the ChildNode.after() algorithm from DOM spec.
 func (e *Element) After(nodes ...interface{}) {
 	parent := e.AsNode().parentNode
 	if parent == nil {
 		return
 	}
-	ref := e.AsNode().nextSibling
-	for _, item := range nodes {
-		var node *Node
-		switch v := item.(type) {
-		case *Node:
-			node = v
-		case *Element:
-			node = v.AsNode()
-		case string:
-			node = e.AsNode().ownerDoc.CreateTextNode(v)
-		}
-		if node != nil {
-			parent.InsertBefore(node, ref)
-		}
+	// Step 3: Find viable next sibling (first following sibling not in nodes)
+	nodeSet := extractNodeSet(nodes)
+	viableNextSibling := e.AsNode().findViableNextSibling(nodeSet)
+
+	// Step 4: Convert nodes into a node
+	node := e.AsNode().convertNodesToFragment(nodes)
+	if node == nil {
+		return
 	}
+
+	// Step 5: Pre-insert node into parent before viable next sibling
+	parent.InsertBefore(node, viableNextSibling)
 }
 
 // ReplaceWith replaces this element with nodes.
+// Implements the ChildNode.replaceWith() algorithm from DOM spec.
 func (e *Element) ReplaceWith(nodes ...interface{}) {
 	parent := e.AsNode().parentNode
 	if parent == nil {
 		return
 	}
-	ref := e.AsNode().nextSibling
-	parent.RemoveChild(e.AsNode())
-	for _, item := range nodes {
-		var node *Node
-		switch v := item.(type) {
-		case *Node:
-			node = v
-		case *Element:
-			node = v.AsNode()
-		case string:
-			node = e.AsNode().ownerDoc.CreateTextNode(v)
-		}
+	// Step 3: Find viable next sibling (first following sibling not in nodes)
+	nodeSet := extractNodeSet(nodes)
+	viableNextSibling := e.AsNode().findViableNextSibling(nodeSet)
+
+	// Step 4: Convert nodes into a node
+	node := e.AsNode().convertNodesToFragment(nodes)
+
+	// Step 5: If this element's parent is parent, replace this with node
+	// Otherwise, pre-insert node into parent before viable next sibling
+	if e.AsNode().parentNode == parent {
 		if node != nil {
-			parent.InsertBefore(node, ref)
+			parent.ReplaceChild(node, e.AsNode())
+		} else {
+			// No replacement nodes, just remove this element
+			parent.RemoveChild(e.AsNode())
 		}
+	} else if node != nil {
+		parent.InsertBefore(node, viableNextSibling)
 	}
 }
 

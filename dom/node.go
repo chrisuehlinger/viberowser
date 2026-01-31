@@ -844,3 +844,82 @@ func (n *Node) IsDefaultNamespace(namespaceURI string) bool {
 	defaultNS := n.LookupNamespaceURI("")
 	return defaultNS == namespaceURI
 }
+
+// convertNodesToFragment converts a list of nodes and strings into a DocumentFragment.
+// This implements the "converting nodes into a node" algorithm from the DOM spec.
+// If there's only one node and no strings, it returns that node directly.
+// Otherwise, it creates a DocumentFragment containing all nodes/strings.
+func (n *Node) convertNodesToFragment(items []interface{}) *Node {
+	doc := n.ownerDoc
+	if doc == nil {
+		return nil
+	}
+
+	// Count actual nodes
+	nodes := make([]*Node, 0, len(items))
+	for _, item := range items {
+		var node *Node
+		switch v := item.(type) {
+		case *Node:
+			node = v
+		case *Element:
+			node = v.AsNode()
+		case string:
+			node = doc.CreateTextNode(v)
+		}
+		if node != nil {
+			nodes = append(nodes, node)
+		}
+	}
+
+	if len(nodes) == 0 {
+		return nil
+	}
+	if len(nodes) == 1 {
+		return nodes[0]
+	}
+
+	// Create a DocumentFragment and append all nodes
+	frag := doc.CreateDocumentFragment()
+	fragNode := (*Node)(frag)
+	for _, node := range nodes {
+		fragNode.AppendChild(node)
+	}
+	return fragNode
+}
+
+// findViablePreviousSibling finds the first preceding sibling not in the nodes set.
+// This implements step 3 of the "before" algorithm.
+func (n *Node) findViablePreviousSibling(nodeSet map[*Node]bool) *Node {
+	for sibling := n.prevSibling; sibling != nil; sibling = sibling.prevSibling {
+		if !nodeSet[sibling] {
+			return sibling
+		}
+	}
+	return nil
+}
+
+// findViableNextSibling finds the first following sibling not in the nodes set.
+// This implements step 3 of the "after" algorithm.
+func (n *Node) findViableNextSibling(nodeSet map[*Node]bool) *Node {
+	for sibling := n.nextSibling; sibling != nil; sibling = sibling.nextSibling {
+		if !nodeSet[sibling] {
+			return sibling
+		}
+	}
+	return nil
+}
+
+// extractNodeSet builds a set of DOM nodes from the items slice.
+func extractNodeSet(items []interface{}) map[*Node]bool {
+	result := make(map[*Node]bool)
+	for _, item := range items {
+		switch v := item.(type) {
+		case *Node:
+			result[v] = true
+		case *Element:
+			result[v.AsNode()] = true
+		}
+	}
+	return result
+}

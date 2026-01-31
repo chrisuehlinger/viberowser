@@ -1824,27 +1824,39 @@ func (b *DOMBinder) bindCharacterDataMethods(jsNode *goja.Object, node *dom.Node
 }
 
 // bindCharacterDataChildNodeMixin adds ChildNode mixin methods to a CharacterData node.
+// Implements the ChildNode mixin from the DOM spec.
 func (b *DOMBinder) bindCharacterDataChildNodeMixin(jsNode *goja.Object, node *dom.Node) {
 	jsNode.Set("before", func(call goja.FunctionCall) goja.Value {
 		parent := node.ParentNode()
 		if parent == nil {
 			return goja.Undefined()
 		}
-		nodes := b.convertJSNodesToGo(call.Arguments)
-		for _, item := range nodes {
-			var n *dom.Node
-			switch v := item.(type) {
-			case *dom.Node:
-				n = v
-			case string:
-				if node.OwnerDocument() != nil {
-					n = node.OwnerDocument().CreateTextNode(v)
-				}
-			}
-			if n != nil {
-				parent.InsertBefore(n, node)
+		items := b.convertJSNodesToGo(call.Arguments)
+
+		// Find viable previous sibling (first preceding sibling not in nodes)
+		nodeSet := b.extractNodeSet(items)
+		var viablePrevSibling *dom.Node
+		for sibling := node.PreviousSibling(); sibling != nil; sibling = sibling.PreviousSibling() {
+			if !nodeSet[sibling] {
+				viablePrevSibling = sibling
+				break
 			}
 		}
+
+		// Convert items to a node (or DocumentFragment if multiple)
+		newNode := b.convertItemsToNode(node, items)
+		if newNode == nil {
+			return goja.Undefined()
+		}
+
+		// Insert before this node (after viable previous sibling)
+		var refNode *dom.Node
+		if viablePrevSibling == nil {
+			refNode = parent.FirstChild()
+		} else {
+			refNode = viablePrevSibling.NextSibling()
+		}
+		parent.InsertBefore(newNode, refNode)
 		return goja.Undefined()
 	})
 
@@ -1853,22 +1865,26 @@ func (b *DOMBinder) bindCharacterDataChildNodeMixin(jsNode *goja.Object, node *d
 		if parent == nil {
 			return goja.Undefined()
 		}
-		ref := node.NextSibling()
-		nodes := b.convertJSNodesToGo(call.Arguments)
-		for _, item := range nodes {
-			var n *dom.Node
-			switch v := item.(type) {
-			case *dom.Node:
-				n = v
-			case string:
-				if node.OwnerDocument() != nil {
-					n = node.OwnerDocument().CreateTextNode(v)
-				}
-			}
-			if n != nil {
-				parent.InsertBefore(n, ref)
+		items := b.convertJSNodesToGo(call.Arguments)
+
+		// Find viable next sibling (first following sibling not in nodes)
+		nodeSet := b.extractNodeSet(items)
+		var viableNextSibling *dom.Node
+		for sibling := node.NextSibling(); sibling != nil; sibling = sibling.NextSibling() {
+			if !nodeSet[sibling] {
+				viableNextSibling = sibling
+				break
 			}
 		}
+
+		// Convert items to a node (or DocumentFragment if multiple)
+		newNode := b.convertItemsToNode(node, items)
+		if newNode == nil {
+			return goja.Undefined()
+		}
+
+		// Insert before viable next sibling
+		parent.InsertBefore(newNode, viableNextSibling)
 		return goja.Undefined()
 	})
 
@@ -1877,22 +1893,31 @@ func (b *DOMBinder) bindCharacterDataChildNodeMixin(jsNode *goja.Object, node *d
 		if parent == nil {
 			return goja.Undefined()
 		}
-		ref := node.NextSibling()
-		parent.RemoveChild(node)
-		nodes := b.convertJSNodesToGo(call.Arguments)
-		for _, item := range nodes {
-			var n *dom.Node
-			switch v := item.(type) {
-			case *dom.Node:
-				n = v
-			case string:
-				if node.OwnerDocument() != nil {
-					n = node.OwnerDocument().CreateTextNode(v)
-				}
+		items := b.convertJSNodesToGo(call.Arguments)
+
+		// Find viable next sibling (first following sibling not in nodes)
+		nodeSet := b.extractNodeSet(items)
+		var viableNextSibling *dom.Node
+		for sibling := node.NextSibling(); sibling != nil; sibling = sibling.NextSibling() {
+			if !nodeSet[sibling] {
+				viableNextSibling = sibling
+				break
 			}
-			if n != nil {
-				parent.InsertBefore(n, ref)
+		}
+
+		// Convert items to a node (or DocumentFragment if multiple)
+		newNode := b.convertItemsToNode(node, items)
+
+		// If this node's parent is still parent, replace; otherwise insert
+		if node.ParentNode() == parent {
+			if newNode != nil {
+				parent.ReplaceChild(newNode, node)
+			} else {
+				// No replacement nodes, just remove this node
+				parent.RemoveChild(node)
 			}
+		} else if newNode != nil {
+			parent.InsertBefore(newNode, viableNextSibling)
 		}
 		return goja.Undefined()
 	})
@@ -1903,6 +1928,54 @@ func (b *DOMBinder) bindCharacterDataChildNodeMixin(jsNode *goja.Object, node *d
 		}
 		return goja.Undefined()
 	})
+}
+
+// extractNodeSet builds a set of DOM nodes from the items slice.
+func (b *DOMBinder) extractNodeSet(items []interface{}) map[*dom.Node]bool {
+	result := make(map[*dom.Node]bool)
+	for _, item := range items {
+		if n, ok := item.(*dom.Node); ok {
+			result[n] = true
+		}
+	}
+	return result
+}
+
+// convertItemsToNode converts items (nodes/strings) to a single node or DocumentFragment.
+func (b *DOMBinder) convertItemsToNode(contextNode *dom.Node, items []interface{}) *dom.Node {
+	doc := contextNode.OwnerDocument()
+	if doc == nil {
+		return nil
+	}
+
+	nodes := make([]*dom.Node, 0, len(items))
+	for _, item := range items {
+		var n *dom.Node
+		switch v := item.(type) {
+		case *dom.Node:
+			n = v
+		case string:
+			n = doc.CreateTextNode(v)
+		}
+		if n != nil {
+			nodes = append(nodes, n)
+		}
+	}
+
+	if len(nodes) == 0 {
+		return nil
+	}
+	if len(nodes) == 1 {
+		return nodes[0]
+	}
+
+	// Create a DocumentFragment and append all nodes
+	frag := doc.CreateDocumentFragment()
+	fragNode := (*dom.Node)(frag)
+	for _, n := range nodes {
+		fragNode.AppendChild(n)
+	}
+	return fragNode
 }
 
 // BindDocumentFragment creates a JavaScript object from a DOM document fragment.
@@ -2672,7 +2745,13 @@ func (b *DOMBinder) ClearCache() {
 func (b *DOMBinder) convertJSNodesToGo(args []goja.Value) []interface{} {
 	result := make([]interface{}, 0, len(args))
 	for _, arg := range args {
-		if goja.IsNull(arg) || goja.IsUndefined(arg) {
+		// null and undefined are converted to strings "null" and "undefined"
+		if goja.IsNull(arg) {
+			result = append(result, "null")
+			continue
+		}
+		if goja.IsUndefined(arg) {
+			result = append(result, "undefined")
 			continue
 		}
 		// Check if it's a string

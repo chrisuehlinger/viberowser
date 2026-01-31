@@ -1270,3 +1270,100 @@ func TestDOMBinderProcessingInstructionErrors(t *testing.T) {
 		t.Error("Expected error for missing data argument")
 	}
 }
+
+func TestBeforeAfterNullUndefined(t *testing.T) {
+	r := NewRuntime()
+	doc, _ := dom.ParseHTML(`<div id="parent"><span id="test">test</span></div>`)
+	binder := NewDOMBinder(r)
+	binder.BindDocument(doc)
+
+	// Test element.before(null)
+	_, err := r.Execute(`
+		var parent = document.getElementById('parent');
+		var child = document.getElementById('test');
+		child.before(null);
+		parent.innerHTML;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	result, err := r.Execute("document.getElementById('parent').innerHTML")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	expected := `null<span id="test">test</span>`
+	if result.String() != expected {
+		t.Errorf("Expected %q, got %q", expected, result.String())
+	}
+
+	// Test element.before(undefined)
+	_, err = r.Execute(`
+		var child = document.getElementById('test');
+		child.before(undefined);
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	result, err = r.Execute("document.getElementById('parent').innerHTML")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	expected = `nullundefined<span id="test">test</span>`
+	if result.String() != expected {
+		t.Errorf("Expected %q, got %q", expected, result.String())
+	}
+}
+
+func TestCommentBeforeNullUndefined(t *testing.T) {
+	r := NewRuntime()
+	doc, _ := dom.ParseHTML(`<div id="parent"><!--test--></div>`)
+	binder := NewDOMBinder(r)
+	binder.BindDocument(doc)
+
+	// Test comment.before(null)
+	_, err := r.Execute(`
+		var parent = document.getElementById('parent');
+		var comment = parent.childNodes[0];
+		comment.before(null);
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	result, err := r.Execute("document.getElementById('parent').innerHTML")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	expected := `null<!--test-->`
+	if result.String() != expected {
+		t.Errorf("Expected %q, got %q", expected, result.String())
+	}
+}
+
+func TestTextBeforeNullUndefined(t *testing.T) {
+	r := NewRuntime()
+	doc, _ := dom.ParseHTML(`<div id="parent">test</div>`)
+	binder := NewDOMBinder(r)
+	binder.BindDocument(doc)
+
+	// Test text.before(null)
+	_, err := r.Execute(`
+		var parent = document.getElementById('parent');
+		var text = parent.childNodes[0];
+		text.before(null);
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	result, err := r.Execute("document.getElementById('parent').innerHTML")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	expected := `nulltest`
+	if result.String() != expected {
+		t.Errorf("Expected %q, got %q", expected, result.String())
+	}
+}

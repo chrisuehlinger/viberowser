@@ -109,71 +109,67 @@ func (pi *ProcessingInstruction) CloneNode(deep bool) *ProcessingInstruction {
 }
 
 // Before inserts nodes before this processing instruction node.
+// Implements the ChildNode.before() algorithm from DOM spec.
 func (pi *ProcessingInstruction) Before(nodes ...interface{}) {
 	parent := pi.AsNode().parentNode
 	if parent == nil {
 		return
 	}
-	for _, item := range nodes {
-		var node *Node
-		switch v := item.(type) {
-		case *Node:
-			node = v
-		case *Element:
-			node = v.AsNode()
-		case string:
-			node = pi.AsNode().ownerDoc.CreateTextNode(v)
-		}
-		if node != nil {
-			parent.InsertBefore(node, pi.AsNode())
-		}
+	nodeSet := extractNodeSet(nodes)
+	viablePrevSibling := pi.AsNode().findViablePreviousSibling(nodeSet)
+
+	node := pi.AsNode().convertNodesToFragment(nodes)
+	if node == nil {
+		return
 	}
+
+	var refNode *Node
+	if viablePrevSibling == nil {
+		refNode = parent.firstChild
+	} else {
+		refNode = viablePrevSibling.nextSibling
+	}
+	parent.InsertBefore(node, refNode)
 }
 
 // After inserts nodes after this processing instruction node.
+// Implements the ChildNode.after() algorithm from DOM spec.
 func (pi *ProcessingInstruction) After(nodes ...interface{}) {
 	parent := pi.AsNode().parentNode
 	if parent == nil {
 		return
 	}
-	ref := pi.AsNode().nextSibling
-	for _, item := range nodes {
-		var node *Node
-		switch v := item.(type) {
-		case *Node:
-			node = v
-		case *Element:
-			node = v.AsNode()
-		case string:
-			node = pi.AsNode().ownerDoc.CreateTextNode(v)
-		}
-		if node != nil {
-			parent.InsertBefore(node, ref)
-		}
+	nodeSet := extractNodeSet(nodes)
+	viableNextSibling := pi.AsNode().findViableNextSibling(nodeSet)
+
+	node := pi.AsNode().convertNodesToFragment(nodes)
+	if node == nil {
+		return
 	}
+
+	parent.InsertBefore(node, viableNextSibling)
 }
 
 // ReplaceWith replaces this processing instruction node with nodes.
+// Implements the ChildNode.replaceWith() algorithm from DOM spec.
 func (pi *ProcessingInstruction) ReplaceWith(nodes ...interface{}) {
 	parent := pi.AsNode().parentNode
 	if parent == nil {
 		return
 	}
-	ref := pi.AsNode().nextSibling
-	parent.RemoveChild(pi.AsNode())
-	for _, item := range nodes {
-		var node *Node
-		switch v := item.(type) {
-		case *Node:
-			node = v
-		case *Element:
-			node = v.AsNode()
-		case string:
-			node = pi.AsNode().ownerDoc.CreateTextNode(v)
-		}
+	nodeSet := extractNodeSet(nodes)
+	viableNextSibling := pi.AsNode().findViableNextSibling(nodeSet)
+
+	node := pi.AsNode().convertNodesToFragment(nodes)
+
+	if pi.AsNode().parentNode == parent {
 		if node != nil {
-			parent.InsertBefore(node, ref)
+			parent.ReplaceChild(node, pi.AsNode())
+		} else {
+			parent.RemoveChild(pi.AsNode())
 		}
+	} else if node != nil {
+		parent.InsertBefore(node, viableNextSibling)
 	}
 }
 
