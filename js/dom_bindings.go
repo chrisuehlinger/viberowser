@@ -5100,12 +5100,19 @@ func (b *DOMBinder) BindTreeWalker(tw *dom.TreeWalker, root *dom.Node, whatToSho
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
 
+	// Active flag for detecting recursive filter calls (per DOM spec)
+	activeFlag := false
+
 	// Helper function to call the filter
 	callFilter := func(node *dom.Node) int {
 		// If no filter, accept all
 		if goja.IsNull(filter) || goja.IsUndefined(filter) {
 			return 1 // FILTER_ACCEPT
 		}
+
+		// Set the active flag before calling filter
+		activeFlag = true
+		defer func() { activeFlag = false }()
 
 		jsNode := b.BindNode(node)
 
@@ -5135,6 +5142,13 @@ func (b *DOMBinder) BindTreeWalker(tw *dom.TreeWalker, root *dom.Node, whatToSho
 		return int(result.ToInteger())
 	}
 
+	// Helper to check active flag and throw if set
+	checkActiveFlag := func(methodName string) {
+		if activeFlag {
+			panic(b.createDOMException("InvalidStateError", "Failed to execute '"+methodName+"' on 'TreeWalker': The TreeWalker is in an invalid state."))
+		}
+	}
+
 	// Helper to check if a node matches whatToShow
 	matchesWhatToShow := func(node *dom.Node) bool {
 		if whatToShow == 0xFFFFFFFF {
@@ -5156,6 +5170,7 @@ func (b *DOMBinder) BindTreeWalker(tw *dom.TreeWalker, root *dom.Node, whatToSho
 
 	// parentNode method
 	jsTreeWalker.Set("parentNode", func(call goja.FunctionCall) goja.Value {
+		checkActiveFlag("parentNode")
 		node := tw.CurrentNode()
 		for node != nil && node != root {
 			parent := node.ParentNode()
@@ -5174,26 +5189,31 @@ func (b *DOMBinder) BindTreeWalker(tw *dom.TreeWalker, root *dom.Node, whatToSho
 
 	// firstChild method
 	jsTreeWalker.Set("firstChild", func(call goja.FunctionCall) goja.Value {
+		checkActiveFlag("firstChild")
 		return b.traverseChildren(tw, root, filterNode, true)
 	})
 
 	// lastChild method
 	jsTreeWalker.Set("lastChild", func(call goja.FunctionCall) goja.Value {
+		checkActiveFlag("lastChild")
 		return b.traverseChildren(tw, root, filterNode, false)
 	})
 
 	// nextSibling method
 	jsTreeWalker.Set("nextSibling", func(call goja.FunctionCall) goja.Value {
+		checkActiveFlag("nextSibling")
 		return b.traverseSiblings(tw, root, filterNode, true)
 	})
 
 	// previousSibling method
 	jsTreeWalker.Set("previousSibling", func(call goja.FunctionCall) goja.Value {
+		checkActiveFlag("previousSibling")
 		return b.traverseSiblings(tw, root, filterNode, false)
 	})
 
 	// nextNode method
 	jsTreeWalker.Set("nextNode", func(call goja.FunctionCall) goja.Value {
+		checkActiveFlag("nextNode")
 		node := tw.CurrentNode()
 		result := 1 // FILTER_ACCEPT (start assuming accept to enter first child)
 
@@ -5250,6 +5270,7 @@ func (b *DOMBinder) BindTreeWalker(tw *dom.TreeWalker, root *dom.Node, whatToSho
 
 	// previousNode method
 	jsTreeWalker.Set("previousNode", func(call goja.FunctionCall) goja.Value {
+		checkActiveFlag("previousNode")
 		node := tw.CurrentNode()
 
 		for node != root {
@@ -5353,14 +5374,15 @@ func (b *DOMBinder) traverseChildren(tw *dom.TreeWalker, root *dom.Node, filterN
 }
 
 // traverseSiblings is a helper for TreeWalker.nextSibling and previousSibling
+// This follows the DOM spec "traverse siblings" algorithm.
 func (b *DOMBinder) traverseSiblings(tw *dom.TreeWalker, root *dom.Node, filterNode func(*dom.Node) int, next bool) goja.Value {
 	node := tw.CurrentNode()
 	if node == root {
 		return goja.Null()
 	}
 
-	// Use a stack to track nodes to visit
 	for {
+		// Get node's sibling
 		var sibling *dom.Node
 		if next {
 			sibling = node.NextSibling()
@@ -5368,72 +5390,53 @@ func (b *DOMBinder) traverseSiblings(tw *dom.TreeWalker, root *dom.Node, filterN
 			sibling = node.PreviousSibling()
 		}
 
+		// While sibling is not null
 		for sibling != nil {
-			result := filterNode(sibling)
+			// Set node to sibling
+			node = sibling
+
+			// Filter node and let result be the return value
+			result := filterNode(node)
+
+			// If result is FILTER_ACCEPT, set currentNode and return node
 			if result == 1 { // FILTER_ACCEPT
-				tw.SetCurrentNode(sibling)
-				return b.BindNode(sibling)
+				tw.SetCurrentNode(node)
+				return b.BindNode(node)
 			}
-			if result == 3 { // FILTER_SKIP - try to descend into children
-				// Recursively check children for accepted nodes
-				found := b.traverseSiblingDescend(tw, sibling, filterNode, next)
-				if found != nil {
-					return found
+
+			// Set sibling to node's first/last child
+			if next {
+				sibling = node.FirstChild()
+			} else {
+				sibling = node.LastChild()
+			}
+
+			// If result is FILTER_REJECT or sibling is null,
+			// set sibling to node's next/prev sibling
+			if result == 2 || sibling == nil { // FILTER_REJECT or no child
+				if next {
+					sibling = node.NextSibling()
+				} else {
+					sibling = node.PreviousSibling()
 				}
 			}
-			// Move to next/prev sibling of current node
-			if next {
-				sibling = sibling.NextSibling()
-			} else {
-				sibling = sibling.PreviousSibling()
-			}
 		}
 
-		// No more siblings at this level, go to parent
-		parent := node.ParentNode()
-		if parent == nil || parent == root {
+		// Set node to its parent
+		node = node.ParentNode()
+
+		// If node is null or is root, return null
+		if node == nil || node == root {
 			return goja.Null()
 		}
 
-		// Check if parent should be considered
-		result := filterNode(parent)
-		if result == 1 { // FILTER_ACCEPT - we've exhausted this subtree without finding a sibling
+		// Filter node and if the return value is FILTER_ACCEPT, return null
+		if filterNode(node) == 1 { // FILTER_ACCEPT
 			return goja.Null()
 		}
-		// Parent was skipped/rejected, continue looking at parent's siblings
-		node = parent
-	}
-}
 
-// traverseSiblingDescend descends into a skipped node looking for accepted children
-func (b *DOMBinder) traverseSiblingDescend(tw *dom.TreeWalker, node *dom.Node, filterNode func(*dom.Node) int, next bool) goja.Value {
-	var child *dom.Node
-	if next {
-		child = node.FirstChild()
-	} else {
-		child = node.LastChild()
+		// Run these substeps again (continue the outer loop)
 	}
-
-	for child != nil {
-		result := filterNode(child)
-		if result == 1 { // FILTER_ACCEPT
-			tw.SetCurrentNode(child)
-			return b.BindNode(child)
-		}
-		if result == 3 { // FILTER_SKIP - descend further
-			found := b.traverseSiblingDescend(tw, child, filterNode, next)
-			if found != nil {
-				return found
-			}
-		}
-		// FILTER_REJECT or no accepted descendants found, try next child
-		if next {
-			child = child.NextSibling()
-		} else {
-			child = child.PreviousSibling()
-		}
-	}
-	return nil
 }
 
 // getGoRange extracts the Go Range from a JavaScript object.
