@@ -960,3 +960,146 @@ func TestNode_HierarchyRequestError(t *testing.T) {
 		}
 	}
 }
+
+func TestDocument_CreateProcessingInstruction(t *testing.T) {
+	doc := NewDocument()
+
+	// Test basic creation
+	pi := doc.CreateProcessingInstruction("xml-stylesheet", "href='styles.css' type='text/css'")
+	if pi == nil {
+		t.Fatal("CreateProcessingInstruction returned nil")
+	}
+	if pi.NodeType() != ProcessingInstructionNode {
+		t.Errorf("Expected ProcessingInstructionNode (7), got %v", pi.NodeType())
+	}
+	if pi.NodeName() != "xml-stylesheet" {
+		t.Errorf("Expected nodeName 'xml-stylesheet', got '%s'", pi.NodeName())
+	}
+	if pi.NodeValue() != "href='styles.css' type='text/css'" {
+		t.Errorf("Expected correct nodeValue, got '%s'", pi.NodeValue())
+	}
+
+	// Test as ProcessingInstruction type
+	piNode := (*ProcessingInstruction)(pi)
+	if piNode.Target() != "xml-stylesheet" {
+		t.Errorf("Expected target 'xml-stylesheet', got '%s'", piNode.Target())
+	}
+	if piNode.Data() != "href='styles.css' type='text/css'" {
+		t.Errorf("Expected correct data, got '%s'", piNode.Data())
+	}
+
+	// Test CharacterData methods
+	if piNode.Length() != len("href='styles.css' type='text/css'") {
+		t.Errorf("Expected length %d, got %d", len("href='styles.css' type='text/css'"), piNode.Length())
+	}
+
+	substr := piNode.SubstringData(0, 4)
+	if substr != "href" {
+		t.Errorf("Expected 'href', got '%s'", substr)
+	}
+
+	// Test SetData
+	piNode.SetData("new data")
+	if piNode.Data() != "new data" {
+		t.Errorf("Expected 'new data', got '%s'", piNode.Data())
+	}
+
+	// Verify nodeValue is also updated
+	if pi.NodeValue() != "new data" {
+		t.Errorf("Expected nodeValue 'new data', got '%s'", pi.NodeValue())
+	}
+}
+
+func TestDocument_CreateProcessingInstruction_InvalidTarget(t *testing.T) {
+	doc := NewDocument()
+
+	// Test invalid target (starts with number)
+	pi := doc.CreateProcessingInstruction("123invalid", "data")
+	if pi != nil {
+		t.Error("Expected nil for invalid target starting with number")
+	}
+
+	// Test invalid target (starts with hyphen)
+	pi = doc.CreateProcessingInstruction("-invalid", "data")
+	if pi != nil {
+		t.Error("Expected nil for invalid target starting with hyphen")
+	}
+
+	// Test empty target
+	pi = doc.CreateProcessingInstruction("", "data")
+	if pi != nil {
+		t.Error("Expected nil for empty target")
+	}
+}
+
+func TestDocument_CreateProcessingInstruction_InvalidData(t *testing.T) {
+	doc := NewDocument()
+
+	// Test data containing "?>"
+	pi := doc.CreateProcessingInstruction("target", "some data ?> more data")
+	if pi != nil {
+		t.Error("Expected nil for data containing '?>'")
+	}
+}
+
+func TestDocument_CreateProcessingInstructionWithError(t *testing.T) {
+	doc := NewDocument()
+
+	// Test valid creation
+	pi, err := doc.CreateProcessingInstructionWithError("valid", "data")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if pi == nil {
+		t.Fatal("Expected non-nil PI")
+	}
+
+	// Test invalid target
+	pi, err = doc.CreateProcessingInstructionWithError("123", "data")
+	if err == nil {
+		t.Error("Expected error for invalid target")
+	}
+	if pi != nil {
+		t.Error("Expected nil PI for invalid target")
+	}
+
+	// Test invalid data
+	pi, err = doc.CreateProcessingInstructionWithError("target", "data?>more")
+	if err == nil {
+		t.Error("Expected error for invalid data")
+	}
+	if pi != nil {
+		t.Error("Expected nil PI for invalid data")
+	}
+}
+
+func TestProcessingInstruction_CanBeChildOfDocument(t *testing.T) {
+	doc := NewDocument()
+	pi := doc.CreateProcessingInstruction("xml-stylesheet", "href='test.css'")
+
+	// ProcessingInstruction can be appended to Document
+	_, err := doc.AsNode().AppendChildWithError(pi)
+	if err != nil {
+		t.Errorf("Expected ProcessingInstruction to be valid child of Document, got error: %v", err)
+	}
+
+	if doc.AsNode().FirstChild() != pi {
+		t.Error("Expected ProcessingInstruction to be first child of Document")
+	}
+}
+
+func TestProcessingInstruction_CanBeChildOfElement(t *testing.T) {
+	doc := NewDocument()
+	el := doc.CreateElement("div")
+	pi := doc.CreateProcessingInstruction("php", "echo 'hello';")
+
+	// ProcessingInstruction can be appended to Element
+	_, err := el.AsNode().AppendChildWithError(pi)
+	if err != nil {
+		t.Errorf("Expected ProcessingInstruction to be valid child of Element, got error: %v", err)
+	}
+
+	if el.AsNode().FirstChild() != pi {
+		t.Error("Expected ProcessingInstruction to be first child of Element")
+	}
+}

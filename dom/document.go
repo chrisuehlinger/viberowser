@@ -202,6 +202,42 @@ func (d *Document) CreateComment(data string) *Node {
 	return node
 }
 
+// CreateProcessingInstruction creates a new processing instruction node.
+// The target is the application to which the instruction is targeted.
+// The data is the content of the processing instruction.
+// Returns nil if target is not a valid XML name or data contains "?>".
+func (d *Document) CreateProcessingInstruction(target, data string) *Node {
+	// Validate target
+	if err := ValidateProcessingInstructionTarget(target); err != nil {
+		return nil
+	}
+	// Validate data
+	if err := ValidateProcessingInstructionData(data); err != nil {
+		return nil
+	}
+
+	node := newNode(ProcessingInstructionNode, target, d)
+	node.nodeValue = &data
+	return node
+}
+
+// CreateProcessingInstructionWithError creates a new processing instruction node.
+// Returns an error if target is not a valid XML name or data contains "?>".
+func (d *Document) CreateProcessingInstructionWithError(target, data string) (*Node, error) {
+	// Validate target
+	if err := ValidateProcessingInstructionTarget(target); err != nil {
+		return nil, err
+	}
+	// Validate data
+	if err := ValidateProcessingInstructionData(data); err != nil {
+		return nil, err
+	}
+
+	node := newNode(ProcessingInstructionNode, target, d)
+	node.nodeValue = &data
+	return node, nil
+}
+
 // CreateDocumentFragment creates a new empty document fragment.
 func (d *Document) CreateDocumentFragment() *DocumentFragment {
 	node := newNode(DocumentFragmentNode, "#document-fragment", d)

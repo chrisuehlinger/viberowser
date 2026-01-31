@@ -1108,3 +1108,165 @@ func TestInsertBeforeLength(t *testing.T) {
 		t.Errorf("Expected insertBefore.length = 2, got %v", result.String())
 	}
 }
+
+func TestDOMBinderProcessingInstruction(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML("<!DOCTYPE html><html><body></body></html>")
+	binder.BindDocument(doc)
+
+	// Test createProcessingInstruction exists
+	result, err := r.Execute("typeof document.createProcessingInstruction")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "function" {
+		t.Errorf("Expected createProcessingInstruction to be a function, got %v", result.String())
+	}
+
+	// Test creating a processing instruction
+	result, err = r.Execute(`
+		var pi = document.createProcessingInstruction('xml-stylesheet', 'href="test.css"');
+		pi.nodeType
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 7 {
+		t.Errorf("Expected nodeType = 7, got %v", result.String())
+	}
+
+	// Test target property
+	result, err = r.Execute(`pi.target`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "xml-stylesheet" {
+		t.Errorf("Expected target = 'xml-stylesheet', got %v", result.String())
+	}
+
+	// Test nodeName is same as target
+	result, err = r.Execute(`pi.nodeName`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "xml-stylesheet" {
+		t.Errorf("Expected nodeName = 'xml-stylesheet', got %v", result.String())
+	}
+
+	// Test data property
+	result, err = r.Execute(`pi.data`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "href=\"test.css\"" {
+		t.Errorf("Expected data = 'href=\"test.css\"', got %v", result.String())
+	}
+
+	// Test nodeValue is same as data
+	result, err = r.Execute(`pi.nodeValue`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "href=\"test.css\"" {
+		t.Errorf("Expected nodeValue = 'href=\"test.css\"', got %v", result.String())
+	}
+
+	// Test length property
+	result, err = r.Execute(`pi.length`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	expectedLen := len("href=\"test.css\"")
+	if result.ToInteger() != int64(expectedLen) {
+		t.Errorf("Expected length = %d, got %v", expectedLen, result.String())
+	}
+
+	// Test instanceof ProcessingInstruction
+	result, err = r.Execute(`pi instanceof ProcessingInstruction`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "true" {
+		t.Errorf("Expected pi instanceof ProcessingInstruction to be true, got %v", result.String())
+	}
+
+	// Test instanceof CharacterData
+	result, err = r.Execute(`pi instanceof CharacterData`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "true" {
+		t.Errorf("Expected pi instanceof CharacterData to be true, got %v", result.String())
+	}
+
+	// Test instanceof Node
+	result, err = r.Execute(`pi instanceof Node`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "true" {
+		t.Errorf("Expected pi instanceof Node to be true, got %v", result.String())
+	}
+
+	// Test CharacterData methods
+	result, err = r.Execute(`pi.substringData(0, 4)`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "href" {
+		t.Errorf("Expected substringData(0, 4) = 'href', got %v", result.String())
+	}
+
+	// Test setting data
+	result, err = r.Execute(`
+		pi.data = 'new data';
+		pi.data
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "new data" {
+		t.Errorf("Expected data = 'new data', got %v", result.String())
+	}
+
+	// Test can be appended to document
+	result, err = r.Execute(`
+		var pi2 = document.createProcessingInstruction('test', 'value');
+		document.body.appendChild(pi2);
+		document.body.lastChild.target
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "test" {
+		t.Errorf("Expected appended PI target = 'test', got %v", result.String())
+	}
+}
+
+func TestDOMBinderProcessingInstructionErrors(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML("<!DOCTYPE html><html><body></body></html>")
+	binder.BindDocument(doc)
+
+	// Test error for invalid target (starts with number)
+	_, err := r.Execute(`document.createProcessingInstruction('123invalid', 'data')`)
+	if err == nil {
+		t.Error("Expected error for invalid target starting with number")
+	}
+
+	// Test error for data containing "?>"
+	_, err = r.Execute(`document.createProcessingInstruction('valid', 'data?>more')`)
+	if err == nil {
+		t.Error("Expected error for data containing '?>'")
+	}
+
+	// Test error for missing arguments
+	_, err = r.Execute(`document.createProcessingInstruction('target')`)
+	if err == nil {
+		t.Error("Expected error for missing data argument")
+	}
+}

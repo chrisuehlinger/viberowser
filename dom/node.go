@@ -92,7 +92,7 @@ func (n *Node) NodeValue() string {
 }
 
 // SetNodeValue sets the value of the node.
-// This only has an effect on text and comment nodes.
+// This only has an effect on text, comment, and processing instruction nodes.
 func (n *Node) SetNodeValue(value string) {
 	switch n.nodeType {
 	case TextNode:
@@ -104,6 +104,8 @@ func (n *Node) SetNodeValue(value string) {
 		if n.commentData != nil {
 			*n.commentData = value
 		}
+		n.nodeValue = &value
+	case ProcessingInstructionNode:
 		n.nodeValue = &value
 	}
 	// For other node types, this is a no-op per the spec

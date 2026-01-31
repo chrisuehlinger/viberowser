@@ -112,16 +112,17 @@ type DOMBinder struct {
 	document *dom.Document              // Current document for creating new nodes
 
 	// Prototype objects for instanceof checks
-	nodeProto             *goja.Object
-	characterDataProto    *goja.Object
-	textProto             *goja.Object
-	commentProto          *goja.Object
-	elementProto          *goja.Object
-	documentProto         *goja.Object
-	documentFragmentProto     *goja.Object
-	domExceptionProto         *goja.Object
-	domImplementationProto    *goja.Object
-	domImplementationCache    map[*dom.DOMImplementation]*goja.Object
+	nodeProto                    *goja.Object
+	characterDataProto           *goja.Object
+	textProto                    *goja.Object
+	commentProto                 *goja.Object
+	processingInstructionProto   *goja.Object
+	elementProto                 *goja.Object
+	documentProto                *goja.Object
+	documentFragmentProto        *goja.Object
+	domExceptionProto            *goja.Object
+	domImplementationProto       *goja.Object
+	domImplementationCache       map[*dom.DOMImplementation]*goja.Object
 }
 
 // NewDOMBinder creates a new DOM binder for the given runtime.
@@ -272,6 +273,18 @@ func (b *DOMBinder) setupPrototypes() {
 	commentConstructorObj.Set("prototype", b.commentProto)
 	b.commentProto.Set("constructor", commentConstructorObj)
 	vm.Set("Comment", commentConstructorObj)
+
+	// Create ProcessingInstruction prototype (extends CharacterData)
+	b.processingInstructionProto = vm.NewObject()
+	b.processingInstructionProto.SetPrototype(b.characterDataProto)
+	piConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		// ProcessingInstruction cannot be constructed directly - must use createProcessingInstruction
+		panic(vm.NewTypeError("Illegal constructor"))
+	})
+	piConstructorObj := piConstructor.ToObject(vm)
+	piConstructorObj.Set("prototype", b.processingInstructionProto)
+	b.processingInstructionProto.Set("constructor", piConstructorObj)
+	vm.Set("ProcessingInstruction", piConstructorObj)
 
 	// Create Element prototype (extends Node)
 	b.elementProto = vm.NewObject()
@@ -471,6 +484,20 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 		}
 		node := doc.CreateComment(data)
 		return b.BindNode(node)
+	})
+
+	jsDoc.Set("createProcessingInstruction", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			panic(vm.NewTypeError("Failed to execute 'createProcessingInstruction' on 'Document': 2 arguments required."))
+		}
+		target := call.Arguments[0].String()
+		data := call.Arguments[1].String()
+
+		node, err := doc.CreateProcessingInstructionWithError(target, data)
+		if err != nil {
+			panic(b.createDOMException("InvalidCharacterError", err.Error()))
+		}
+		return b.BindProcessingInstructionNode(node, nil)
 	})
 
 	jsDoc.Set("createDocumentFragment", func(call goja.FunctionCall) goja.Value {
@@ -722,6 +749,20 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 		}
 		node := doc.CreateComment(data)
 		return b.BindNode(node)
+	})
+
+	jsDoc.Set("createProcessingInstruction", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			panic(vm.NewTypeError("Failed to execute 'createProcessingInstruction' on 'Document': 2 arguments required."))
+		}
+		target := call.Arguments[0].String()
+		data := call.Arguments[1].String()
+
+		node, err := doc.CreateProcessingInstructionWithError(target, data)
+		if err != nil {
+			panic(b.createDOMException("InvalidCharacterError", err.Error()))
+		}
+		return b.BindProcessingInstructionNode(node, nil)
 	})
 
 	jsDoc.Set("createDocumentFragment", func(call goja.FunctionCall) goja.Value {
@@ -1298,6 +1339,8 @@ func (b *DOMBinder) BindNode(node *dom.Node) *goja.Object {
 		return b.BindTextNode(node, nil)
 	case dom.CommentNode:
 		return b.BindCommentNode(node, nil)
+	case dom.ProcessingInstructionNode:
+		return b.BindProcessingInstructionNode(node, nil)
 	}
 
 	// For other nodes
@@ -1445,6 +1488,101 @@ func (b *DOMBinder) BindCommentNode(node *dom.Node, proto *goja.Object) *goja.Ob
 	jsNode.Set("_goNode", node)
 	jsNode.Set("nodeType", int(dom.CommentNode))
 	jsNode.Set("nodeName", "#comment")
+
+	// CharacterData properties
+	// Per spec, setting data/nodeValue/textContent to null should result in empty string
+	jsNode.DefineAccessorProperty("data", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(node.NodeValue())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			val := ""
+			if !goja.IsNull(call.Arguments[0]) {
+				val = call.Arguments[0].String()
+			}
+			node.SetNodeValue(val)
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsNode.DefineAccessorProperty("nodeValue", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(node.NodeValue())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			val := ""
+			if !goja.IsNull(call.Arguments[0]) {
+				val = call.Arguments[0].String()
+			}
+			node.SetNodeValue(val)
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsNode.DefineAccessorProperty("textContent", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(node.TextContent())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			val := ""
+			if !goja.IsNull(call.Arguments[0]) {
+				val = call.Arguments[0].String()
+			}
+			node.SetTextContent(val)
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsNode.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Return length in UTF-16 code units per the CharacterData spec
+		return vm.ToValue(utf16Length(node.NodeValue()))
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// CharacterData mutation methods
+	b.bindCharacterDataMethods(jsNode, node)
+
+	// ChildNode mixin methods
+	b.bindCharacterDataChildNodeMixin(jsNode, node)
+
+	// Common node properties
+	b.bindNodeProperties(jsNode, node)
+
+	// Cache
+	b.nodeMap[node] = jsNode
+
+	return jsNode
+}
+
+// BindProcessingInstructionNode creates a JavaScript object from a DOM ProcessingInstruction node.
+func (b *DOMBinder) BindProcessingInstructionNode(node *dom.Node, proto *goja.Object) *goja.Object {
+	if node == nil {
+		return nil
+	}
+
+	// Check cache
+	if jsObj, ok := b.nodeMap[node]; ok {
+		return jsObj
+	}
+
+	vm := b.runtime.vm
+	jsNode := vm.NewObject()
+
+	// Set prototype for instanceof to work
+	if proto != nil {
+		jsNode.SetPrototype(proto)
+	} else if b.processingInstructionProto != nil {
+		jsNode.SetPrototype(b.processingInstructionProto)
+	}
+
+	jsNode.Set("_goNode", node)
+	jsNode.Set("nodeType", int(dom.ProcessingInstructionNode))
+
+	// nodeName is the target for ProcessingInstruction
+	jsNode.DefineAccessorProperty("nodeName", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(node.NodeName())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// target property (read-only) - same as nodeName for ProcessingInstruction
+	jsNode.DefineAccessorProperty("target", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(node.NodeName())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	// CharacterData properties
 	// Per spec, setting data/nodeValue/textContent to null should result in empty string
