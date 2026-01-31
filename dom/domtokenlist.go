@@ -51,6 +51,8 @@ func newDOMTokenList(element *Element, attrName string) *DOMTokenList {
 }
 
 // tokens returns the current list of tokens (deduplicated, preserving order).
+// Per the DOM spec, tokens are split on ASCII whitespace only (TAB, LF, FF, CR, SPACE),
+// not on Unicode whitespace characters like NO-BREAK SPACE.
 func (dtl *DOMTokenList) tokens() []string {
 	if dtl.element == nil {
 		return nil
@@ -59,8 +61,8 @@ func (dtl *DOMTokenList) tokens() []string {
 	if value == "" {
 		return nil
 	}
-	// Split by whitespace and deduplicate while preserving order
-	allTokens := strings.Fields(value)
+	// Split by ASCII whitespace only and deduplicate while preserving order
+	allTokens := splitOnASCIIWhitespace(value)
 	seen := make(map[string]bool)
 	result := make([]string, 0, len(allTokens))
 	for _, token := range allTokens {

@@ -484,6 +484,18 @@ func TestDocument_GetElementsByClassName(t *testing.T) {
 	if fooBarElements.Length() != 1 {
 		t.Errorf("Expected 1 element with classes 'foo bar', got %d", fooBarElements.Length())
 	}
+
+	// Test empty string returns empty collection
+	emptyElements := doc.GetElementsByClassName("")
+	if emptyElements.Length() != 0 {
+		t.Errorf("Expected 0 elements for empty class name, got %d", emptyElements.Length())
+	}
+
+	// Test whitespace-only returns empty collection
+	whitespaceElements := doc.GetElementsByClassName("   ")
+	if whitespaceElements.Length() != 0 {
+		t.Errorf("Expected 0 elements for whitespace-only class name, got %d", whitespaceElements.Length())
+	}
 }
 
 func TestElement_Matches(t *testing.T) {

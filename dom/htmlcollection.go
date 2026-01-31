@@ -2,6 +2,37 @@ package dom
 
 import "strings"
 
+// isASCIIWhitespace returns true if the character is an ASCII whitespace character
+// per the Infra spec: U+0009 TAB, U+000A LF, U+000C FF, U+000D CR, or U+0020 SPACE.
+func isASCIIWhitespace(r rune) bool {
+	return r == '\t' || r == '\n' || r == '\f' || r == '\r' || r == ' '
+}
+
+// splitOnASCIIWhitespace splits a string on ASCII whitespace only,
+// not on Unicode whitespace characters like NO-BREAK SPACE.
+// This is required for getElementsByClassName per the DOM spec.
+func splitOnASCIIWhitespace(s string) []string {
+	var result []string
+	var current strings.Builder
+
+	for _, r := range s {
+		if isASCIIWhitespace(r) {
+			if current.Len() > 0 {
+				result = append(result, current.String())
+				current.Reset()
+			}
+		} else {
+			current.WriteRune(r)
+		}
+	}
+
+	if current.Len() > 0 {
+		result = append(result, current.String())
+	}
+
+	return result
+}
+
 // HTMLCollection represents a live collection of elements. Unlike NodeList,
 // HTMLCollection only contains Element nodes.
 type HTMLCollection struct {
@@ -35,8 +66,18 @@ func NewHTMLCollectionByTagName(root *Node, tagName string) *HTMLCollection {
 }
 
 // NewHTMLCollectionByClassName creates an HTMLCollection of elements with the given class name(s).
+// Per the DOM spec, if the classNames argument contains no tokens (is empty or whitespace-only),
+// the result is an empty collection.
+// Class names are split on ASCII whitespace only (TAB, LF, FF, CR, SPACE), not on Unicode
+// whitespace characters like NO-BREAK SPACE, which are valid class name characters.
 func NewHTMLCollectionByClassName(root *Node, classNames string) *HTMLCollection {
-	classes := strings.Fields(classNames)
+	classes := splitOnASCIIWhitespace(classNames)
+	// If no class names are provided, return a collection that matches nothing
+	if len(classes) == 0 {
+		return newHTMLCollection(root, func(el *Element) bool {
+			return false
+		})
+	}
 	return newHTMLCollection(root, func(el *Element) bool {
 		classList := el.ClassList()
 		for _, class := range classes {
