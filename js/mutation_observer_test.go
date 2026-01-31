@@ -333,3 +333,208 @@ func TestMutationObserverSubtree(t *testing.T) {
 		t.Error("Expected callback to be called with subtree option")
 	}
 }
+
+func TestMutationObserverInnerHTML(t *testing.T) {
+	r := NewRuntime()
+	se := NewScriptExecutor(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body><p id="test">old text</p></body>
+</html>`)
+
+	se.SetupDocument(doc)
+
+	// Set up observer and use innerHTML
+	_, err := r.Execute(`
+		var recordCount = 0;
+		var records = [];
+
+		var observer = new MutationObserver(function(mutations) {
+			recordCount = mutations.length;
+			for (var i = 0; i < mutations.length; i++) {
+				records.push({
+					type: mutations[i].type,
+					addedCount: mutations[i].addedNodes.length,
+					removedCount: mutations[i].removedNodes.length
+				});
+			}
+		});
+
+		var target = document.getElementById('test');
+		observer.observe(target, { childList: true });
+
+		// Replace content with innerHTML
+		target.innerHTML = "new text";
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Run the event loop
+	se.RunEventLoop()
+
+	// Check that only 1 mutation record was generated for innerHTML
+	result, err := r.Execute("recordCount")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 1 {
+		t.Errorf("Expected 1 mutation record for innerHTML, got %d", result.ToInteger())
+	}
+
+	// Check that the single record has both addedNodes and removedNodes
+	result, err = r.Execute("records[0].addedCount")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 1 {
+		t.Errorf("Expected 1 added node, got %d", result.ToInteger())
+	}
+
+	result, err = r.Execute("records[0].removedCount")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 1 {
+		t.Errorf("Expected 1 removed node, got %d", result.ToInteger())
+	}
+}
+
+func TestMutationObserverInnerHTMLWithMultipleChildren(t *testing.T) {
+	r := NewRuntime()
+	se := NewScriptExecutor(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body><p id="test">old text</p></body>
+</html>`)
+
+	se.SetupDocument(doc)
+
+	// Set up observer and use innerHTML to add multiple children
+	_, err := r.Execute(`
+		var recordCount = 0;
+		var records = [];
+
+		var observer = new MutationObserver(function(mutations) {
+			recordCount = mutations.length;
+			for (var i = 0; i < mutations.length; i++) {
+				records.push({
+					type: mutations[i].type,
+					addedCount: mutations[i].addedNodes.length,
+					removedCount: mutations[i].removedNodes.length
+				});
+			}
+		});
+
+		var target = document.getElementById('test');
+		observer.observe(target, { childList: true });
+
+		// Replace content with multiple children
+		target.innerHTML = "<span>new</span><span>text</span>";
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Run the event loop
+	se.RunEventLoop()
+
+	// Check that only 1 mutation record was generated for innerHTML
+	result, err := r.Execute("recordCount")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 1 {
+		t.Errorf("Expected 1 mutation record for innerHTML, got %d", result.ToInteger())
+	}
+
+	// Check that the single record has 2 addedNodes and 1 removedNode
+	result, err = r.Execute("records[0].addedCount")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 2 {
+		t.Errorf("Expected 2 added nodes, got %d", result.ToInteger())
+	}
+
+	result, err = r.Execute("records[0].removedCount")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 1 {
+		t.Errorf("Expected 1 removed node, got %d", result.ToInteger())
+	}
+}
+
+func TestMutationObserverInnerHTMLAndAttribute(t *testing.T) {
+	r := NewRuntime()
+	se := NewScriptExecutor(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body><p id="test">old text</p></body>
+</html>`)
+
+	se.SetupDocument(doc)
+
+	// Replicate the WPT test: innerHTML + className change
+	_, err := r.Execute(`
+		var recordCount = 0;
+		var records = [];
+		var totalCalls = 0;
+
+		var observer = new MutationObserver(function(mutations) {
+			totalCalls++;
+			recordCount += mutations.length;
+			for (var i = 0; i < mutations.length; i++) {
+				records.push({
+					type: mutations[i].type,
+					target: mutations[i].target.id || mutations[i].target.nodeName,
+					addedCount: mutations[i].addedNodes ? mutations[i].addedNodes.length : 0,
+					removedCount: mutations[i].removedNodes ? mutations[i].removedNodes.length : 0,
+					attributeName: mutations[i].attributeName
+				});
+			}
+		});
+
+		var target = document.getElementById('test');
+		observer.observe(target, { childList: true, attributes: true });
+
+		// Do the same operations as WPT test
+		target.innerHTML = "new text";
+		target.className = "c01";
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Run the event loop
+	se.RunEventLoop()
+
+	// Check that exactly 2 mutation records were generated: 1 childList + 1 attributes
+	result, err := r.Execute("recordCount")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 2 {
+		// Print out what we got for debugging
+		r.Execute(`
+			console.log("Total calls: " + totalCalls);
+			console.log("Got " + recordCount + " records:");
+			for (var i = 0; i < records.length; i++) {
+				console.log("  Record " + i + ": type=" + records[i].type +
+					" target=" + records[i].target +
+					" added=" + records[i].addedCount +
+					" removed=" + records[i].removedCount +
+					" attr=" + records[i].attributeName);
+			}
+		`)
+		se.RunEventLoop()
+		t.Errorf("Expected 2 mutation records, got %d", result.ToInteger())
+	}
+}

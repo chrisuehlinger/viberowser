@@ -699,31 +699,44 @@ func (e *Element) InnerHTML() string {
 }
 
 // SetInnerHTML sets the HTML content of the element.
+// Per DOM spec, this generates a single mutation record containing all removed
+// and all added nodes, rather than individual records for each operation.
 func (e *Element) SetInnerHTML(htmlContent string) error {
-	// Remove all children
-	for e.AsNode().firstChild != nil {
-		e.AsNode().RemoveChild(e.AsNode().firstChild)
-	}
-
-	// Parse the new HTML
-	if htmlContent == "" {
-		return nil
-	}
-
-	// Use the HTML parser to parse the fragment
-	// We need to parse in the context of this element
-	doc := e.AsNode().ownerDoc
+	n := e.AsNode()
+	doc := n.ownerDoc
 	if doc == nil {
 		return nil
 	}
 
-	nodes, err := parseHTMLFragment(htmlContent, e)
-	if err != nil {
-		return err
+	// Step 1: Parse the new HTML content first (before any mutations)
+	var nodesToAdd []*Node
+	if htmlContent != "" {
+		var err error
+		nodesToAdd, err = parseHTMLFragment(htmlContent, e)
+		if err != nil {
+			return err
+		}
 	}
 
-	for _, node := range nodes {
-		e.AsNode().AppendChild(node)
+	// Step 2: Collect all current children to be removed
+	var removedNodes []*Node
+	for child := n.firstChild; child != nil; child = child.nextSibling {
+		removedNodes = append(removedNodes, child)
+	}
+
+	// Step 3: Remove all children without triggering individual notifications
+	for n.firstChild != nil {
+		n.removeChildInternal(n.firstChild)
+	}
+
+	// Step 4: Add all new nodes without triggering individual notifications
+	for _, node := range nodesToAdd {
+		n.insertBeforeInternal(node, nil)
+	}
+
+	// Step 5: Send a single mutation notification for the entire operation
+	if len(removedNodes) > 0 || len(nodesToAdd) > 0 {
+		notifyChildListMutation(n, nodesToAdd, removedNodes, nil, nil)
 	}
 
 	return nil
@@ -737,29 +750,42 @@ func (e *Element) OuterHTML() string {
 }
 
 // SetOuterHTML replaces this element with the parsed HTML.
+// Per DOM spec, this generates a single mutation record with this element in
+// removedNodes and all parsed nodes in addedNodes.
 func (e *Element) SetOuterHTML(htmlContent string) error {
-	parent := e.AsNode().parentNode
+	n := e.AsNode()
+	parent := n.parentNode
 	if parent == nil {
 		return nil
 	}
 
-	doc := e.AsNode().ownerDoc
+	doc := n.ownerDoc
 	if doc == nil {
 		return nil
 	}
 
+	// Step 1: Parse the new HTML content first (before any mutations)
 	nodes, err := parseHTMLFragment(htmlContent, (*Element)(parent))
 	if err != nil {
 		return err
 	}
 
-	// Insert new nodes before this element
+	// Step 2: Capture sibling info before any modifications
+	prevSib := n.prevSibling
+	nextSib := n.nextSibling
+
+	// Step 3: Remove this element from parent without notification
+	parent.removeChildInternal(n)
+
+	// Step 4: Insert all new nodes at the position where this element was
+	// We need to insert them before nextSib (or at end if nextSib is nil)
 	for _, node := range nodes {
-		parent.InsertBefore(node, e.AsNode())
+		parent.insertBeforeInternal(node, nextSib)
 	}
 
-	// Remove this element
-	parent.RemoveChild(e.AsNode())
+	// Step 5: Send a single mutation notification for the entire operation
+	// removedNodes contains this element, addedNodes contains all new nodes
+	notifyChildListMutation(parent, nodes, []*Node{n}, prevSib, nextSib)
 
 	return nil
 }
