@@ -493,3 +493,170 @@ func TestWPTAttributes(t *testing.T) {
 		t.Errorf("Expected some test results, got none")
 	}
 }
+
+// TestWPTTreeWalkerBasic tests the TreeWalker basic test
+func TestWPTTreeWalkerBasic(t *testing.T) {
+	wptPath := "/workspaces/wpt"
+
+	// Check if WPT exists
+	if _, err := os.Stat(wptPath); os.IsNotExist(err) {
+		t.Skip("WPT not available")
+	}
+
+	runner := NewRunner(wptPath)
+	runner.Timeout = 10 * time.Second
+
+	result := runner.RunTestFile("/dom/traversal/TreeWalker-basic.html")
+
+	t.Logf("HarnessStatus: %s", result.HarnessStatus)
+	t.Logf("Error: %s", result.Error)
+	t.Logf("Duration: %v", result.Duration)
+	t.Logf("Tests: %d", len(result.Tests))
+
+	passed := 0
+	failed := 0
+	for _, test := range result.Tests {
+		statusStr := "PASS"
+		if test.Status != StatusPass {
+			statusStr = "FAIL"
+			failed++
+		} else {
+			passed++
+		}
+		t.Logf("  [%s] %s: %s", statusStr, test.Name, test.Message)
+	}
+
+	t.Logf("Summary: %d passed, %d failed", passed, failed)
+
+	if len(result.Tests) == 0 {
+		t.Errorf("Expected some test results, got none")
+	}
+}
+
+// TestWPTTreeWalkerAll runs all TreeWalker tests from the WPT suite
+func TestWPTTreeWalkerAll(t *testing.T) {
+	wptPath := "/workspaces/wpt"
+
+	// Check if WPT exists
+	if _, err := os.Stat(wptPath); os.IsNotExist(err) {
+		t.Skip("WPT not available")
+	}
+
+	tests := []string{
+		"/dom/traversal/TreeWalker.html",
+		"/dom/traversal/TreeWalker-basic.html",
+		"/dom/traversal/TreeWalker-currentNode.html",
+		"/dom/traversal/TreeWalker-acceptNode-filter.html",
+		"/dom/traversal/TreeWalker-traversal-skip.html",
+		"/dom/traversal/TreeWalker-traversal-reject.html",
+		"/dom/traversal/TreeWalker-traversal-skip-most.html",
+		"/dom/traversal/TreeWalker-walking-outside-a-tree.html",
+	}
+
+	runner := NewRunner(wptPath)
+	runner.Timeout = 10 * time.Second
+
+	totalPassed := 0
+	totalFailed := 0
+
+	for _, testPath := range tests {
+		result := runner.RunTestFile(testPath)
+		passed := 0
+		failed := 0
+		for _, test := range result.Tests {
+			if test.Status == StatusPass {
+				passed++
+			} else {
+				failed++
+				t.Logf("  FAIL [%s] %s: %s", testPath, test.Name, test.Message)
+			}
+		}
+		totalPassed += passed
+		totalFailed += failed
+		t.Logf("%s: %d passed, %d failed", testPath, passed, failed)
+	}
+
+	t.Logf("TOTAL: %d passed, %d failed", totalPassed, totalFailed)
+
+	if totalFailed > 0 {
+		t.Errorf("Some TreeWalker tests failed")
+	}
+}
+
+// TestWPTTreeWalkerFilter tests TreeWalker with filter functions
+func TestWPTTreeWalkerFilter(t *testing.T) {
+	wptPath := "/workspaces/wpt"
+
+	// Check if WPT exists
+	if _, err := os.Stat(wptPath); os.IsNotExist(err) {
+		t.Skip("WPT not available")
+	}
+
+	runner := NewRunner(wptPath)
+	runner.Timeout = 10 * time.Second
+
+	result := runner.RunTestFile("/dom/traversal/TreeWalker-acceptNode-filter.html")
+
+	t.Logf("HarnessStatus: %s", result.HarnessStatus)
+	t.Logf("Error: %s", result.Error)
+	t.Logf("Duration: %v", result.Duration)
+	t.Logf("Tests: %d", len(result.Tests))
+
+	passed := 0
+	failed := 0
+	for _, test := range result.Tests {
+		statusStr := "PASS"
+		if test.Status != StatusPass {
+			statusStr = "FAIL"
+			failed++
+		} else {
+			passed++
+		}
+		t.Logf("  [%s] %s: %s", statusStr, test.Name, test.Message)
+	}
+
+	t.Logf("Summary: %d passed, %d failed", passed, failed)
+
+	if len(result.Tests) == 0 {
+		t.Errorf("Expected some test results, got none")
+	}
+}
+
+// TestWPTNodeFilterConstants tests the NodeFilter constants test
+func TestWPTNodeFilterConstants(t *testing.T) {
+	wptPath := "/workspaces/wpt"
+
+	// Check if WPT exists
+	if _, err := os.Stat(wptPath); os.IsNotExist(err) {
+		t.Skip("WPT not available")
+	}
+
+	runner := NewRunner(wptPath)
+	runner.Timeout = 10 * time.Second
+
+	result := runner.RunTestFile("/dom/traversal/NodeFilter-constants.html")
+
+	t.Logf("HarnessStatus: %s", result.HarnessStatus)
+	t.Logf("Error: %s", result.Error)
+	t.Logf("Duration: %v", result.Duration)
+	t.Logf("Tests: %d", len(result.Tests))
+
+	passed := 0
+	failed := 0
+	for _, test := range result.Tests {
+		statusStr := "PASS"
+		if test.Status != StatusPass {
+			statusStr = "FAIL"
+			failed++
+		} else {
+			passed++
+		}
+		t.Logf("  [%s] %s: %s", statusStr, test.Name, test.Message)
+	}
+
+	t.Logf("Summary: %d passed, %d failed", passed, failed)
+
+	if len(result.Tests) == 0 {
+		t.Errorf("Expected some test results, got none")
+	}
+}

@@ -170,6 +170,7 @@ type DOMBinder struct {
 	attrCache                    map[*dom.Attr]*goja.Object
 	rangeProto                   *goja.Object
 	rangeCache                   map[*dom.Range]*goja.Object
+	treeWalkerProto              *goja.Object
 }
 
 // NewDOMBinder creates a new DOM binder for the given runtime.
@@ -946,6 +947,44 @@ func (b *DOMBinder) setupPrototypes() {
 	// Add Attr properties to prototype (read-only getters)
 	// The actual values are set per-instance in BindAttr
 	vm.Set("Attr", attrConstructorObj)
+
+	// Create NodeFilter interface object with constants
+	// NodeFilter is not constructable but has constants for filtering
+	nodeFilterObj := vm.NewObject()
+
+	// NodeFilter acceptNode return values
+	nodeFilterObj.Set("FILTER_ACCEPT", 1)
+	nodeFilterObj.Set("FILTER_REJECT", 2)
+	nodeFilterObj.Set("FILTER_SKIP", 3)
+
+	// NodeFilter whatToShow constants
+	nodeFilterObj.Set("SHOW_ALL", uint32(0xFFFFFFFF))
+	nodeFilterObj.Set("SHOW_ELEMENT", uint32(0x1))
+	nodeFilterObj.Set("SHOW_ATTRIBUTE", uint32(0x2))
+	nodeFilterObj.Set("SHOW_TEXT", uint32(0x4))
+	nodeFilterObj.Set("SHOW_CDATA_SECTION", uint32(0x8))
+	nodeFilterObj.Set("SHOW_ENTITY_REFERENCE", uint32(0x10))
+	nodeFilterObj.Set("SHOW_ENTITY", uint32(0x20))
+	nodeFilterObj.Set("SHOW_PROCESSING_INSTRUCTION", uint32(0x40))
+	nodeFilterObj.Set("SHOW_COMMENT", uint32(0x80))
+	nodeFilterObj.Set("SHOW_DOCUMENT", uint32(0x100))
+	nodeFilterObj.Set("SHOW_DOCUMENT_TYPE", uint32(0x200))
+	nodeFilterObj.Set("SHOW_DOCUMENT_FRAGMENT", uint32(0x400))
+	nodeFilterObj.Set("SHOW_NOTATION", uint32(0x800))
+
+	vm.Set("NodeFilter", nodeFilterObj)
+
+	// Create TreeWalker prototype
+	// TreeWalker is not directly constructable - it's created via document.createTreeWalker
+	b.treeWalkerProto = vm.NewObject()
+	treeWalkerConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		panic(vm.NewTypeError("Illegal constructor"))
+	})
+	treeWalkerConstructorObj := treeWalkerConstructor.ToObject(vm)
+	treeWalkerConstructorObj.Set("prototype", b.treeWalkerProto)
+	b.treeWalkerProto.Set("constructor", treeWalkerConstructorObj)
+
+	vm.Set("TreeWalker", treeWalkerConstructorObj)
 }
 
 // htmlElementTypeMap maps lowercase HTML tag names to their constructor names.
@@ -1560,6 +1599,45 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 		return b.createEventForInterface(interfaceName)
 	})
 
+	// document.createTreeWalker(root, whatToShow, filter) - creates a TreeWalker
+	jsDoc.Set("createTreeWalker", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'createTreeWalker' on 'Document': 1 argument required"))
+		}
+
+		// Get root node - must be a Node
+		rootArg := call.Arguments[0]
+		if goja.IsNull(rootArg) || goja.IsUndefined(rootArg) {
+			panic(vm.NewTypeError("Failed to execute 'createTreeWalker' on 'Document': parameter 1 is not of type 'Node'."))
+		}
+
+		rootObj := rootArg.ToObject(vm)
+		root := b.getGoNode(rootObj)
+		if root == nil {
+			panic(vm.NewTypeError("Failed to execute 'createTreeWalker' on 'Document': parameter 1 is not of type 'Node'."))
+		}
+
+		// Get whatToShow (default 0xFFFFFFFF = SHOW_ALL)
+		var whatToShow uint32 = 0xFFFFFFFF
+		if len(call.Arguments) > 1 && !goja.IsUndefined(call.Arguments[1]) {
+			if goja.IsNull(call.Arguments[1]) {
+				whatToShow = 0
+			} else {
+				whatToShow = uint32(call.Arguments[1].ToInteger())
+			}
+		}
+
+		// Get filter (can be null/undefined, a function, or an object with acceptNode method)
+		var filter goja.Value = goja.Null()
+		if len(call.Arguments) > 2 && !goja.IsNull(call.Arguments[2]) && !goja.IsUndefined(call.Arguments[2]) {
+			filter = call.Arguments[2]
+		}
+
+		// Create the TreeWalker
+		tw := doc.CreateTreeWalker(root, whatToShow)
+		return b.BindTreeWalker(tw, root, whatToShow, filter)
+	})
+
 	// textContent is null for Document (per spec) and setting it does nothing
 	jsDoc.DefineAccessorProperty("textContent", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		return goja.Null()
@@ -1975,6 +2053,45 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 		}
 		interfaceName := call.Arguments[0].String()
 		return b.createEventForInterface(interfaceName)
+	})
+
+	// document.createTreeWalker(root, whatToShow, filter) - creates a TreeWalker
+	jsDoc.Set("createTreeWalker", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'createTreeWalker' on 'Document': 1 argument required"))
+		}
+
+		// Get root node - must be a Node
+		rootArg := call.Arguments[0]
+		if goja.IsNull(rootArg) || goja.IsUndefined(rootArg) {
+			panic(vm.NewTypeError("Failed to execute 'createTreeWalker' on 'Document': parameter 1 is not of type 'Node'."))
+		}
+
+		rootObj := rootArg.ToObject(vm)
+		root := b.getGoNode(rootObj)
+		if root == nil {
+			panic(vm.NewTypeError("Failed to execute 'createTreeWalker' on 'Document': parameter 1 is not of type 'Node'."))
+		}
+
+		// Get whatToShow (default 0xFFFFFFFF = SHOW_ALL)
+		var whatToShow uint32 = 0xFFFFFFFF
+		if len(call.Arguments) > 1 && !goja.IsUndefined(call.Arguments[1]) {
+			if goja.IsNull(call.Arguments[1]) {
+				whatToShow = 0
+			} else {
+				whatToShow = uint32(call.Arguments[1].ToInteger())
+			}
+		}
+
+		// Get filter (can be null/undefined, a function, or an object with acceptNode method)
+		var filter goja.Value = goja.Null()
+		if len(call.Arguments) > 2 && !goja.IsNull(call.Arguments[2]) && !goja.IsUndefined(call.Arguments[2]) {
+			filter = call.Arguments[2]
+		}
+
+		// Create the TreeWalker
+		tw := doc.CreateTreeWalker(root, whatToShow)
+		return b.BindTreeWalker(tw, root, whatToShow, filter)
 	})
 
 	// textContent is null for Document (per spec) and setting it does nothing
@@ -4456,6 +4573,400 @@ func (b *DOMBinder) BindRange(r *dom.Range) *goja.Object {
 	b.rangeCache[r] = jsRange
 
 	return jsRange
+}
+
+// BindTreeWalker creates a JavaScript TreeWalker object.
+// The filter can be null, a function, or an object with an acceptNode method.
+func (b *DOMBinder) BindTreeWalker(tw *dom.TreeWalker, root *dom.Node, whatToShow uint32, filter goja.Value) *goja.Object {
+	vm := b.runtime.vm
+	jsTreeWalker := vm.NewObject()
+
+	// Set prototype for instanceof to work
+	if b.treeWalkerProto != nil {
+		jsTreeWalker.SetPrototype(b.treeWalkerProto)
+	}
+
+	// Store the Go TreeWalker and filter
+	jsTreeWalker.Set("_goTreeWalker", tw)
+	jsTreeWalker.Set("_filter", filter)
+
+	// Read-only root property
+	jsRootBound := b.BindNode(root)
+	jsTreeWalker.DefineAccessorProperty("root", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return jsRootBound
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// Read-only whatToShow property
+	jsTreeWalker.DefineAccessorProperty("whatToShow", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(whatToShow)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// Read-only filter property
+	jsTreeWalker.DefineAccessorProperty("filter", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if goja.IsNull(filter) || goja.IsUndefined(filter) {
+			return goja.Null()
+		}
+		return filter
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// currentNode property (read/write)
+	jsTreeWalker.DefineAccessorProperty("currentNode", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		current := tw.CurrentNode()
+		if current == nil {
+			return goja.Null()
+		}
+		return b.BindNode(current)
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Undefined()
+		}
+		arg := call.Arguments[0]
+		if goja.IsNull(arg) || goja.IsUndefined(arg) {
+			panic(vm.NewTypeError("Failed to set the 'currentNode' property on 'TreeWalker': The provided value is not of type 'Node'."))
+		}
+		nodeObj := arg.ToObject(vm)
+		goNode := b.getGoNode(nodeObj)
+		if goNode == nil {
+			panic(vm.NewTypeError("Failed to set the 'currentNode' property on 'TreeWalker': The provided value is not of type 'Node'."))
+		}
+		tw.SetCurrentNode(goNode)
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// Helper function to call the filter
+	callFilter := func(node *dom.Node) int {
+		// If no filter, accept all
+		if goja.IsNull(filter) || goja.IsUndefined(filter) {
+			return 1 // FILTER_ACCEPT
+		}
+
+		jsNode := b.BindNode(node)
+
+		// If filter is callable (a function), call it directly
+		if filterFunc, ok := goja.AssertFunction(filter); ok {
+			result, err := filterFunc(goja.Undefined(), jsNode)
+			if err != nil {
+				panic(err)
+			}
+			return int(result.ToInteger())
+		}
+
+		// If filter is an object, get its acceptNode property
+		filterObj := filter.ToObject(vm)
+		acceptNodeVal := filterObj.Get("acceptNode")
+
+		// acceptNode must be a function
+		acceptNodeFunc, ok := goja.AssertFunction(acceptNodeVal)
+		if !ok {
+			panic(vm.NewTypeError("Failed to execute 'acceptNode' on 'NodeFilter': acceptNode is not a function"))
+		}
+
+		result, err := acceptNodeFunc(filterObj, jsNode)
+		if err != nil {
+			panic(err)
+		}
+		return int(result.ToInteger())
+	}
+
+	// Helper to check if a node matches whatToShow
+	matchesWhatToShow := func(node *dom.Node) bool {
+		if whatToShow == 0xFFFFFFFF {
+			return true // SHOW_ALL
+		}
+		nodeType := node.NodeType()
+		// Map node type to the bit position (1 << (nodeType - 1))
+		mask := uint32(1 << (nodeType - 1))
+		return (whatToShow & mask) != 0
+	}
+
+	// filterNode applies whatToShow and filter to a node
+	filterNode := func(node *dom.Node) int {
+		if !matchesWhatToShow(node) {
+			return 3 // FILTER_SKIP
+		}
+		return callFilter(node)
+	}
+
+	// parentNode method
+	jsTreeWalker.Set("parentNode", func(call goja.FunctionCall) goja.Value {
+		node := tw.CurrentNode()
+		for node != nil && node != root {
+			parent := node.ParentNode()
+			if parent == nil || parent == root {
+				break
+			}
+			result := filterNode(parent)
+			if result == 1 { // FILTER_ACCEPT
+				tw.SetCurrentNode(parent)
+				return b.BindNode(parent)
+			}
+			node = parent
+		}
+		return goja.Null()
+	})
+
+	// firstChild method
+	jsTreeWalker.Set("firstChild", func(call goja.FunctionCall) goja.Value {
+		return b.traverseChildren(tw, root, filterNode, true)
+	})
+
+	// lastChild method
+	jsTreeWalker.Set("lastChild", func(call goja.FunctionCall) goja.Value {
+		return b.traverseChildren(tw, root, filterNode, false)
+	})
+
+	// nextSibling method
+	jsTreeWalker.Set("nextSibling", func(call goja.FunctionCall) goja.Value {
+		return b.traverseSiblings(tw, root, filterNode, true)
+	})
+
+	// previousSibling method
+	jsTreeWalker.Set("previousSibling", func(call goja.FunctionCall) goja.Value {
+		return b.traverseSiblings(tw, root, filterNode, false)
+	})
+
+	// nextNode method
+	jsTreeWalker.Set("nextNode", func(call goja.FunctionCall) goja.Value {
+		node := tw.CurrentNode()
+		result := 1 // FILTER_ACCEPT (start assuming accept to enter first child)
+
+		for {
+			// Try to traverse into children if the current node was accepted
+			for result != 2 { // not FILTER_REJECT
+				firstChild := node.FirstChild()
+				if firstChild == nil {
+					break
+				}
+				node = firstChild
+				result = filterNode(node)
+				if result == 1 { // FILTER_ACCEPT
+					tw.SetCurrentNode(node)
+					return b.BindNode(node)
+				}
+			}
+
+			// Try siblings and ancestors' siblings
+			for {
+				if node == root {
+					return goja.Null()
+				}
+
+				sibling := node.NextSibling()
+				for sibling != nil {
+					node = sibling
+					result = filterNode(node)
+					if result == 1 { // FILTER_ACCEPT
+						tw.SetCurrentNode(node)
+						return b.BindNode(node)
+					}
+					if result == 3 { // FILTER_SKIP - try children
+						break
+					}
+					// FILTER_REJECT - try next sibling
+					sibling = node.NextSibling()
+				}
+
+				if sibling != nil {
+					break // We found a node to descend into
+				}
+
+				// No more siblings, go to parent
+				parent := node.ParentNode()
+				if parent == nil || parent == root {
+					return goja.Null()
+				}
+				node = parent
+				result = 2 // Don't try to descend when going back up
+			}
+		}
+	})
+
+	// previousNode method
+	jsTreeWalker.Set("previousNode", func(call goja.FunctionCall) goja.Value {
+		node := tw.CurrentNode()
+
+		for node != root {
+			// Try previous sibling
+			sibling := node.PreviousSibling()
+			for sibling != nil {
+				node = sibling
+				result := filterNode(node)
+
+				// If accepted or skipped, try to descend to last descendant
+				for result != 2 { // not FILTER_REJECT
+					lastChild := node.LastChild()
+					if lastChild == nil {
+						break
+					}
+					node = lastChild
+					result = filterNode(node)
+				}
+
+				if result == 1 { // FILTER_ACCEPT
+					tw.SetCurrentNode(node)
+					return b.BindNode(node)
+				}
+
+				// If rejected or skipped, try previous sibling
+				sibling = node.PreviousSibling()
+			}
+
+			// No more siblings, try parent
+			parent := node.ParentNode()
+			if parent == nil || parent == root {
+				return goja.Null()
+			}
+			node = parent
+			result := filterNode(node)
+			if result == 1 { // FILTER_ACCEPT
+				tw.SetCurrentNode(node)
+				return b.BindNode(node)
+			}
+		}
+		return goja.Null()
+	})
+
+	// toString method
+	jsTreeWalker.Set("toString", func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue("[object TreeWalker]")
+	})
+
+	return jsTreeWalker
+}
+
+// traverseChildren is a helper for TreeWalker.firstChild and lastChild
+func (b *DOMBinder) traverseChildren(tw *dom.TreeWalker, root *dom.Node, filterNode func(*dom.Node) int, first bool) goja.Value {
+	node := tw.CurrentNode()
+	var child *dom.Node
+	if first {
+		child = node.FirstChild()
+	} else {
+		child = node.LastChild()
+	}
+
+	for child != nil {
+		result := filterNode(child)
+		if result == 1 { // FILTER_ACCEPT
+			tw.SetCurrentNode(child)
+			return b.BindNode(child)
+		}
+		if result == 3 { // FILTER_SKIP - try grandchildren
+			var grandchild *dom.Node
+			if first {
+				grandchild = child.FirstChild()
+			} else {
+				grandchild = child.LastChild()
+			}
+			if grandchild != nil {
+				child = grandchild
+				continue
+			}
+		}
+		// Move to next/previous sibling
+		for {
+			var sibling *dom.Node
+			if first {
+				sibling = child.NextSibling()
+			} else {
+				sibling = child.PreviousSibling()
+			}
+			if sibling != nil {
+				child = sibling
+				break
+			}
+			// Go up to parent
+			parent := child.ParentNode()
+			if parent == nil || parent == node || parent == root {
+				return goja.Null()
+			}
+			child = parent
+		}
+	}
+	return goja.Null()
+}
+
+// traverseSiblings is a helper for TreeWalker.nextSibling and previousSibling
+func (b *DOMBinder) traverseSiblings(tw *dom.TreeWalker, root *dom.Node, filterNode func(*dom.Node) int, next bool) goja.Value {
+	node := tw.CurrentNode()
+	if node == root {
+		return goja.Null()
+	}
+
+	// Use a stack to track nodes to visit
+	for {
+		var sibling *dom.Node
+		if next {
+			sibling = node.NextSibling()
+		} else {
+			sibling = node.PreviousSibling()
+		}
+
+		for sibling != nil {
+			result := filterNode(sibling)
+			if result == 1 { // FILTER_ACCEPT
+				tw.SetCurrentNode(sibling)
+				return b.BindNode(sibling)
+			}
+			if result == 3 { // FILTER_SKIP - try to descend into children
+				// Recursively check children for accepted nodes
+				found := b.traverseSiblingDescend(tw, sibling, filterNode, next)
+				if found != nil {
+					return found
+				}
+			}
+			// Move to next/prev sibling of current node
+			if next {
+				sibling = sibling.NextSibling()
+			} else {
+				sibling = sibling.PreviousSibling()
+			}
+		}
+
+		// No more siblings at this level, go to parent
+		parent := node.ParentNode()
+		if parent == nil || parent == root {
+			return goja.Null()
+		}
+
+		// Check if parent should be considered
+		result := filterNode(parent)
+		if result == 1 { // FILTER_ACCEPT - we've exhausted this subtree without finding a sibling
+			return goja.Null()
+		}
+		// Parent was skipped/rejected, continue looking at parent's siblings
+		node = parent
+	}
+}
+
+// traverseSiblingDescend descends into a skipped node looking for accepted children
+func (b *DOMBinder) traverseSiblingDescend(tw *dom.TreeWalker, node *dom.Node, filterNode func(*dom.Node) int, next bool) goja.Value {
+	var child *dom.Node
+	if next {
+		child = node.FirstChild()
+	} else {
+		child = node.LastChild()
+	}
+
+	for child != nil {
+		result := filterNode(child)
+		if result == 1 { // FILTER_ACCEPT
+			tw.SetCurrentNode(child)
+			return b.BindNode(child)
+		}
+		if result == 3 { // FILTER_SKIP - descend further
+			found := b.traverseSiblingDescend(tw, child, filterNode, next)
+			if found != nil {
+				return found
+			}
+		}
+		// FILTER_REJECT or no accepted descendants found, try next child
+		if next {
+			child = child.NextSibling()
+		} else {
+			child = child.PreviousSibling()
+		}
+	}
+	return nil
 }
 
 // getGoRange extracts the Go Range from a JavaScript object.
