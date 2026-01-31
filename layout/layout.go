@@ -1029,3 +1029,83 @@ func LayoutFloat(box *LayoutBox, ctx *LayoutContext) {
 		box.Dimensions.Content.Height = getLength(style, "height")
 	}
 }
+
+// UpdateElementGeometries walks the layout tree and updates each element's geometry
+// for use by getBoundingClientRect and related APIs.
+func UpdateElementGeometries(box *LayoutBox, parentOffsetParent *dom.Element, parentX, parentY float64) {
+	if box == nil {
+		return
+	}
+
+	// Track the offset parent for children
+	nextOffsetParent := parentOffsetParent
+	nextParentX := parentX
+	nextParentY := parentY
+
+	// Update this element's geometry if it has a DOM element
+	if box.Element != nil {
+		borderBox := box.Dimensions.BorderBox()
+
+		// Calculate scroll dimensions (for now, same as client dimensions)
+		// In a real implementation, this would account for overflow content
+		clientWidth := box.Dimensions.Content.Width + box.Dimensions.Padding.Left + box.Dimensions.Padding.Right
+		clientHeight := box.Dimensions.Content.Height + box.Dimensions.Padding.Top + box.Dimensions.Padding.Bottom
+
+		geom := &dom.ElementGeometry{
+			// Border box coordinates relative to viewport
+			X:      borderBox.X,
+			Y:      borderBox.Y,
+			Width:  borderBox.Width,
+			Height: borderBox.Height,
+
+			// Box model dimensions
+			ContentWidth:  box.Dimensions.Content.Width,
+			ContentHeight: box.Dimensions.Content.Height,
+			PaddingTop:    box.Dimensions.Padding.Top,
+			PaddingRight:  box.Dimensions.Padding.Right,
+			PaddingBottom: box.Dimensions.Padding.Bottom,
+			PaddingLeft:   box.Dimensions.Padding.Left,
+			BorderTop:     box.Dimensions.Border.Top,
+			BorderRight:   box.Dimensions.Border.Right,
+			BorderBottom:  box.Dimensions.Border.Bottom,
+			BorderLeft:    box.Dimensions.Border.Left,
+			MarginTop:     box.Dimensions.Margin.Top,
+			MarginRight:   box.Dimensions.Margin.Right,
+			MarginBottom:  box.Dimensions.Margin.Bottom,
+			MarginLeft:    box.Dimensions.Margin.Left,
+
+			// Offset properties
+			OffsetTop:    borderBox.Y - parentY,
+			OffsetLeft:   borderBox.X - parentX,
+			OffsetWidth:  borderBox.Width,
+			OffsetHeight: borderBox.Height,
+			OffsetParent: parentOffsetParent,
+
+			// Client properties (content + padding, no border/scrollbar)
+			ClientTop:    box.Dimensions.Border.Top,
+			ClientLeft:   box.Dimensions.Border.Left,
+			ClientWidth:  clientWidth,
+			ClientHeight: clientHeight,
+
+			// Scroll properties (for now, same as client for non-scrolling elements)
+			ScrollWidth:  clientWidth,
+			ScrollHeight: clientHeight,
+			ScrollTop:    0,
+			ScrollLeft:   0,
+		}
+
+		box.Element.SetGeometry(geom)
+
+		// Positioned elements become offset parents for their descendants
+		if box.Position != PositionStatic {
+			nextOffsetParent = box.Element
+			nextParentX = borderBox.X
+			nextParentY = borderBox.Y
+		}
+	}
+
+	// Recursively update children
+	for _, child := range box.Children {
+		UpdateElementGeometries(child, nextOffsetParent, nextParentX, nextParentY)
+	}
+}

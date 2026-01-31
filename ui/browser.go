@@ -487,6 +487,9 @@ func (b *BrowserUI) loadPage(tab *BrowserTab, urlStr string, ctx context.Context
 		// Layout the tree
 		tab.layoutRoot.Layout(layoutCtx)
 
+		// Update element geometries for getBoundingClientRect and related APIs
+		vibelayout.UpdateElementGeometries(tab.layoutRoot, nil, 0, 0)
+
 		// Calculate content height
 		contentHeight := tab.layoutRoot.Dimensions.MarginBox().Height
 		if contentHeight < viewportHeight {

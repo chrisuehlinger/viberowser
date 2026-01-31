@@ -484,6 +484,190 @@ func (b *DOMBinder) setupPrototypes() {
 
 	vm.Set("Range", rangeConstructorObj)
 
+	// Create DOMRect prototype and constructor
+	domRectProto := vm.NewObject()
+	domRectConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		x, y, width, height := 0.0, 0.0, 0.0, 0.0
+		if len(call.Arguments) > 0 {
+			x = call.Arguments[0].ToFloat()
+		}
+		if len(call.Arguments) > 1 {
+			y = call.Arguments[1].ToFloat()
+		}
+		if len(call.Arguments) > 2 {
+			width = call.Arguments[2].ToFloat()
+		}
+		if len(call.Arguments) > 3 {
+			height = call.Arguments[3].ToFloat()
+		}
+		rect := dom.NewDOMRect(x, y, width, height)
+		call.This.Set("_goRect", rect)
+
+		// Define properties on the instance
+		call.This.DefineAccessorProperty("x", vm.ToValue(func(fc goja.FunctionCall) goja.Value {
+			return vm.ToValue(rect.X)
+		}), vm.ToValue(func(fc goja.FunctionCall) goja.Value {
+			if len(fc.Arguments) > 0 {
+				rect.X = fc.Arguments[0].ToFloat()
+			}
+			return goja.Undefined()
+		}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+		call.This.DefineAccessorProperty("y", vm.ToValue(func(fc goja.FunctionCall) goja.Value {
+			return vm.ToValue(rect.Y)
+		}), vm.ToValue(func(fc goja.FunctionCall) goja.Value {
+			if len(fc.Arguments) > 0 {
+				rect.Y = fc.Arguments[0].ToFloat()
+			}
+			return goja.Undefined()
+		}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+		call.This.DefineAccessorProperty("width", vm.ToValue(func(fc goja.FunctionCall) goja.Value {
+			return vm.ToValue(rect.Width)
+		}), vm.ToValue(func(fc goja.FunctionCall) goja.Value {
+			if len(fc.Arguments) > 0 {
+				rect.Width = fc.Arguments[0].ToFloat()
+			}
+			return goja.Undefined()
+		}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+		call.This.DefineAccessorProperty("height", vm.ToValue(func(fc goja.FunctionCall) goja.Value {
+			return vm.ToValue(rect.Height)
+		}), vm.ToValue(func(fc goja.FunctionCall) goja.Value {
+			if len(fc.Arguments) > 0 {
+				rect.Height = fc.Arguments[0].ToFloat()
+			}
+			return goja.Undefined()
+		}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+		call.This.DefineAccessorProperty("top", vm.ToValue(func(fc goja.FunctionCall) goja.Value {
+			return vm.ToValue(rect.Top())
+		}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+		call.This.DefineAccessorProperty("right", vm.ToValue(func(fc goja.FunctionCall) goja.Value {
+			return vm.ToValue(rect.Right())
+		}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+		call.This.DefineAccessorProperty("bottom", vm.ToValue(func(fc goja.FunctionCall) goja.Value {
+			return vm.ToValue(rect.Bottom())
+		}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+		call.This.DefineAccessorProperty("left", vm.ToValue(func(fc goja.FunctionCall) goja.Value {
+			return vm.ToValue(rect.Left())
+		}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+		return call.This
+	})
+	domRectConstructorObj := domRectConstructor.ToObject(vm)
+	domRectConstructorObj.Set("prototype", domRectProto)
+	domRectProto.Set("constructor", domRectConstructorObj)
+
+	// Static method: DOMRect.fromRect()
+	domRectConstructorObj.Set("fromRect", func(call goja.FunctionCall) goja.Value {
+		x, y, width, height := 0.0, 0.0, 0.0, 0.0
+		if len(call.Arguments) > 0 && !goja.IsUndefined(call.Arguments[0]) && !goja.IsNull(call.Arguments[0]) {
+			obj := call.Arguments[0].ToObject(vm)
+			if xVal := obj.Get("x"); xVal != nil && !goja.IsUndefined(xVal) {
+				x = xVal.ToFloat()
+			}
+			if yVal := obj.Get("y"); yVal != nil && !goja.IsUndefined(yVal) {
+				y = yVal.ToFloat()
+			}
+			if wVal := obj.Get("width"); wVal != nil && !goja.IsUndefined(wVal) {
+				width = wVal.ToFloat()
+			}
+			if hVal := obj.Get("height"); hVal != nil && !goja.IsUndefined(hVal) {
+				height = hVal.ToFloat()
+			}
+		}
+		rect := dom.NewDOMRect(x, y, width, height)
+		return b.BindDOMRect(rect)
+	})
+
+	vm.Set("DOMRect", domRectConstructorObj)
+
+	// Create DOMRectReadOnly - same as DOMRect but read-only properties
+	domRectReadOnlyProto := vm.NewObject()
+	domRectReadOnlyConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		x, y, width, height := 0.0, 0.0, 0.0, 0.0
+		if len(call.Arguments) > 0 {
+			x = call.Arguments[0].ToFloat()
+		}
+		if len(call.Arguments) > 1 {
+			y = call.Arguments[1].ToFloat()
+		}
+		if len(call.Arguments) > 2 {
+			width = call.Arguments[2].ToFloat()
+		}
+		if len(call.Arguments) > 3 {
+			height = call.Arguments[3].ToFloat()
+		}
+		rect := dom.NewDOMRect(x, y, width, height)
+		call.This.Set("_goRect", rect)
+
+		// All properties are read-only for DOMRectReadOnly
+		call.This.DefineAccessorProperty("x", vm.ToValue(func(fc goja.FunctionCall) goja.Value {
+			return vm.ToValue(rect.X)
+		}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+		call.This.DefineAccessorProperty("y", vm.ToValue(func(fc goja.FunctionCall) goja.Value {
+			return vm.ToValue(rect.Y)
+		}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+		call.This.DefineAccessorProperty("width", vm.ToValue(func(fc goja.FunctionCall) goja.Value {
+			return vm.ToValue(rect.Width)
+		}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+		call.This.DefineAccessorProperty("height", vm.ToValue(func(fc goja.FunctionCall) goja.Value {
+			return vm.ToValue(rect.Height)
+		}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+		call.This.DefineAccessorProperty("top", vm.ToValue(func(fc goja.FunctionCall) goja.Value {
+			return vm.ToValue(rect.Top())
+		}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+		call.This.DefineAccessorProperty("right", vm.ToValue(func(fc goja.FunctionCall) goja.Value {
+			return vm.ToValue(rect.Right())
+		}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+		call.This.DefineAccessorProperty("bottom", vm.ToValue(func(fc goja.FunctionCall) goja.Value {
+			return vm.ToValue(rect.Bottom())
+		}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+		call.This.DefineAccessorProperty("left", vm.ToValue(func(fc goja.FunctionCall) goja.Value {
+			return vm.ToValue(rect.Left())
+		}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+		return call.This
+	})
+	domRectReadOnlyConstructorObj := domRectReadOnlyConstructor.ToObject(vm)
+	domRectReadOnlyConstructorObj.Set("prototype", domRectReadOnlyProto)
+	domRectReadOnlyProto.Set("constructor", domRectReadOnlyConstructorObj)
+
+	// Static method: DOMRectReadOnly.fromRect()
+	domRectReadOnlyConstructorObj.Set("fromRect", func(call goja.FunctionCall) goja.Value {
+		x, y, width, height := 0.0, 0.0, 0.0, 0.0
+		if len(call.Arguments) > 0 && !goja.IsUndefined(call.Arguments[0]) && !goja.IsNull(call.Arguments[0]) {
+			obj := call.Arguments[0].ToObject(vm)
+			if xVal := obj.Get("x"); xVal != nil && !goja.IsUndefined(xVal) {
+				x = xVal.ToFloat()
+			}
+			if yVal := obj.Get("y"); yVal != nil && !goja.IsUndefined(yVal) {
+				y = yVal.ToFloat()
+			}
+			if wVal := obj.Get("width"); wVal != nil && !goja.IsUndefined(wVal) {
+				width = wVal.ToFloat()
+			}
+			if hVal := obj.Get("height"); hVal != nil && !goja.IsUndefined(hVal) {
+				height = hVal.ToFloat()
+			}
+		}
+		rect := dom.NewDOMRect(x, y, width, height)
+		return b.BindDOMRect(rect)
+	})
+
+	vm.Set("DOMRectReadOnly", domRectReadOnlyConstructorObj)
+
 	// Create HTMLCollection prototype with item and namedItem methods
 	b.htmlCollectionProto = vm.NewObject()
 	htmlCollectionConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
@@ -2468,6 +2652,86 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		}
 		return goja.Undefined()
 	})
+
+	// Geometry methods
+	jsEl.Set("getBoundingClientRect", func(call goja.FunctionCall) goja.Value {
+		rect := el.GetBoundingClientRect()
+		return b.BindDOMRect(rect)
+	})
+
+	jsEl.Set("getClientRects", func(call goja.FunctionCall) goja.Value {
+		rects := el.GetClientRects()
+		return b.BindDOMRectList(rects)
+	})
+
+	// HTMLElement geometry properties
+	jsEl.DefineAccessorProperty("offsetWidth", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.OffsetWidth())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsEl.DefineAccessorProperty("offsetHeight", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.OffsetHeight())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsEl.DefineAccessorProperty("offsetTop", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.OffsetTop())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsEl.DefineAccessorProperty("offsetLeft", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.OffsetLeft())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsEl.DefineAccessorProperty("offsetParent", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		parent := el.OffsetParent()
+		if parent == nil {
+			return goja.Null()
+		}
+		return b.BindElement(parent)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsEl.DefineAccessorProperty("clientWidth", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.ClientWidth())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsEl.DefineAccessorProperty("clientHeight", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.ClientHeight())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsEl.DefineAccessorProperty("clientTop", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.ClientTop())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsEl.DefineAccessorProperty("clientLeft", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.ClientLeft())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsEl.DefineAccessorProperty("scrollWidth", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.ScrollWidth())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsEl.DefineAccessorProperty("scrollHeight", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.ScrollHeight())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsEl.DefineAccessorProperty("scrollTop", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.ScrollTop())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			val := call.Arguments[0].ToFloat()
+			el.SetScrollTop(val)
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsEl.DefineAccessorProperty("scrollLeft", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.ScrollLeft())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			val := call.Arguments[0].ToFloat()
+			el.SetScrollLeft(val)
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	// Add iframe-specific properties (contentWindow, contentDocument, src)
 	if el.LocalName() == "iframe" {
@@ -5967,4 +6231,129 @@ func (b *DOMBinder) extractAttr(jsAttr *goja.Object) *dom.Attr {
 	}
 	// If not available, we can't extract
 	return nil
+}
+
+// BindDOMRect creates a JavaScript DOMRect object from a Go DOMRect.
+func (b *DOMBinder) BindDOMRect(rect *dom.DOMRect) goja.Value {
+	if rect == nil {
+		return goja.Null()
+	}
+
+	vm := b.runtime.vm
+	jsRect := vm.NewObject()
+
+	// Store the Go rect for internal access
+	jsRect.Set("_goRect", rect)
+
+	// Define the x, y, width, height properties (these are read/write in DOMRect)
+	jsRect.DefineAccessorProperty("x", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(rect.X)
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			rect.X = call.Arguments[0].ToFloat()
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsRect.DefineAccessorProperty("y", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(rect.Y)
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			rect.Y = call.Arguments[0].ToFloat()
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsRect.DefineAccessorProperty("width", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(rect.Width)
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			rect.Width = call.Arguments[0].ToFloat()
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsRect.DefineAccessorProperty("height", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(rect.Height)
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			rect.Height = call.Arguments[0].ToFloat()
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// Computed properties (read-only)
+	jsRect.DefineAccessorProperty("top", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(rect.Top())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsRect.DefineAccessorProperty("right", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(rect.Right())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsRect.DefineAccessorProperty("bottom", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(rect.Bottom())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsRect.DefineAccessorProperty("left", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(rect.Left())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// toJSON method
+	jsRect.Set("toJSON", func(call goja.FunctionCall) goja.Value {
+		obj := vm.NewObject()
+		obj.Set("x", rect.X)
+		obj.Set("y", rect.Y)
+		obj.Set("width", rect.Width)
+		obj.Set("height", rect.Height)
+		obj.Set("top", rect.Top())
+		obj.Set("right", rect.Right())
+		obj.Set("bottom", rect.Bottom())
+		obj.Set("left", rect.Left())
+		return obj
+	})
+
+	return jsRect
+}
+
+// BindDOMRectList creates a JavaScript DOMRectList object from a Go DOMRectList.
+func (b *DOMBinder) BindDOMRectList(list *dom.DOMRectList) goja.Value {
+	if list == nil {
+		return goja.Null()
+	}
+
+	vm := b.runtime.vm
+	jsList := vm.NewObject()
+
+	// length property
+	jsList.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(list.Length())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// item method
+	jsList.Set("item", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		index := int(call.Arguments[0].ToInteger())
+		rect := list.Item(index)
+		if rect == nil {
+			return goja.Null()
+		}
+		return b.BindDOMRect(rect)
+	})
+
+	// Add indexed properties for array-like access
+	for i := 0; i < list.Length(); i++ {
+		idx := i // capture for closure
+		jsList.DefineAccessorProperty(fmt.Sprintf("%d", i), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			rect := list.Item(idx)
+			if rect == nil {
+				return goja.Undefined()
+			}
+			return b.BindDOMRect(rect)
+		}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	}
+
+	return jsList
 }

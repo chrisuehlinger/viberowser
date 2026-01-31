@@ -2296,3 +2296,237 @@ func TestDOMBinderRangeCreateContextualFragment(t *testing.T) {
 		t.Errorf("Expected 'SPAN', got '%s'", result.String())
 	}
 }
+
+func TestDOMBinderGeometryAPIs(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html><html><head></head><body></body></html>`)
+	binder.BindDocument(doc)
+
+	// Create an element and set its geometry
+	_, err := r.Execute(`
+		var div = document.createElement('div');
+		document.body.appendChild(div);
+	`)
+	if err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+
+	// Get the Go element and set geometry
+	divVal, _ := r.Execute("div")
+	if divVal == nil {
+		t.Fatal("Could not get div element")
+	}
+	divObj := divVal.ToObject(r.vm)
+	goElVal := divObj.Get("_goElement")
+	if goElVal == nil {
+		t.Fatal("Could not get Go element")
+	}
+	goEl := goElVal.Export().(*dom.Element)
+	geom := &dom.ElementGeometry{
+		X:            10,
+		Y:            20,
+		Width:        100,
+		Height:       50,
+		OffsetWidth:  100,
+		OffsetHeight: 50,
+		OffsetTop:    20,
+		OffsetLeft:   10,
+		ClientWidth:  90,
+		ClientHeight: 40,
+		ClientTop:    5,
+		ClientLeft:   5,
+	}
+	goEl.SetGeometry(geom)
+
+	// Test getBoundingClientRect
+	result, err := r.Execute("div.getBoundingClientRect().x")
+	if err != nil {
+		t.Fatalf("getBoundingClientRect failed: %v", err)
+	}
+	if result.ToFloat() != 10 {
+		t.Errorf("Expected x=10, got %v", result.ToFloat())
+	}
+
+	result, err = r.Execute("div.getBoundingClientRect().y")
+	if err != nil {
+		t.Fatalf("getBoundingClientRect failed: %v", err)
+	}
+	if result.ToFloat() != 20 {
+		t.Errorf("Expected y=20, got %v", result.ToFloat())
+	}
+
+	result, err = r.Execute("div.getBoundingClientRect().width")
+	if err != nil {
+		t.Fatalf("getBoundingClientRect failed: %v", err)
+	}
+	if result.ToFloat() != 100 {
+		t.Errorf("Expected width=100, got %v", result.ToFloat())
+	}
+
+	result, err = r.Execute("div.getBoundingClientRect().height")
+	if err != nil {
+		t.Fatalf("getBoundingClientRect failed: %v", err)
+	}
+	if result.ToFloat() != 50 {
+		t.Errorf("Expected height=50, got %v", result.ToFloat())
+	}
+
+	// Test computed properties
+	result, err = r.Execute("div.getBoundingClientRect().top")
+	if err != nil {
+		t.Fatalf("getBoundingClientRect.top failed: %v", err)
+	}
+	if result.ToFloat() != 20 {
+		t.Errorf("Expected top=20, got %v", result.ToFloat())
+	}
+
+	result, err = r.Execute("div.getBoundingClientRect().right")
+	if err != nil {
+		t.Fatalf("getBoundingClientRect.right failed: %v", err)
+	}
+	if result.ToFloat() != 110 {
+		t.Errorf("Expected right=110, got %v", result.ToFloat())
+	}
+
+	// Test offsetWidth/offsetHeight
+	result, err = r.Execute("div.offsetWidth")
+	if err != nil {
+		t.Fatalf("offsetWidth failed: %v", err)
+	}
+	if result.ToFloat() != 100 {
+		t.Errorf("Expected offsetWidth=100, got %v", result.ToFloat())
+	}
+
+	result, err = r.Execute("div.offsetHeight")
+	if err != nil {
+		t.Fatalf("offsetHeight failed: %v", err)
+	}
+	if result.ToFloat() != 50 {
+		t.Errorf("Expected offsetHeight=50, got %v", result.ToFloat())
+	}
+
+	// Test clientWidth/clientHeight
+	result, err = r.Execute("div.clientWidth")
+	if err != nil {
+		t.Fatalf("clientWidth failed: %v", err)
+	}
+	if result.ToFloat() != 90 {
+		t.Errorf("Expected clientWidth=90, got %v", result.ToFloat())
+	}
+
+	result, err = r.Execute("div.clientHeight")
+	if err != nil {
+		t.Fatalf("clientHeight failed: %v", err)
+	}
+	if result.ToFloat() != 40 {
+		t.Errorf("Expected clientHeight=40, got %v", result.ToFloat())
+	}
+}
+
+func TestDOMBinderDOMRectConstructor(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc := dom.NewDocument()
+	binder.BindDocument(doc)
+
+	// Test DOMRect constructor with all args
+	result, err := r.Execute("new DOMRect(10, 20, 100, 50).x")
+	if err != nil {
+		t.Fatalf("DOMRect constructor failed: %v", err)
+	}
+	if result.ToFloat() != 10 {
+		t.Errorf("Expected x=10, got %v", result.ToFloat())
+	}
+
+	// Test DOMRect constructor with partial args
+	result, err = r.Execute("new DOMRect(5).y")
+	if err != nil {
+		t.Fatalf("DOMRect constructor with partial args failed: %v", err)
+	}
+	if result.ToFloat() != 0 {
+		t.Errorf("Expected y=0, got %v", result.ToFloat())
+	}
+
+	// Test DOMRect computed properties
+	result, err = r.Execute("var r = new DOMRect(10, 20, 100, 50); r.bottom")
+	if err != nil {
+		t.Fatalf("DOMRect.bottom failed: %v", err)
+	}
+	if result.ToFloat() != 70 {
+		t.Errorf("Expected bottom=70, got %v", result.ToFloat())
+	}
+
+	// Test DOMRect.fromRect
+	result, err = r.Execute("DOMRect.fromRect({x: 5, y: 10, width: 50, height: 25}).width")
+	if err != nil {
+		t.Fatalf("DOMRect.fromRect failed: %v", err)
+	}
+	if result.ToFloat() != 50 {
+		t.Errorf("Expected width=50, got %v", result.ToFloat())
+	}
+
+	// Test DOMRectReadOnly
+	result, err = r.Execute("new DOMRectReadOnly(1, 2, 3, 4).x")
+	if err != nil {
+		t.Fatalf("DOMRectReadOnly constructor failed: %v", err)
+	}
+	if result.ToFloat() != 1 {
+		t.Errorf("Expected x=1, got %v", result.ToFloat())
+	}
+}
+
+func TestDOMBinderScrollProperties(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html><html><head></head><body></body></html>`)
+	binder.BindDocument(doc)
+
+	_, err := r.Execute(`
+		var div = document.createElement('div');
+		document.body.appendChild(div);
+	`)
+	if err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+
+	// Initially scroll values should be 0
+	result, err := r.Execute("div.scrollTop")
+	if err != nil {
+		t.Fatalf("scrollTop read failed: %v", err)
+	}
+	if result.ToFloat() != 0 {
+		t.Errorf("Expected scrollTop=0, got %v", result.ToFloat())
+	}
+
+	// Set scrollTop
+	_, err = r.Execute("div.scrollTop = 50")
+	if err != nil {
+		t.Fatalf("scrollTop write failed: %v", err)
+	}
+
+	result, err = r.Execute("div.scrollTop")
+	if err != nil {
+		t.Fatalf("scrollTop read after write failed: %v", err)
+	}
+	if result.ToFloat() != 50 {
+		t.Errorf("Expected scrollTop=50, got %v", result.ToFloat())
+	}
+
+	// Set scrollLeft
+	_, err = r.Execute("div.scrollLeft = 30")
+	if err != nil {
+		t.Fatalf("scrollLeft write failed: %v", err)
+	}
+
+	result, err = r.Execute("div.scrollLeft")
+	if err != nil {
+		t.Fatalf("scrollLeft read after write failed: %v", err)
+	}
+	if result.ToFloat() != 30 {
+		t.Errorf("Expected scrollLeft=30, got %v", result.ToFloat())
+	}
+}

@@ -1145,6 +1145,187 @@ func (e *Element) Style() *CSSStyleDeclaration {
 	return e.AsNode().elementData.styleDeclaration
 }
 
+// Geometry returns the element's layout geometry.
+// Returns nil if layout has not been computed.
+func (e *Element) Geometry() *ElementGeometry {
+	if e.AsNode().elementData == nil {
+		return nil
+	}
+	return e.AsNode().elementData.geometry
+}
+
+// SetGeometry sets the element's layout geometry.
+// This is called by the layout engine after layout computation.
+func (e *Element) SetGeometry(g *ElementGeometry) {
+	if e.AsNode().elementData == nil {
+		e.AsNode().elementData = &elementData{}
+	}
+	e.AsNode().elementData.geometry = g
+}
+
+// GetBoundingClientRect returns a DOMRect representing the element's border box.
+// If layout has not been computed, returns a zero-sized rect.
+func (e *Element) GetBoundingClientRect() *DOMRect {
+	geom := e.Geometry()
+	if geom == nil {
+		return NewDOMRect(0, 0, 0, 0)
+	}
+	return NewDOMRect(geom.X, geom.Y, geom.Width, geom.Height)
+}
+
+// GetClientRects returns a DOMRectList of rectangles for the element.
+// For block elements, this is typically a single rectangle.
+func (e *Element) GetClientRects() *DOMRectList {
+	rect := e.GetBoundingClientRect()
+	// For now, return a single rect (proper inline element handling would return multiple)
+	return NewDOMRectList([]*DOMRect{rect})
+}
+
+// OffsetWidth returns the layout width including padding and border.
+func (e *Element) OffsetWidth() float64 {
+	geom := e.Geometry()
+	if geom == nil {
+		return 0
+	}
+	return geom.OffsetWidth
+}
+
+// OffsetHeight returns the layout height including padding and border.
+func (e *Element) OffsetHeight() float64 {
+	geom := e.Geometry()
+	if geom == nil {
+		return 0
+	}
+	return geom.OffsetHeight
+}
+
+// OffsetTop returns the distance from the top of the offset parent.
+func (e *Element) OffsetTop() float64 {
+	geom := e.Geometry()
+	if geom == nil {
+		return 0
+	}
+	return geom.OffsetTop
+}
+
+// OffsetLeft returns the distance from the left of the offset parent.
+func (e *Element) OffsetLeft() float64 {
+	geom := e.Geometry()
+	if geom == nil {
+		return 0
+	}
+	return geom.OffsetLeft
+}
+
+// OffsetParent returns the offset parent element.
+func (e *Element) OffsetParent() *Element {
+	geom := e.Geometry()
+	if geom == nil {
+		return nil
+	}
+	return geom.OffsetParent
+}
+
+// ClientWidth returns the inner width (content + padding) without border.
+func (e *Element) ClientWidth() float64 {
+	geom := e.Geometry()
+	if geom == nil {
+		return 0
+	}
+	return geom.ClientWidth
+}
+
+// ClientHeight returns the inner height (content + padding) without border.
+func (e *Element) ClientHeight() float64 {
+	geom := e.Geometry()
+	if geom == nil {
+		return 0
+	}
+	return geom.ClientHeight
+}
+
+// ClientTop returns the top border width.
+func (e *Element) ClientTop() float64 {
+	geom := e.Geometry()
+	if geom == nil {
+		return 0
+	}
+	return geom.ClientTop
+}
+
+// ClientLeft returns the left border width.
+func (e *Element) ClientLeft() float64 {
+	geom := e.Geometry()
+	if geom == nil {
+		return 0
+	}
+	return geom.ClientLeft
+}
+
+// ScrollWidth returns the total width of the scrollable content.
+func (e *Element) ScrollWidth() float64 {
+	geom := e.Geometry()
+	if geom == nil {
+		return 0
+	}
+	return geom.ScrollWidth
+}
+
+// ScrollHeight returns the total height of the scrollable content.
+func (e *Element) ScrollHeight() float64 {
+	geom := e.Geometry()
+	if geom == nil {
+		return 0
+	}
+	return geom.ScrollHeight
+}
+
+// ScrollTop returns the scroll offset from the top.
+func (e *Element) ScrollTop() float64 {
+	geom := e.Geometry()
+	if geom == nil {
+		return 0
+	}
+	return geom.ScrollTop
+}
+
+// SetScrollTop sets the scroll offset from the top.
+func (e *Element) SetScrollTop(value float64) {
+	if e.AsNode().elementData == nil {
+		e.AsNode().elementData = &elementData{}
+	}
+	if e.AsNode().elementData.geometry == nil {
+		e.AsNode().elementData.geometry = &ElementGeometry{}
+	}
+	if value < 0 {
+		value = 0
+	}
+	e.AsNode().elementData.geometry.ScrollTop = value
+}
+
+// ScrollLeft returns the scroll offset from the left.
+func (e *Element) ScrollLeft() float64 {
+	geom := e.Geometry()
+	if geom == nil {
+		return 0
+	}
+	return geom.ScrollLeft
+}
+
+// SetScrollLeft sets the scroll offset from the left.
+func (e *Element) SetScrollLeft(value float64) {
+	if e.AsNode().elementData == nil {
+		e.AsNode().elementData = &elementData{}
+	}
+	if e.AsNode().elementData.geometry == nil {
+		e.AsNode().elementData.geometry = &ElementGeometry{}
+	}
+	if value < 0 {
+		value = 0
+	}
+	e.AsNode().elementData.geometry.ScrollLeft = value
+}
+
 // lookupAtom looks up an atom for the given tag name.
 func lookupAtom(tagName string) atom.Atom {
 	return atom.Lookup([]byte(tagName))

@@ -28,6 +28,30 @@ type Node struct {
 	docTypeData  *docTypeData
 }
 
+// ElementGeometry holds computed layout geometry for an element.
+// This is set during layout computation and used by getBoundingClientRect.
+type ElementGeometry struct {
+	// Border box coordinates relative to the viewport
+	X, Y, Width, Height float64
+
+	// Box model dimensions
+	ContentWidth, ContentHeight float64
+	PaddingTop, PaddingRight, PaddingBottom, PaddingLeft float64
+	BorderTop, BorderRight, BorderBottom, BorderLeft float64
+	MarginTop, MarginRight, MarginBottom, MarginLeft float64
+
+	// Offset properties for HTMLElement
+	OffsetTop, OffsetLeft float64
+	OffsetWidth, OffsetHeight float64
+	OffsetParent *Element
+
+	// Scroll properties
+	ScrollTop, ScrollLeft float64
+	ScrollWidth, ScrollHeight float64
+	ClientTop, ClientLeft float64
+	ClientWidth, ClientHeight float64
+}
+
 // elementData holds data specific to Element nodes.
 type elementData struct {
 	localName        string
@@ -39,6 +63,9 @@ type elementData struct {
 	styleDeclaration *CSSStyleDeclaration
 	id               string
 	className        string
+
+	// Layout geometry - set during layout computation
+	geometry *ElementGeometry
 }
 
 // documentData holds data specific to Document nodes.
