@@ -147,15 +147,19 @@ func (d *Document) SetTitle(title string) {
 }
 
 // CreateElement creates a new element with the given tag name.
-// For HTML documents, the element is created in the HTML namespace.
+// Per DOM spec, the element's namespace is the HTML namespace when document is an
+// HTML document or document's content type is "application/xhtml+xml"; otherwise null.
 func (d *Document) CreateElement(tagName string) *Element {
 	// For HTML documents, tag names are lowercased for storage but uppercased for TagName
 	localName := strings.ToLower(tagName)
 	upperTagName := strings.ToUpper(tagName)
 
 	// Determine namespace based on document type
+	// Per DOM spec: "The element's namespace is the HTML namespace when document is an
+	// HTML document or document's content type is 'application/xhtml+xml'; otherwise null."
 	namespace := ""
-	if d.IsHTML() {
+	contentType := d.ContentType()
+	if d.IsHTML() || contentType == "application/xhtml+xml" {
 		namespace = HTMLNamespace
 	}
 
@@ -780,8 +784,9 @@ func (d *Document) Implementation() *DOMImplementation {
 }
 
 // CreateHTMLDocument creates a new HTML document with the given title.
-// If title is empty, no title element is created.
-func (impl *DOMImplementation) CreateHTMLDocument(title string) *Document {
+// If title is nil, no title element is created.
+// If title is non-nil (even empty string), a title element is created.
+func (impl *DOMImplementation) CreateHTMLDocument(title *string) *Document {
 	// Create a new document
 	doc := NewDocument()
 
@@ -802,12 +807,14 @@ func (impl *DOMImplementation) CreateHTMLDocument(title string) *Document {
 	head := doc.CreateElement("head")
 	html.AsNode().AppendChild(head.AsNode())
 
-	// Create title element if title is provided (even if empty string when explicitly given)
-	titleEl := doc.CreateElement("title")
-	if title != "" {
-		titleEl.SetTextContent(title)
+	// Create title element only if title argument was provided (per DOM spec)
+	if title != nil {
+		titleEl := doc.CreateElement("title")
+		if *title != "" {
+			titleEl.SetTextContent(*title)
+		}
+		head.AsNode().AppendChild(titleEl.AsNode())
 	}
-	head.AsNode().AppendChild(titleEl.AsNode())
 
 	// Create body element
 	body := doc.CreateElement("body")
@@ -819,7 +826,19 @@ func (impl *DOMImplementation) CreateHTMLDocument(title string) *Document {
 // CreateDocument creates a new XML document with the given namespace and qualified name.
 func (impl *DOMImplementation) CreateDocument(namespaceURI, qualifiedName string, doctype *Node) *Document {
 	doc := NewDocument()
-	doc.AsNode().documentData.contentType = "application/xml"
+
+	// Per DOM spec, content type is determined by namespace:
+	// - HTML namespace → application/xhtml+xml
+	// - SVG namespace → image/svg+xml
+	// - Otherwise → application/xml
+	switch namespaceURI {
+	case HTMLNamespace:
+		doc.AsNode().documentData.contentType = "application/xhtml+xml"
+	case "http://www.w3.org/2000/svg":
+		doc.AsNode().documentData.contentType = "image/svg+xml"
+	default:
+		doc.AsNode().documentData.contentType = "application/xml"
+	}
 
 	// Add doctype if provided
 	if doctype != nil {

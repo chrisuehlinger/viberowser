@@ -890,6 +890,11 @@ func (n *Node) IsSameNode(other *Node) bool {
 }
 
 // IsEqualNode returns true if this node is equal to the given node.
+// Per DOM spec, equality is based on node type and type-specific properties:
+// - Element: namespace, namespace prefix, local name, attributes
+// - DocumentType: name, public ID, system ID
+// - ProcessingInstruction: target, data
+// - Text/Comment: data
 func (n *Node) IsEqualNode(other *Node) bool {
 	if other == nil {
 		return false
@@ -897,11 +902,33 @@ func (n *Node) IsEqualNode(other *Node) bool {
 	if n.nodeType != other.nodeType {
 		return false
 	}
-	if n.nodeName != other.nodeName {
-		return false
-	}
-	if n.NodeValue() != other.NodeValue() {
-		return false
+
+	// Type-specific comparison
+	switch n.nodeType {
+	case ElementNode:
+		if !n.elementsEqual(other) {
+			return false
+		}
+	case DocumentTypeNode:
+		if !n.doctypesEqual(other) {
+			return false
+		}
+	case ProcessingInstructionNode:
+		// Compare target (nodeName) and data (nodeValue)
+		if n.nodeName != other.nodeName {
+			return false
+		}
+		if n.NodeValue() != other.NodeValue() {
+			return false
+		}
+	case TextNode, CDATASectionNode, CommentNode:
+		// Compare data (nodeValue)
+		if n.NodeValue() != other.NodeValue() {
+			return false
+		}
+	case DocumentNode, DocumentFragmentNode:
+		// Documents and DocumentFragments compare only on children
+		// (no additional properties to compare)
 	}
 
 	// Compare children count
@@ -925,6 +952,87 @@ func (n *Node) IsEqualNode(other *Node) bool {
 		c1, c2 = c1.nextSibling, c2.nextSibling
 	}
 
+	return true
+}
+
+// elementsEqual compares two Element nodes for equality per DOM spec.
+// Elements are compared on namespace, namespace prefix, local name, and attributes.
+func (n *Node) elementsEqual(other *Node) bool {
+	e1 := n.elementData
+	e2 := other.elementData
+	if e1 == nil || e2 == nil {
+		return e1 == e2
+	}
+
+	// Compare namespace URI
+	if e1.namespaceURI != e2.namespaceURI {
+		return false
+	}
+	// Compare prefix
+	if e1.prefix != e2.prefix {
+		return false
+	}
+	// Compare local name
+	if e1.localName != e2.localName {
+		return false
+	}
+
+	// Compare number of attributes
+	count1, count2 := 0, 0
+	if e1.attributes != nil {
+		count1 = e1.attributes.Length()
+	}
+	if e2.attributes != nil {
+		count2 = e2.attributes.Length()
+	}
+	if count1 != count2 {
+		return false
+	}
+
+	// Compare each attribute: for each attr in e1, find matching attr in e2
+	// Attributes match on namespace URI, local name, and value (NOT prefix)
+	if e1.attributes != nil {
+		for i := 0; i < e1.attributes.Length(); i++ {
+			attr1 := e1.attributes.Item(i)
+			if attr1 == nil {
+				continue
+			}
+			// Find matching attribute in e2 by namespace URI and local name
+			var attr2 *Attr
+			if e2.attributes != nil {
+				attr2 = e2.attributes.GetNamedItemNS(attr1.NamespaceURI(), attr1.LocalName())
+			}
+			if attr2 == nil {
+				return false
+			}
+			// Compare values
+			if attr1.Value() != attr2.Value() {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+// doctypesEqual compares two DocumentType nodes for equality.
+// Doctypes are compared on name, public ID, and system ID.
+func (n *Node) doctypesEqual(other *Node) bool {
+	d1 := n.docTypeData
+	d2 := other.docTypeData
+	if d1 == nil || d2 == nil {
+		return d1 == d2
+	}
+
+	if d1.name != d2.name {
+		return false
+	}
+	if d1.publicId != d2.publicId {
+		return false
+	}
+	if d1.systemId != d2.systemId {
+		return false
+	}
 	return true
 }
 

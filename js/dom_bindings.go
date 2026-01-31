@@ -233,6 +233,9 @@ func (b *DOMBinder) setupPrototypes() {
 		return exc
 	})
 	domExceptionConstructorObj := domExceptionConstructor.ToObject(vm)
+	// Set the 'name' property to 'DOMException' so that typeof checks and
+	// tests like assert_throws_dom can correctly identify it
+	domExceptionConstructorObj.DefineDataProperty("name", vm.ToValue("DOMException"), goja.FLAG_FALSE, goja.FLAG_FALSE, goja.FLAG_TRUE)
 	domExceptionConstructorObj.Set("prototype", b.domExceptionProto)
 	b.domExceptionProto.Set("constructor", domExceptionConstructorObj)
 
@@ -1024,8 +1027,16 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 // bindDocumentInternal binds a document without setting it as the global document.
 // Used for documents created via createHTMLDocument, createDocument, etc.
 func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
+	// Check cache first to ensure document identity
+	if jsDoc, ok := b.nodeMap[doc.AsNode()]; ok {
+		return jsDoc
+	}
+
 	vm := b.runtime.vm
 	jsDoc := vm.NewObject()
+
+	// Cache the document before setting up properties to maintain identity
+	b.nodeMap[doc.AsNode()] = jsDoc
 
 	// Set prototype for instanceof to work
 	if b.documentProto != nil {
@@ -1353,9 +1364,10 @@ func (b *DOMBinder) bindDOMImplementation(impl *dom.DOMImplementation) *goja.Obj
 
 	// createHTMLDocument(title)
 	jsImpl.Set("createHTMLDocument", func(call goja.FunctionCall) goja.Value {
-		title := ""
+		var title *string
 		if len(call.Arguments) > 0 && !goja.IsUndefined(call.Arguments[0]) {
-			title = call.Arguments[0].String()
+			t := call.Arguments[0].String()
+			title = &t
 		}
 		doc := impl.CreateHTMLDocument(title)
 		return b.bindDocumentInternal(doc)
