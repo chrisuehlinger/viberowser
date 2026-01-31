@@ -1008,11 +1008,13 @@ func (impl *DOMImplementation) CreateHTMLDocument(title *string) *Document {
 	html.AsNode().AppendChild(head.AsNode())
 
 	// Create title element only if title argument was provided (per DOM spec)
+	// Per spec: "Create a Text node, and set its data attribute to the string given by
+	// the method's argument (which could be the empty string). Append it to the title element."
+	// This means we ALWAYS create a text node when title is provided, even for empty strings.
 	if title != nil {
 		titleEl := doc.CreateElement("title")
-		if *title != "" {
-			titleEl.SetTextContent(*title)
-		}
+		textNode := doc.CreateTextNode(*title)
+		titleEl.AsNode().AppendChild(textNode)
 		head.AsNode().AppendChild(titleEl.AsNode())
 	}
 
