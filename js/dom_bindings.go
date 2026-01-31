@@ -55,6 +55,21 @@ func utf16ReplaceRange(s string, offset, count int, replacement string) string {
 	return string(utf16.Decode(result))
 }
 
+// asciiLowercase converts a string to lowercase using only ASCII rules.
+// Unicode characters like Turkish I (U+0130) are not converted.
+func asciiLowercase(s string) string {
+	result := make([]byte, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' {
+			result[i] = c + 32
+		} else {
+			result[i] = c
+		}
+	}
+	return string(result)
+}
+
 // domExceptionCode returns the legacy exception code for a DOMException name.
 func domExceptionCode(name string) int {
 	codes := map[string]int{
@@ -1536,6 +1551,15 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 		return goja.Undefined()
 	})
 
+	// document.createEvent(interface) - legacy method to create events
+	jsDoc.Set("createEvent", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'createEvent' on 'Document': 1 argument required"))
+		}
+		interfaceName := call.Arguments[0].String()
+		return b.createEventForInterface(interfaceName)
+	})
+
 	// textContent is null for Document (per spec) and setting it does nothing
 	jsDoc.DefineAccessorProperty("textContent", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		return goja.Null()
@@ -1942,6 +1966,15 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 			panic(b.createDOMException("HierarchyRequestError", err.Error()))
 		}
 		return goja.Undefined()
+	})
+
+	// document.createEvent(interface) - legacy method to create events
+	jsDoc.Set("createEvent", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'createEvent' on 'Document': 1 argument required"))
+		}
+		interfaceName := call.Arguments[0].String()
+		return b.createEventForInterface(interfaceName)
 	})
 
 	// textContent is null for Document (per spec) and setting it does nothing
@@ -3427,6 +3460,146 @@ func (b *DOMBinder) createDOMException(name, message string) *goja.Object {
 func (b *DOMBinder) throwIndexSizeError(vm *goja.Runtime) {
 	exc := b.createDOMException("IndexSizeError", "The index is not in the allowed range.")
 	panic(vm.ToValue(exc))
+}
+
+// createEventForInterface creates an event for the document.createEvent() legacy API.
+// The interface name is case-insensitive. Returns an event with the correct prototype.
+func (b *DOMBinder) createEventForInterface(interfaceName string) *goja.Object {
+	vm := b.runtime.vm
+
+	// Map of interface names (lowercase) to their target interface
+	// Per DOM spec, document.createEvent() uses a specific mapping
+	interfaceMap := map[string]string{
+		// Event and aliases
+		"event":       "Event",
+		"events":      "Event",
+		"htmlevents":  "Event",
+		"svgevents":   "Event",
+		// UIEvent and aliases
+		"uievent":  "UIEvent",
+		"uievents": "UIEvent",
+		// MouseEvent and aliases
+		"mouseevent":  "MouseEvent",
+		"mouseevents": "MouseEvent",
+		// FocusEvent
+		"focusevent": "FocusEvent",
+		// KeyboardEvent
+		"keyboardevent": "KeyboardEvent",
+		// CompositionEvent
+		"compositionevent": "CompositionEvent",
+		// TextEvent
+		"textevent": "TextEvent",
+		// CustomEvent
+		"customevent": "CustomEvent",
+		// MessageEvent
+		"messageevent": "MessageEvent",
+		// StorageEvent
+		"storageevent": "StorageEvent",
+		// HashChangeEvent
+		"hashchangeevent": "HashChangeEvent",
+		// BeforeUnloadEvent
+		"beforeunloadevent": "BeforeUnloadEvent",
+		// DeviceMotionEvent
+		"devicemotionevent": "DeviceMotionEvent",
+		// DeviceOrientationEvent
+		"deviceorientationevent": "DeviceOrientationEvent",
+		// DragEvent
+		"dragevent": "DragEvent",
+		// TouchEvent - optional, depends on platform
+		"touchevent": "TouchEvent",
+	}
+
+	// Lookup case-insensitively using ASCII lowercase only
+	// (Unicode characters like Turkish I should not match)
+	lowerName := asciiLowercase(interfaceName)
+	targetInterface, ok := interfaceMap[lowerName]
+	if !ok {
+		// Throw NotSupportedError for unknown interface
+		exc := b.createDOMException("NotSupportedError",
+			"The provided event type ('"+interfaceName+"') is invalid.")
+		panic(vm.ToValue(exc))
+	}
+
+	// Get the constructor from the global object
+	ctor := vm.Get(targetInterface)
+	if ctor == nil || goja.IsUndefined(ctor) {
+		// If the constructor doesn't exist, create a basic Event
+		ctor = vm.Get("Event")
+		if ctor == nil || goja.IsUndefined(ctor) {
+			// Last resort: create a plain object
+			event := vm.NewObject()
+			b.initEventObject(event)
+			return event
+		}
+	}
+
+	// Try to call as constructor with empty type
+	constructor, ok := goja.AssertConstructor(ctor)
+	if !ok {
+		// Fallback: create an event with correct prototype
+		event := vm.NewObject()
+		proto := ctor.ToObject(vm).Get("prototype")
+		if proto != nil && !goja.IsUndefined(proto) {
+			event.SetPrototype(proto.ToObject(vm))
+		}
+		b.initEventObject(event)
+		return event
+	}
+
+	// Call constructor with empty string for type (per spec)
+	event, err := constructor(nil, vm.ToValue(""))
+	if err != nil {
+		// Fallback
+		event := vm.NewObject()
+		b.initEventObject(event)
+		return event
+	}
+
+	return event
+}
+
+// initEventObject initializes a plain event object with required properties.
+func (b *DOMBinder) initEventObject(event *goja.Object) {
+	vm := b.runtime.vm
+	event.Set("type", "")
+	event.Set("target", goja.Null())
+	event.Set("currentTarget", goja.Null())
+	event.Set("eventPhase", 0)
+	event.Set("bubbles", false)
+	event.Set("cancelable", false)
+	event.Set("defaultPrevented", false)
+	event.Set("composed", false)
+	event.Set("isTrusted", false)
+	event.Set("timeStamp", float64(0))
+
+	// Methods
+	event.Set("preventDefault", func(call goja.FunctionCall) goja.Value {
+		if event.Get("cancelable").ToBoolean() {
+			event.Set("defaultPrevented", true)
+		}
+		return goja.Undefined()
+	})
+
+	event.Set("stopPropagation", func(call goja.FunctionCall) goja.Value {
+		event.Set("_stopPropagation", true)
+		return goja.Undefined()
+	})
+
+	event.Set("stopImmediatePropagation", func(call goja.FunctionCall) goja.Value {
+		event.Set("_stopPropagation", true)
+		event.Set("_stopImmediate", true)
+		return goja.Undefined()
+	})
+
+	event.Set("composedPath", func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue([]interface{}{})
+	})
+
+	// Constants
+	event.Set("NONE", 0)
+	event.Set("CAPTURING_PHASE", 1)
+	event.Set("AT_TARGET", 2)
+	event.Set("BUBBLING_PHASE", 3)
 }
 
 // throwDOMError throws a DOMException from a dom.DOMError.

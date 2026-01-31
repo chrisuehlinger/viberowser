@@ -164,13 +164,15 @@ type EventBinder struct {
 	runtime     *Runtime
 	targetMap   map[*goja.Object]*EventTarget
 	mu          sync.RWMutex
+	eventProtos map[string]*goja.Object // Map of event interface names to their prototypes
 }
 
 // NewEventBinder creates a new event binder.
 func NewEventBinder(runtime *Runtime) *EventBinder {
 	return &EventBinder{
-		runtime:   runtime,
-		targetMap: make(map[*goja.Object]*EventTarget),
+		runtime:     runtime,
+		targetMap:   make(map[*goja.Object]*EventTarget),
+		eventProtos: make(map[string]*goja.Object),
 	}
 }
 
@@ -205,18 +207,20 @@ func (eb *EventBinder) BindEventTarget(obj *goja.Object) {
 
 		opts := listenerOptions{}
 		if len(call.Arguments) > 2 {
-			arg := call.Arguments[2]
-			if arg.ExportType().Kind().String() == "bool" {
-				opts.capture = arg.ToBoolean()
-			} else if obj := arg.ToObject(vm); obj != nil {
-				if v := obj.Get("capture"); v != nil {
-					opts.capture = v.ToBoolean()
-				}
-				if v := obj.Get("once"); v != nil {
-					opts.once = v.ToBoolean()
-				}
-				if v := obj.Get("passive"); v != nil {
-					opts.passive = v.ToBoolean()
+			if call.Arguments[2].ExportType().Kind().String() == "bool" {
+				opts.capture = call.Arguments[2].ToBoolean()
+			} else {
+				optObj := call.Arguments[2].ToObject(vm)
+				if optObj != nil {
+					if v := optObj.Get("capture"); v != nil && !goja.IsUndefined(v) {
+						opts.capture = v.ToBoolean()
+					}
+					if v := optObj.Get("once"); v != nil && !goja.IsUndefined(v) {
+						opts.once = v.ToBoolean()
+					}
+					if v := optObj.Get("passive"); v != nil && !goja.IsUndefined(v) {
+						opts.passive = v.ToBoolean()
+					}
 				}
 			}
 		}
@@ -232,20 +236,16 @@ func (eb *EventBinder) BindEventTarget(obj *goja.Object) {
 		}
 
 		eventType := call.Arguments[0].String()
-		// Verify the second argument is a function
-		_, ok := goja.AssertFunction(call.Arguments[1])
-		if !ok {
-			return goja.Undefined()
-		}
-
 		capture := false
 		if len(call.Arguments) > 2 {
-			arg := call.Arguments[2]
-			if arg.ExportType().Kind().String() == "bool" {
-				capture = arg.ToBoolean()
-			} else if obj := arg.ToObject(vm); obj != nil {
-				if v := obj.Get("capture"); v != nil {
-					capture = v.ToBoolean()
+			if call.Arguments[2].ExportType().Kind().String() == "bool" {
+				capture = call.Arguments[2].ToBoolean()
+			} else {
+				optObj := call.Arguments[2].ToObject(vm)
+				if optObj != nil {
+					if v := optObj.Get("capture"); v != nil && !goja.IsUndefined(v) {
+						capture = v.ToBoolean()
+					}
 				}
 			}
 		}
@@ -257,25 +257,26 @@ func (eb *EventBinder) BindEventTarget(obj *goja.Object) {
 
 	obj.Set("dispatchEvent", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
-			return vm.ToValue(true)
+			return vm.ToValue(false)
 		}
 
 		event := call.Arguments[0].ToObject(vm)
 		if event == nil {
-			return vm.ToValue(true)
+			return vm.ToValue(false)
 		}
 
-		// Set the target
+		// Set target and currentTarget
 		event.Set("target", obj)
 		event.Set("currentTarget", obj)
 		event.Set("eventPhase", int(EventPhaseAtTarget))
 
 		target := eb.GetOrCreateTarget(obj)
-		return vm.ToValue(target.DispatchEvent(vm, event, EventPhaseAtTarget))
+		result := target.DispatchEvent(vm, event, EventPhaseAtTarget)
+		return vm.ToValue(result)
 	})
 }
 
-// CreateEvent creates a new Event object.
+// CreateEvent creates a new Event object with the given prototype.
 func (eb *EventBinder) CreateEvent(eventType string, options map[string]interface{}) *goja.Object {
 	vm := eb.runtime.vm
 	event := vm.NewObject()
@@ -344,81 +345,341 @@ func (eb *EventBinder) CreateEvent(eventType string, options map[string]interfac
 	return event
 }
 
-// SetupEventConstructors sets up Event and CustomEvent constructors on the global object.
-func (eb *EventBinder) SetupEventConstructors() {
+// GetEventProto returns the prototype for a given event interface.
+func (eb *EventBinder) GetEventProto(name string) *goja.Object {
+	eb.mu.RLock()
+	defer eb.mu.RUnlock()
+	return eb.eventProtos[name]
+}
+
+// createEventConstructor creates an event constructor with proper prototype chain.
+func (eb *EventBinder) createEventConstructor(name string, parentProto *goja.Object, initFunc func(event *goja.Object, call goja.ConstructorCall)) {
 	vm := eb.runtime.vm
 
-	// Event constructor
-	vm.Set("Event", func(call goja.ConstructorCall) *goja.Object {
+	// Create prototype
+	proto := vm.NewObject()
+	if parentProto != nil {
+		proto.SetPrototype(parentProto)
+	}
+	proto.Set("NONE", int(EventPhaseNone))
+	proto.Set("CAPTURING_PHASE", int(EventPhaseCapturing))
+	proto.Set("AT_TARGET", int(EventPhaseAtTarget))
+	proto.Set("BUBBLING_PHASE", int(EventPhaseBubbling))
+
+	// Create constructor
+	ctor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
 		eventType := ""
-		if len(call.Arguments) > 0 {
-			eventType = call.Arguments[0].String()
-		}
-
-		var options map[string]interface{}
-		if len(call.Arguments) > 1 {
-			optObj := call.Arguments[1].ToObject(vm)
-			if optObj != nil {
-				options = make(map[string]interface{})
-				if v := optObj.Get("bubbles"); v != nil && !goja.IsUndefined(v) {
-					options["bubbles"] = v.ToBoolean()
-				}
-				if v := optObj.Get("cancelable"); v != nil && !goja.IsUndefined(v) {
-					options["cancelable"] = v.ToBoolean()
-				}
-				if v := optObj.Get("composed"); v != nil && !goja.IsUndefined(v) {
-					options["composed"] = v.ToBoolean()
-				}
-			}
-		}
-
-		return eb.CreateEvent(eventType, options)
-	})
-
-	// CustomEvent constructor
-	vm.Set("CustomEvent", func(call goja.ConstructorCall) *goja.Object {
-		eventType := ""
-		if len(call.Arguments) > 0 {
-			eventType = call.Arguments[0].String()
-		}
-
-		var options map[string]interface{}
-		var detail goja.Value = goja.Null()
-
-		if len(call.Arguments) > 1 {
-			optObj := call.Arguments[1].ToObject(vm)
-			if optObj != nil {
-				options = make(map[string]interface{})
-				if v := optObj.Get("bubbles"); v != nil && !goja.IsUndefined(v) {
-					options["bubbles"] = v.ToBoolean()
-				}
-				if v := optObj.Get("cancelable"); v != nil && !goja.IsUndefined(v) {
-					options["cancelable"] = v.ToBoolean()
-				}
-				if v := optObj.Get("composed"); v != nil && !goja.IsUndefined(v) {
-					options["composed"] = v.ToBoolean()
-				}
-				if v := optObj.Get("detail"); v != nil && !goja.IsUndefined(v) {
-					detail = v
-				}
-			}
-		}
-
-		event := eb.CreateEvent(eventType, options)
-		event.Set("detail", detail)
-
-		return event
-	})
-
-	// Error event constructor
-	vm.Set("ErrorEvent", func(call goja.ConstructorCall) *goja.Object {
-		eventType := "error"
 		if len(call.Arguments) > 0 {
 			eventType = call.Arguments[0].String()
 		}
 
 		event := eb.CreateEvent(eventType, nil)
+		event.SetPrototype(proto)
 
+		// Apply bubbles/cancelable from options
+		if len(call.Arguments) > 1 {
+			optObj := call.Arguments[1].ToObject(vm)
+			if optObj != nil {
+				if v := optObj.Get("bubbles"); v != nil && !goja.IsUndefined(v) {
+					event.Set("bubbles", v.ToBoolean())
+				}
+				if v := optObj.Get("cancelable"); v != nil && !goja.IsUndefined(v) {
+					event.Set("cancelable", v.ToBoolean())
+				}
+				if v := optObj.Get("composed"); v != nil && !goja.IsUndefined(v) {
+					event.Set("composed", v.ToBoolean())
+				}
+			}
+		}
+
+		// Call the init function for subclass-specific properties
+		if initFunc != nil {
+			initFunc(event, call)
+		}
+
+		return event
+	})
+
+	ctorObj := ctor.ToObject(vm)
+	ctorObj.Set("prototype", proto)
+	proto.Set("constructor", ctorObj)
+
+	// Set constants on constructor
+	ctorObj.Set("NONE", int(EventPhaseNone))
+	ctorObj.Set("CAPTURING_PHASE", int(EventPhaseCapturing))
+	ctorObj.Set("AT_TARGET", int(EventPhaseAtTarget))
+	ctorObj.Set("BUBBLING_PHASE", int(EventPhaseBubbling))
+
+	// Store prototype and set global
+	eb.mu.Lock()
+	eb.eventProtos[name] = proto
+	eb.mu.Unlock()
+
+	vm.Set(name, ctorObj)
+}
+
+// SetupEventConstructors sets up Event and related event constructors on the global object.
+func (eb *EventBinder) SetupEventConstructors() {
+	vm := eb.runtime.vm
+
+	// Event - base event constructor
+	eb.createEventConstructor("Event", nil, nil)
+	eventProto := eb.GetEventProto("Event")
+
+	// CustomEvent - extends Event
+	eb.createEventConstructor("CustomEvent", eventProto, func(event *goja.Object, call goja.ConstructorCall) {
+		event.Set("detail", goja.Null())
+		if len(call.Arguments) > 1 {
+			optObj := call.Arguments[1].ToObject(vm)
+			if optObj != nil {
+				if v := optObj.Get("detail"); v != nil && !goja.IsUndefined(v) {
+					event.Set("detail", v)
+				}
+			}
+		}
+	})
+
+	// UIEvent - extends Event
+	eb.createEventConstructor("UIEvent", eventProto, func(event *goja.Object, call goja.ConstructorCall) {
+		event.Set("view", goja.Null())
+		event.Set("detail", 0)
+		if len(call.Arguments) > 1 {
+			optObj := call.Arguments[1].ToObject(vm)
+			if optObj != nil {
+				if v := optObj.Get("view"); v != nil && !goja.IsUndefined(v) {
+					event.Set("view", v)
+				}
+				if v := optObj.Get("detail"); v != nil && !goja.IsUndefined(v) {
+					event.Set("detail", v.ToInteger())
+				}
+			}
+		}
+	})
+	uiEventProto := eb.GetEventProto("UIEvent")
+
+	// MouseEvent - extends UIEvent
+	eb.createEventConstructor("MouseEvent", uiEventProto, func(event *goja.Object, call goja.ConstructorCall) {
+		event.Set("view", goja.Null())
+		event.Set("detail", 0)
+		event.Set("screenX", 0)
+		event.Set("screenY", 0)
+		event.Set("clientX", 0)
+		event.Set("clientY", 0)
+		event.Set("ctrlKey", false)
+		event.Set("shiftKey", false)
+		event.Set("altKey", false)
+		event.Set("metaKey", false)
+		event.Set("button", 0)
+		event.Set("buttons", 0)
+		event.Set("relatedTarget", goja.Null())
+		if len(call.Arguments) > 1 {
+			optObj := call.Arguments[1].ToObject(vm)
+			if optObj != nil {
+				if v := optObj.Get("screenX"); v != nil && !goja.IsUndefined(v) {
+					event.Set("screenX", v.ToInteger())
+				}
+				if v := optObj.Get("screenY"); v != nil && !goja.IsUndefined(v) {
+					event.Set("screenY", v.ToInteger())
+				}
+				if v := optObj.Get("clientX"); v != nil && !goja.IsUndefined(v) {
+					event.Set("clientX", v.ToInteger())
+				}
+				if v := optObj.Get("clientY"); v != nil && !goja.IsUndefined(v) {
+					event.Set("clientY", v.ToInteger())
+				}
+				if v := optObj.Get("button"); v != nil && !goja.IsUndefined(v) {
+					event.Set("button", v.ToInteger())
+				}
+			}
+		}
+	})
+
+	// FocusEvent - extends UIEvent
+	eb.createEventConstructor("FocusEvent", uiEventProto, func(event *goja.Object, call goja.ConstructorCall) {
+		event.Set("view", goja.Null())
+		event.Set("detail", 0)
+		event.Set("relatedTarget", goja.Null())
+		if len(call.Arguments) > 1 {
+			optObj := call.Arguments[1].ToObject(vm)
+			if optObj != nil {
+				if v := optObj.Get("relatedTarget"); v != nil && !goja.IsUndefined(v) {
+					event.Set("relatedTarget", v)
+				}
+			}
+		}
+	})
+
+	// KeyboardEvent - extends UIEvent
+	eb.createEventConstructor("KeyboardEvent", uiEventProto, func(event *goja.Object, call goja.ConstructorCall) {
+		event.Set("view", goja.Null())
+		event.Set("detail", 0)
+		event.Set("key", "")
+		event.Set("code", "")
+		event.Set("location", 0)
+		event.Set("ctrlKey", false)
+		event.Set("shiftKey", false)
+		event.Set("altKey", false)
+		event.Set("metaKey", false)
+		event.Set("repeat", false)
+		event.Set("isComposing", false)
+		event.Set("charCode", 0)
+		event.Set("keyCode", 0)
+		event.Set("which", 0)
+		if len(call.Arguments) > 1 {
+			optObj := call.Arguments[1].ToObject(vm)
+			if optObj != nil {
+				if v := optObj.Get("key"); v != nil && !goja.IsUndefined(v) {
+					event.Set("key", v.String())
+				}
+				if v := optObj.Get("code"); v != nil && !goja.IsUndefined(v) {
+					event.Set("code", v.String())
+				}
+			}
+		}
+	})
+
+	// CompositionEvent - extends UIEvent
+	eb.createEventConstructor("CompositionEvent", uiEventProto, func(event *goja.Object, call goja.ConstructorCall) {
+		event.Set("view", goja.Null())
+		event.Set("detail", 0)
+		event.Set("data", "")
+		if len(call.Arguments) > 1 {
+			optObj := call.Arguments[1].ToObject(vm)
+			if optObj != nil {
+				if v := optObj.Get("data"); v != nil && !goja.IsUndefined(v) {
+					event.Set("data", v.String())
+				}
+			}
+		}
+	})
+
+	// TextEvent - extends UIEvent (deprecated but needed for compatibility)
+	eb.createEventConstructor("TextEvent", uiEventProto, func(event *goja.Object, call goja.ConstructorCall) {
+		event.Set("view", goja.Null())
+		event.Set("detail", 0)
+		event.Set("data", "")
+	})
+
+	// MessageEvent - extends Event
+	eb.createEventConstructor("MessageEvent", eventProto, func(event *goja.Object, call goja.ConstructorCall) {
+		event.Set("data", goja.Null())
+		event.Set("origin", "")
+		event.Set("lastEventId", "")
+		event.Set("source", goja.Null())
+		event.Set("ports", vm.ToValue([]interface{}{}))
+		if len(call.Arguments) > 1 {
+			optObj := call.Arguments[1].ToObject(vm)
+			if optObj != nil {
+				if v := optObj.Get("data"); v != nil && !goja.IsUndefined(v) {
+					event.Set("data", v)
+				}
+				if v := optObj.Get("origin"); v != nil && !goja.IsUndefined(v) {
+					event.Set("origin", v.String())
+				}
+			}
+		}
+	})
+
+	// StorageEvent - extends Event
+	eb.createEventConstructor("StorageEvent", eventProto, func(event *goja.Object, call goja.ConstructorCall) {
+		event.Set("key", goja.Null())
+		event.Set("oldValue", goja.Null())
+		event.Set("newValue", goja.Null())
+		event.Set("url", "")
+		event.Set("storageArea", goja.Null())
+		if len(call.Arguments) > 1 {
+			optObj := call.Arguments[1].ToObject(vm)
+			if optObj != nil {
+				if v := optObj.Get("key"); v != nil && !goja.IsUndefined(v) {
+					event.Set("key", v)
+				}
+				if v := optObj.Get("oldValue"); v != nil && !goja.IsUndefined(v) {
+					event.Set("oldValue", v)
+				}
+				if v := optObj.Get("newValue"); v != nil && !goja.IsUndefined(v) {
+					event.Set("newValue", v)
+				}
+			}
+		}
+	})
+
+	// HashChangeEvent - extends Event
+	eb.createEventConstructor("HashChangeEvent", eventProto, func(event *goja.Object, call goja.ConstructorCall) {
+		event.Set("oldURL", "")
+		event.Set("newURL", "")
+		if len(call.Arguments) > 1 {
+			optObj := call.Arguments[1].ToObject(vm)
+			if optObj != nil {
+				if v := optObj.Get("oldURL"); v != nil && !goja.IsUndefined(v) {
+					event.Set("oldURL", v.String())
+				}
+				if v := optObj.Get("newURL"); v != nil && !goja.IsUndefined(v) {
+					event.Set("newURL", v.String())
+				}
+			}
+		}
+	})
+
+	// BeforeUnloadEvent - extends Event
+	eb.createEventConstructor("BeforeUnloadEvent", eventProto, func(event *goja.Object, call goja.ConstructorCall) {
+		event.Set("returnValue", "")
+	})
+
+	// DeviceMotionEvent - extends Event
+	eb.createEventConstructor("DeviceMotionEvent", eventProto, func(event *goja.Object, call goja.ConstructorCall) {
+		event.Set("acceleration", goja.Null())
+		event.Set("accelerationIncludingGravity", goja.Null())
+		event.Set("rotationRate", goja.Null())
+		event.Set("interval", 0)
+	})
+
+	// DeviceOrientationEvent - extends Event
+	eb.createEventConstructor("DeviceOrientationEvent", eventProto, func(event *goja.Object, call goja.ConstructorCall) {
+		event.Set("alpha", goja.Null())
+		event.Set("beta", goja.Null())
+		event.Set("gamma", goja.Null())
+		event.Set("absolute", false)
+	})
+
+	// DragEvent - extends MouseEvent
+	mouseEventProto := eb.GetEventProto("MouseEvent")
+	eb.createEventConstructor("DragEvent", mouseEventProto, func(event *goja.Object, call goja.ConstructorCall) {
+		event.Set("view", goja.Null())
+		event.Set("detail", 0)
+		event.Set("screenX", 0)
+		event.Set("screenY", 0)
+		event.Set("clientX", 0)
+		event.Set("clientY", 0)
+		event.Set("ctrlKey", false)
+		event.Set("shiftKey", false)
+		event.Set("altKey", false)
+		event.Set("metaKey", false)
+		event.Set("button", 0)
+		event.Set("buttons", 0)
+		event.Set("relatedTarget", goja.Null())
+		event.Set("dataTransfer", goja.Null())
+	})
+
+	// TouchEvent - extends UIEvent
+	eb.createEventConstructor("TouchEvent", uiEventProto, func(event *goja.Object, call goja.ConstructorCall) {
+		event.Set("view", goja.Null())
+		event.Set("detail", 0)
+		event.Set("touches", vm.ToValue([]interface{}{}))
+		event.Set("targetTouches", vm.ToValue([]interface{}{}))
+		event.Set("changedTouches", vm.ToValue([]interface{}{}))
+		event.Set("ctrlKey", false)
+		event.Set("shiftKey", false)
+		event.Set("altKey", false)
+		event.Set("metaKey", false)
+	})
+
+	// ErrorEvent - extends Event
+	eb.createEventConstructor("ErrorEvent", eventProto, func(event *goja.Object, call goja.ConstructorCall) {
+		event.Set("message", "")
+		event.Set("filename", "")
+		event.Set("lineno", 0)
+		event.Set("colno", 0)
+		event.Set("error", goja.Null())
 		if len(call.Arguments) > 1 {
 			optObj := call.Arguments[1].ToObject(vm)
 			if optObj != nil {
@@ -439,8 +700,6 @@ func (eb *EventBinder) SetupEventConstructors() {
 				}
 			}
 		}
-
-		return event
 	})
 }
 
