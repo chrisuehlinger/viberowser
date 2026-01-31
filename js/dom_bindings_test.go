@@ -2704,3 +2704,85 @@ func TestDOMBinderScrollProperties(t *testing.T) {
 		t.Errorf("Expected scrollLeft=30, got %v", result.ToFloat())
 	}
 }
+
+func TestDOMTokenList_Iteration(t *testing.T) {
+	r := NewRuntime()
+	executor := NewScriptExecutor(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html><html><body><span id="test" class="a a b c"></span></body></html>`)
+	executor.SetupDocument(doc)
+
+	// Test that values() returns an iterator
+	result, err := r.Execute(`
+		var list = document.getElementById('test').classList;
+		typeof list.values === 'function'
+	`)
+	if err != nil {
+		t.Fatalf("Error checking values method: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Expected classList.values to be a function")
+	}
+
+	// Test that values is from Array.prototype
+	result, err = r.Execute(`
+		var list = document.getElementById('test').classList;
+		list.values === Array.prototype.values
+	`)
+	if err != nil {
+		t.Fatalf("Error checking values identity: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Expected classList.values === Array.prototype.values")
+	}
+
+	// Test that keys() works
+	result, err = r.Execute(`
+		var list = document.getElementById('test').classList;
+		[...list.keys()].join(',')
+	`)
+	if err != nil {
+		t.Fatalf("Error calling keys(): %v", err)
+	}
+	if result.String() != "0,1,2" {
+		t.Errorf("Expected keys to be '0,1,2', got '%s'", result.String())
+	}
+
+	// Test that values() works
+	result, err = r.Execute(`
+		var list = document.getElementById('test').classList;
+		[...list.values()].join(',')
+	`)
+	if err != nil {
+		t.Fatalf("Error calling values(): %v", err)
+	}
+	if result.String() != "a,b,c" {
+		t.Errorf("Expected values to be 'a,b,c', got '%s'", result.String())
+	}
+
+	// Test that Symbol.iterator works (for-of)
+	result, err = r.Execute(`
+		var list = document.getElementById('test').classList;
+		[...list].join(',')
+	`)
+	if err != nil {
+		t.Fatalf("Error using spread operator: %v", err)
+	}
+	if result.String() != "a,b,c" {
+		t.Errorf("Expected [...list] to be 'a,b,c', got '%s'", result.String())
+	}
+
+	// Test forEach
+	result, err = r.Execute(`
+		var list = document.getElementById('test').classList;
+		var result = [];
+		list.forEach(function(v, k) { result.push(k + ':' + v); });
+		result.join(',')
+	`)
+	if err != nil {
+		t.Fatalf("Error calling forEach: %v", err)
+	}
+	if result.String() != "0:a,1:b,2:c" {
+		t.Errorf("Expected forEach result to be '0:a,1:b,2:c', got '%s'", result.String())
+	}
+}

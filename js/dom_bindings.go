@@ -6496,6 +6496,7 @@ func (b *DOMBinder) bindStaticNodeList(nodes []*dom.Node) *goja.Object {
 }
 
 // BindHTMLCollection creates a JavaScript HTMLCollection object.
+// Uses a Proxy to provide live access to elements (HTMLCollection is a live collection).
 func (b *DOMBinder) BindHTMLCollection(collection *dom.HTMLCollection) *goja.Object {
 	vm := b.runtime.vm
 	jsCol := vm.NewObject()
@@ -6508,39 +6509,239 @@ func (b *DOMBinder) BindHTMLCollection(collection *dom.HTMLCollection) *goja.Obj
 	// Register the collection in our internal map for prototype methods
 	b.htmlCollectionMap[jsCol] = collection
 
-	// Array-like indexed properties - these should be enumerable
-	// Note: This snapshot may become stale for live collections
-	length := collection.Length()
-	for i := 0; i < length; i++ {
-		idx := i
-		jsCol.DefineAccessorProperty(vm.ToValue(idx).String(), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+	// Store expando properties (user-set properties that are not DOM properties)
+	expandos := make(map[string]goja.Value)
+
+	// Helper to check if a string is a valid array index
+	isArrayIndex := func(s string) bool {
+		if len(s) == 0 {
+			return false
+		}
+		for _, c := range s {
+			if c < '0' || c > '9' {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Create a proxy for live access to the collection
+	proxy := vm.NewProxy(jsCol, &goja.ProxyTrapConfig{
+		// Get property - intercept numeric indices and named properties
+		Get: func(target *goja.Object, property string, receiver goja.Value) goja.Value {
+			// Check for expandos first
+			if val, ok := expandos[property]; ok {
+				return val
+			}
+
+			// Check numeric index
+			if isArrayIndex(property) {
+				idx := 0
+				for _, c := range property {
+					idx = idx*10 + int(c-'0')
+				}
+				el := collection.Item(idx)
+				if el == nil {
+					return goja.Undefined()
+				}
+				return b.BindElement(el)
+			}
+
+			// Check named item
+			el := collection.NamedItem(property)
+			if el != nil {
+				return b.BindElement(el)
+			}
+
+			// Fall through to target object (for prototype methods etc)
+			return target.Get(property)
+		},
+
+		// GetIdx for numeric indices
+		GetIdx: func(target *goja.Object, idx int, receiver goja.Value) goja.Value {
 			el := collection.Item(idx)
 			if el == nil {
 				return goja.Undefined()
 			}
 			return b.BindElement(el)
-		}), nil, goja.FLAG_TRUE, goja.FLAG_TRUE)
-	}
+		},
 
-	// Named properties - non-enumerable own properties (in tree order)
-	namedProps := collection.NamedProperties()
-	for _, prop := range namedProps {
-		// Don't overwrite numeric indices - check if name is a valid array index
-		isNumeric := true
-		for _, c := range prop.Name {
-			if c < '0' || c > '9' {
-				isNumeric = false
-				break
+		// Set property - handle expando vs named property shadowing
+		// Returning false will cause strict mode to throw TypeError
+		Set: func(target *goja.Object, property string, value goja.Value, receiver goja.Value) bool {
+			// Numeric indices are read-only
+			if isArrayIndex(property) {
+				idx := 0
+				for _, c := range property {
+					idx = idx*10 + int(c-'0')
+				}
+				// If index exists, reject the set (strict mode will throw)
+				if idx < collection.Length() {
+					return false
+				}
+				// Non-existing indices also reject
+				return false
 			}
-		}
-		if isNumeric && len(prop.Name) > 0 {
-			continue
-		}
-		boundEl := b.BindElement(prop.Element)
-		jsCol.DefineDataProperty(prop.Name, boundEl, goja.FLAG_TRUE, goja.FLAG_TRUE, goja.FLAG_FALSE)
-	}
 
-	return jsCol
+			// Check if named property already exists in DOM
+			el := collection.NamedItem(property)
+			if el != nil {
+				// Named property exists - reject the set (strict mode will throw)
+				return false
+			}
+
+			// No DOM property - store as expando
+			expandos[property] = value
+			return true
+		},
+
+		// SetIdx for numeric indices - read-only, always reject
+		SetIdx: func(target *goja.Object, idx int, value goja.Value, receiver goja.Value) bool {
+			return false
+		},
+
+		// Has property
+		Has: func(target *goja.Object, property string) bool {
+			if _, ok := expandos[property]; ok {
+				return true
+			}
+			if isArrayIndex(property) {
+				idx := 0
+				for _, c := range property {
+					idx = idx*10 + int(c-'0')
+				}
+				return idx < collection.Length()
+			}
+			return collection.NamedItem(property) != nil || target.Get(property) != nil
+		},
+
+		// HasIdx for numeric indices
+		HasIdx: func(target *goja.Object, idx int) bool {
+			return idx >= 0 && idx < collection.Length()
+		},
+
+		// OwnKeys - return all indexed and named properties
+		OwnKeys: func(target *goja.Object) *goja.Object {
+			keys := make([]interface{}, 0)
+			// Add numeric indices
+			for i := 0; i < collection.Length(); i++ {
+				keys = append(keys, vm.ToValue(i).String())
+			}
+			// Add named properties
+			for _, prop := range collection.NamedProperties() {
+				keys = append(keys, prop.Name)
+			}
+			// Add expandos
+			for k := range expandos {
+				keys = append(keys, k)
+			}
+			return vm.ToValue(keys).ToObject(vm)
+		},
+
+		// GetOwnPropertyDescriptor
+		GetOwnPropertyDescriptor: func(target *goja.Object, prop string) goja.PropertyDescriptor {
+			// Check expandos
+			if val, ok := expandos[prop]; ok {
+				return goja.PropertyDescriptor{
+					Value:        val,
+					Writable:     goja.FLAG_TRUE,
+					Enumerable:   goja.FLAG_TRUE,
+					Configurable: goja.FLAG_TRUE,
+				}
+			}
+
+			// Check numeric index
+			if isArrayIndex(prop) {
+				idx := 0
+				for _, c := range prop {
+					idx = idx*10 + int(c-'0')
+				}
+				if idx < collection.Length() {
+					el := collection.Item(idx)
+					return goja.PropertyDescriptor{
+						Value:        b.BindElement(el),
+						Writable:     goja.FLAG_FALSE,
+						Enumerable:   goja.FLAG_TRUE,
+						Configurable: goja.FLAG_TRUE,
+					}
+				}
+				return goja.PropertyDescriptor{}
+			}
+
+			// Check named property
+			el := collection.NamedItem(prop)
+			if el != nil {
+				return goja.PropertyDescriptor{
+					Value:        b.BindElement(el),
+					Writable:     goja.FLAG_FALSE,
+					Enumerable:   goja.FLAG_FALSE, // Named props are not enumerable
+					Configurable: goja.FLAG_TRUE,
+				}
+			}
+
+			return goja.PropertyDescriptor{}
+		},
+
+		// GetOwnPropertyDescriptorIdx for numeric indices
+		GetOwnPropertyDescriptorIdx: func(target *goja.Object, idx int) goja.PropertyDescriptor {
+			if idx >= 0 && idx < collection.Length() {
+				el := collection.Item(idx)
+				return goja.PropertyDescriptor{
+					Value:        b.BindElement(el),
+					Writable:     goja.FLAG_FALSE,
+					Enumerable:   goja.FLAG_TRUE,
+					Configurable: goja.FLAG_TRUE,
+				}
+			}
+			return goja.PropertyDescriptor{}
+		},
+
+		// Delete property
+		DeleteProperty: func(target *goja.Object, property string) bool {
+			// Can delete expandos
+			if _, ok := expandos[property]; ok {
+				delete(expandos, property)
+				return true
+			}
+
+			// Can't delete DOM properties in loose mode - return true but don't delete
+			if isArrayIndex(property) || collection.NamedItem(property) != nil {
+				return true
+			}
+
+			return true
+		},
+
+		// DefineProperty - prevent defining properties that shadow DOM properties
+		DefineProperty: func(target *goja.Object, property string, desc goja.PropertyDescriptor) bool {
+			// Can't define properties that shadow DOM properties
+			if isArrayIndex(property) {
+				idx := 0
+				for _, c := range property {
+					idx = idx*10 + int(c-'0')
+				}
+				if idx < collection.Length() {
+					return false // Strict mode will throw
+				}
+			}
+
+			if collection.NamedItem(property) != nil {
+				return false // Strict mode will throw
+			}
+
+			// Store as expando
+			expandos[property] = desc.Value
+			return true
+		},
+	})
+
+	// Get the proxy object
+	proxyObj := vm.ToValue(proxy).ToObject(vm)
+
+	// Update the map to point to the proxy
+	b.htmlCollectionMap[proxyObj] = collection
+
+	return proxyObj
 }
 
 // BindDOMTokenList creates a JavaScript DOMTokenList object with dynamic numeric indexing.
@@ -6650,6 +6851,24 @@ func (b *DOMBinder) BindDOMTokenList(tokenList *dom.DOMTokenList) *goja.Object {
 	jsList.Set("toString", func(call goja.FunctionCall) goja.Value {
 		return vm.ToValue(tokenList.Value())
 	})
+
+	// Add Array.prototype methods for iteration (per DOMTokenList spec)
+	// These should be the actual Array.prototype methods
+	// We need to set Symbol.iterator and the iteration methods (keys, values, entries, forEach)
+	setupFn, _ := vm.RunString(`
+		(function(list) {
+			list[Symbol.iterator] = Array.prototype[Symbol.iterator];
+			list.keys = Array.prototype.keys;
+			list.values = Array.prototype.values;
+			list.entries = Array.prototype.entries;
+			list.forEach = Array.prototype.forEach;
+		})
+	`)
+	if setupFn != nil && !goja.IsUndefined(setupFn) {
+		if fn, ok := goja.AssertFunction(setupFn); ok {
+			fn(goja.Undefined(), jsList)
+		}
+	}
 
 	// Create a proxy to intercept numeric index access (e.g., classList[0])
 	proxy := vm.NewProxy(jsList, &goja.ProxyTrapConfig{

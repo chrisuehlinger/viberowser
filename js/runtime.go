@@ -85,11 +85,13 @@ func (r *Runtime) Execute(code string) (goja.Value, error) {
 
 // ExecuteScript runs JavaScript code from a script element.
 // It handles errors gracefully and doesn't stop execution of subsequent scripts.
+// Scripts are compiled in non-strict (sloppy) mode by default, as per HTML5 spec.
+// Scripts that need strict mode should include "use strict" directive.
 func (r *Runtime) ExecuteScript(code, src string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	program, err := goja.Compile(src, code, true)
+	program, err := goja.Compile(src, code, false)
 	if err != nil {
 		r.errors = append(r.errors, err)
 		if r.onError != nil {
