@@ -508,3 +508,94 @@ func TestDOMBinderCloneNode(t *testing.T) {
 		t.Errorf("Expected deep clone to have 1 child, got %v", result.ToInteger())
 	}
 }
+
+func TestDOMBinderParentNodeProperties(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body>
+	<div id="parent">
+		<span id="first">First</span>
+		<p id="middle">Middle</p>
+		<span id="last">Last</span>
+	</div>
+</body>
+</html>`)
+
+	binder.BindDocument(doc)
+
+	// Test children
+	result, err := r.Execute("document.getElementById('parent').children.length")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 3 {
+		t.Errorf("Expected 3 children, got %v", result.ToInteger())
+	}
+
+	// Test childElementCount
+	result, err = r.Execute("document.getElementById('parent').childElementCount")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 3 {
+		t.Errorf("Expected childElementCount of 3, got %v", result.ToInteger())
+	}
+
+	// Test firstElementChild
+	result, err = r.Execute("document.getElementById('parent').firstElementChild.id")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "first" {
+		t.Errorf("Expected firstElementChild id 'first', got %v", result.String())
+	}
+
+	// Test lastElementChild
+	result, err = r.Execute("document.getElementById('parent').lastElementChild.id")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "last" {
+		t.Errorf("Expected lastElementChild id 'last', got %v", result.String())
+	}
+
+	// Test previousElementSibling
+	result, err = r.Execute("document.getElementById('middle').previousElementSibling.id")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "first" {
+		t.Errorf("Expected previousElementSibling id 'first', got %v", result.String())
+	}
+
+	// Test nextElementSibling
+	result, err = r.Execute("document.getElementById('middle').nextElementSibling.id")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "last" {
+		t.Errorf("Expected nextElementSibling id 'last', got %v", result.String())
+	}
+
+	// Test document.children (should have html element)
+	result, err = r.Execute("document.children.length")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 1 {
+		t.Errorf("Expected document to have 1 child element, got %v", result.ToInteger())
+	}
+
+	// Test document.firstElementChild
+	result, err = r.Execute("document.firstElementChild.tagName")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "HTML" {
+		t.Errorf("Expected document.firstElementChild to be HTML, got %v", result.String())
+	}
+}

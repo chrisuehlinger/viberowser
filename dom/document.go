@@ -275,6 +275,39 @@ func (d *Document) QuerySelectorAll(selector string) *NodeList {
 	return NewStaticNodeList(results)
 }
 
+// Children returns an HTMLCollection of child elements.
+func (d *Document) Children() *HTMLCollection {
+	return newHTMLCollection(d.AsNode(), func(el *Element) bool {
+		return el.AsNode().parentNode == d.AsNode()
+	})
+}
+
+// ChildElementCount returns the number of child elements.
+func (d *Document) ChildElementCount() int {
+	count := 0
+	for child := d.AsNode().firstChild; child != nil; child = child.nextSibling {
+		if child.nodeType == ElementNode {
+			count++
+		}
+	}
+	return count
+}
+
+// FirstElementChild returns the first child element (same as DocumentElement for Document).
+func (d *Document) FirstElementChild() *Element {
+	return d.DocumentElement()
+}
+
+// LastElementChild returns the last child element.
+func (d *Document) LastElementChild() *Element {
+	for child := d.AsNode().lastChild; child != nil; child = child.prevSibling {
+		if child.nodeType == ElementNode {
+			return (*Element)(child)
+		}
+	}
+	return nil
+}
+
 // ImportNode imports a node from another document.
 func (d *Document) ImportNode(node *Node, deep bool) *Node {
 	if node == nil {

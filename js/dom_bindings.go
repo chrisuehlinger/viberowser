@@ -198,6 +198,31 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 		return b.BindNode(adopted)
 	})
 
+	// ParentNode mixin properties
+	jsDoc.DefineAccessorProperty("children", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindHTMLCollection(doc.Children())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("childElementCount", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(doc.ChildElementCount())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("firstElementChild", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		child := doc.FirstElementChild()
+		if child == nil {
+			return goja.Null()
+		}
+		return b.BindElement(child)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("lastElementChild", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		child := doc.LastElementChild()
+		if child == nil {
+			return goja.Null()
+		}
+		return b.BindElement(child)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
 	// Child node properties (document can have children)
 	b.bindNodeProperties(jsDoc, doc.AsNode())
 
@@ -477,6 +502,48 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		}
 		return b.BindElement(found)
 	})
+
+	// ParentNode mixin properties
+	jsEl.DefineAccessorProperty("children", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindHTMLCollection(el.Children())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsEl.DefineAccessorProperty("childElementCount", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.ChildElementCount())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsEl.DefineAccessorProperty("firstElementChild", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		child := el.FirstElementChild()
+		if child == nil {
+			return goja.Null()
+		}
+		return b.BindElement(child)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsEl.DefineAccessorProperty("lastElementChild", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		child := el.LastElementChild()
+		if child == nil {
+			return goja.Null()
+		}
+		return b.BindElement(child)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// NonDocumentTypeChildNode mixin properties
+	jsEl.DefineAccessorProperty("previousElementSibling", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		sibling := el.PreviousElementSibling()
+		if sibling == nil {
+			return goja.Null()
+		}
+		return b.BindElement(sibling)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsEl.DefineAccessorProperty("nextElementSibling", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		sibling := el.NextElementSibling()
+		if sibling == nil {
+			return goja.Null()
+		}
+		return b.BindElement(sibling)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	// DOM manipulation methods
 	jsEl.Set("remove", func(call goja.FunctionCall) goja.Value {
