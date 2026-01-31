@@ -1914,7 +1914,13 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 
 	jsEl.DefineAccessorProperty("style", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		return b.BindCSSStyleDeclaration(el.Style())
-	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Per CSSOM spec, setting element.style = "string" is equivalent to setting style.cssText
+		if len(call.Arguments) > 0 {
+			el.Style().SetCSSText(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	jsEl.DefineAccessorProperty("innerHTML", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		return vm.ToValue(el.InnerHTML())

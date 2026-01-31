@@ -1882,6 +1882,43 @@ func TestDOMBinderCSSStyleDeclarationFromAttribute(t *testing.T) {
 	}
 }
 
+func TestDOMBinderCSSStyleDeclarationSetViaSetter(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body><div id="test" style="color: red;"></div></body>
+</html>`)
+
+	binder.BindDocument(doc)
+
+	// Test assigning a string to element.style (should set cssText)
+	_, err := r.Execute("document.getElementById('test').style = 'background: blue'")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// The cssText should now be 'background: blue' (old styles replaced)
+	result, err := r.Execute("document.getElementById('test').style.cssText")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "background: blue" {
+		t.Errorf("Expected 'background: blue', got %s", result.String())
+	}
+
+	// The original color style should be gone
+	result, err = r.Execute("document.getElementById('test').style.getPropertyValue('color')")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "" {
+		t.Errorf("Expected empty color after style replacement, got %s", result.String())
+	}
+}
+
 func TestHTMLElementTypeConstructors(t *testing.T) {
 	r := NewRuntime()
 	binder := NewDOMBinder(r)
