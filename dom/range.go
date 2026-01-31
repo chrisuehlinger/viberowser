@@ -609,31 +609,129 @@ func (r *Range) ToString() string {
 		return text[r.startOffset:r.endOffset]
 	}
 
-	// Build string from all text nodes in range
+	// Build string by traversing all text nodes in document order within the range
 	var result string
 
-	// Get text from start container
-	if r.startContainer.nodeType == TextNode {
-		text := r.startContainer.NodeValue()
-		result += text[r.startOffset:]
-	}
-
-	// Get text from contained nodes
+	// Get the common ancestor to limit traversal
 	commonAncestor := r.CommonAncestorContainer()
-	if commonAncestor != nil {
-		containedChildren := r.getContainedChildren(commonAncestor)
-		for _, child := range containedChildren {
-			result += getTextContent(child)
-		}
+	if commonAncestor == nil {
+		return ""
 	}
 
-	// Get text from end container
-	if r.endContainer != r.startContainer && r.endContainer.nodeType == TextNode {
-		text := r.endContainer.NodeValue()
-		result += text[:r.endOffset]
-	}
+
+	// Traverse all nodes in document order within the range
+	r.traverseTextNodes(commonAncestor, func(textNode *Node) bool {
+		text := textNode.NodeValue()
+
+		// Determine what portion of this text node is in the range
+		var startIdx, endIdx int
+
+		if textNode == r.startContainer {
+			startIdx = r.startOffset
+		} else {
+			startIdx = 0
+		}
+
+		if textNode == r.endContainer {
+			endIdx = r.endOffset
+		} else {
+			endIdx = len(text)
+		}
+
+		if startIdx < endIdx {
+			result += text[startIdx:endIdx]
+		}
+
+		return true // continue traversal
+	})
 
 	return result
+}
+
+// traverseTextNodes traverses all text nodes in document order within the range.
+// The callback is called for each text node. Return false from callback to stop traversal.
+func (r *Range) traverseTextNodes(root *Node, callback func(*Node) bool) {
+	// Perform a depth-first traversal starting from root
+	var traverse func(node *Node) bool
+	traverse = func(node *Node) bool {
+		// Check if this node is before the range starts
+		if r.isNodeBeforeRange(node) {
+			// Skip this node but continue with siblings
+			return true
+		}
+
+		// Check if this node is after the range ends
+		if r.isNodeAfterRange(node) {
+			// Stop traversal
+			return false
+		}
+
+		// If this is a text node and it's within the range, call callback
+		if node.nodeType == TextNode {
+			if r.nodeIntersectsRange(node) {
+				if !callback(node) {
+					return false
+				}
+			}
+		}
+
+		// Traverse children
+		for child := node.firstChild; child != nil; child = child.nextSibling {
+			if !traverse(child) {
+				return false
+			}
+		}
+
+		return true
+	}
+
+	traverse(root)
+}
+
+// isNodeBeforeRange checks if the entire node is before the range.
+func (r *Range) isNodeBeforeRange(node *Node) bool {
+	parent := node.parentNode
+	if parent == nil {
+		return false
+	}
+
+	nodeEnd := indexOfChild(parent, node) + 1
+	return r.comparePoints(parent, nodeEnd, r.startContainer, r.startOffset) <= 0
+}
+
+// isNodeAfterRange checks if the entire node is after the range.
+func (r *Range) isNodeAfterRange(node *Node) bool {
+	parent := node.parentNode
+	if parent == nil {
+		return false
+	}
+
+	nodeStart := indexOfChild(parent, node)
+	return r.comparePoints(parent, nodeStart, r.endContainer, r.endOffset) >= 0
+}
+
+// nodeIntersectsRange checks if a node intersects the range.
+func (r *Range) nodeIntersectsRange(node *Node) bool {
+	parent := node.parentNode
+	if parent == nil {
+		// Root node - check if it's part of the range
+		return true
+	}
+
+	nodeStart := indexOfChild(parent, node)
+	nodeEnd := nodeStart + 1
+
+	// Node starts after range ends
+	if r.comparePoints(parent, nodeStart, r.endContainer, r.endOffset) >= 0 {
+		return false
+	}
+
+	// Node ends before range starts
+	if r.comparePoints(parent, nodeEnd, r.startContainer, r.startOffset) <= 0 {
+		return false
+	}
+
+	return true
 }
 
 // CreateContextualFragment parses the given HTML and returns a DocumentFragment.
