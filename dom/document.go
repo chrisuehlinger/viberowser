@@ -476,6 +476,24 @@ func (d *Document) GetElementsByClassName(classNames string) *HTMLCollection {
 	return NewHTMLCollectionByClassName(d.AsNode(), classNames)
 }
 
+// GetElementsByName returns a live NodeList of elements with the given name attribute.
+// Per HTML spec, this method is only defined for HTML documents and only matches
+// elements in the HTML namespace.
+// The name attribute is matched case-sensitively.
+func (d *Document) GetElementsByName(name string) *NodeList {
+	return NewLiveNodeList(d.AsNode(), func(node *Node) bool {
+		if node.nodeType != ElementNode {
+			return false
+		}
+		el := (*Element)(node)
+		// Only match elements in the HTML namespace
+		if el.NamespaceURI() != HTMLNamespace {
+			return false
+		}
+		return el.GetAttribute("name") == name
+	})
+}
+
 // QuerySelector returns the first element matching the selector.
 func (d *Document) QuerySelector(selector string) *Element {
 	// Search from document element
@@ -859,6 +877,10 @@ func ParseHTML(htmlContent string) (*Document, error) {
 	return doc, nil
 }
 
+// SVG and MathML namespace URIs
+const SVGNamespace = "http://www.w3.org/2000/svg"
+const MathMLNamespace = "http://www.w3.org/1998/Math/MathML"
+
 // convertHTMLTree converts an html.Node tree to our DOM tree.
 func convertHTMLTree(src *html.Node, parent *Node, doc *Document) {
 	for c := src.FirstChild; c != nil; c = c.NextSibling {
@@ -869,7 +891,18 @@ func convertHTMLTree(src *html.Node, parent *Node, doc *Document) {
 			node = doc.CreateTextNode(c.Data)
 
 		case html.ElementNode:
-			el := doc.CreateElement(c.Data)
+			// Convert short namespace names from golang.org/x/net/html to full URIs
+			namespace := c.Namespace
+			switch namespace {
+			case "":
+				namespace = HTMLNamespace
+			case "svg":
+				namespace = SVGNamespace
+			case "math":
+				namespace = MathMLNamespace
+			}
+
+			el := doc.CreateElementNS(namespace, c.Data)
 			for _, attr := range c.Attr {
 				if attr.Namespace != "" {
 					el.SetAttributeNS(attr.Namespace, attr.Key, attr.Val)

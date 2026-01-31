@@ -761,6 +761,16 @@ func (b *DOMBinder) setupPrototypes() {
 
 	vm.Set("HTMLCollection", htmlCollectionConstructorObj)
 
+	// Set Symbol.toStringTag for HTMLCollection to ensure proper class string
+	_, _ = vm.RunString(`
+		Object.defineProperty(HTMLCollection.prototype, Symbol.toStringTag, {
+			value: "HTMLCollection",
+			writable: false,
+			enumerable: false,
+			configurable: true
+		});
+	`)
+
 	// Create NodeList prototype
 	b.nodeListProto = vm.NewObject()
 	nodeListConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
@@ -770,6 +780,16 @@ func (b *DOMBinder) setupPrototypes() {
 	nodeListConstructorObj.Set("prototype", b.nodeListProto)
 	b.nodeListProto.Set("constructor", nodeListConstructorObj)
 	vm.Set("NodeList", nodeListConstructorObj)
+
+	// Set Symbol.toStringTag for NodeList to ensure proper class string
+	_, _ = vm.RunString(`
+		Object.defineProperty(NodeList.prototype, Symbol.toStringTag, {
+			value: "NodeList",
+			writable: false,
+			enumerable: false,
+			configurable: true
+		});
+	`)
 
 	// Create NamedNodeMap prototype with methods
 	b.namedNodeMapProto = vm.NewObject()
@@ -1412,6 +1432,15 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 		return b.BindHTMLCollection(collection)
 	})
 
+	jsDoc.Set("getElementsByName", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return b.createEmptyNodeList()
+		}
+		name := call.Arguments[0].String()
+		nodeList := doc.GetElementsByName(name)
+		return b.BindNodeList(nodeList)
+	})
+
 	jsDoc.Set("querySelector", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
 			return goja.Null()
@@ -1866,6 +1895,15 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 		classNames := call.Arguments[0].String()
 		collection := doc.GetElementsByClassName(classNames)
 		return b.BindHTMLCollection(collection)
+	})
+
+	jsDoc.Set("getElementsByName", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return b.createEmptyNodeList()
+		}
+		name := call.Arguments[0].String()
+		nodeList := doc.GetElementsByName(name)
+		return b.BindNodeList(nodeList)
 	})
 
 	jsDoc.Set("querySelector", func(call goja.FunctionCall) goja.Value {
