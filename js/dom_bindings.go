@@ -641,7 +641,8 @@ func (b *DOMBinder) setupPrototypes() {
 	b.documentFragmentProto.SetPrototype(b.nodeProto)
 	docFragConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
 		// DocumentFragment can be constructed
-		frag := dom.NewDocumentFragment()
+		// Per spec, the ownerDocument is the associated document (current document)
+		frag := b.document.CreateDocumentFragment()
 		return b.BindDocumentFragment(frag)
 	})
 	docFragConstructorObj := docFragConstructor.ToObject(vm)

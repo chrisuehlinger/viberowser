@@ -517,6 +517,38 @@ func TestDOMBinderDocumentFragment(t *testing.T) {
 	}
 }
 
+func TestDocumentFragmentConstructorOwnerDocument(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc := dom.NewDocument()
+	binder.BindDocument(doc)
+
+	// Test that new DocumentFragment() has ownerDocument set to the current document
+	result, err := r.Execute(`
+		var df = new DocumentFragment();
+		df.ownerDocument === document;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Expected new DocumentFragment().ownerDocument to equal document")
+	}
+
+	// Test that ownerDocument is a Document node with children (html and head/body)
+	result, err = r.Execute(`
+		var df2 = new DocumentFragment();
+		df2.ownerDocument !== null;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Expected ownerDocument to not be null")
+	}
+}
+
 func TestDOMBinderCloneNode(t *testing.T) {
 	r := NewRuntime()
 	binder := NewDOMBinder(r)
