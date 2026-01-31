@@ -1542,6 +1542,12 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 	return jsDoc
 }
 
+// BindIframeDocument binds a document for use in an iframe without setting it as the global document.
+// Used for iframe content documents to avoid replacing the parent window's document.
+func (b *DOMBinder) BindIframeDocument(doc *dom.Document) *goja.Object {
+	return b.bindDocumentInternal(doc)
+}
+
 // bindDocumentInternal binds a document without setting it as the global document.
 // Used for documents created via createHTMLDocument, createDocument, etc.
 func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
