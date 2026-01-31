@@ -7905,7 +7905,12 @@ func (b *DOMBinder) BindNamedNodeMap(nnm *dom.NamedNodeMap) *goja.Object {
 		},
 	})
 
-	return vm.ToValue(proxy).ToObject(vm)
+	// Get the proxy as an object and also register it in the map
+	// so that prototype methods can find the NamedNodeMap
+	proxyObj := vm.ToValue(proxy).ToObject(vm)
+	b.namedNodeMapMap[proxyObj] = nnm
+
+	return proxyObj
 }
 
 // parseNumericIndex parses a string as a numeric index.
