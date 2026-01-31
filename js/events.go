@@ -35,10 +35,12 @@ type Event struct {
 
 // eventListener represents a registered event listener.
 type eventListener struct {
-	id       int
-	callback goja.Callable
-	value    goja.Value // Original value for comparison
-	options  listenerOptions
+	id         int
+	callback   goja.Callable // Non-nil if listener is a function
+	value      goja.Value    // Original value for comparison
+	isObject   bool          // True if listener is an object with handleEvent (not a function)
+	listenerObj *goja.Object // The object if isObject is true
+	options    listenerOptions
 }
 
 // listenerOptions represents addEventListener options.
@@ -74,8 +76,8 @@ func (et *EventTarget) SetErrorHandler(handler ListenerErrorHandler) {
 	et.errorHandler = handler
 }
 
-// AddEventListener registers an event listener.
-func (et *EventTarget) AddEventListener(eventType string, callback goja.Callable, value goja.Value, opts listenerOptions) {
+// AddEventListener registers an event listener (function or object with handleEvent).
+func (et *EventTarget) AddEventListener(eventType string, callback goja.Callable, value goja.Value, isObject bool, listenerObj *goja.Object, opts listenerOptions) {
 	et.mu.Lock()
 	defer et.mu.Unlock()
 
@@ -88,10 +90,12 @@ func (et *EventTarget) AddEventListener(eventType string, callback goja.Callable
 
 	et.nextID++
 	et.listeners[eventType] = append(et.listeners[eventType], eventListener{
-		id:       et.nextID,
-		callback: callback,
-		value:    value,
-		options:  opts,
+		id:          et.nextID,
+		callback:    callback,
+		value:       value,
+		isObject:    isObject,
+		listenerObj: listenerObj,
+		options:     opts,
 	})
 }
 
@@ -158,11 +162,37 @@ func (et *EventTarget) DispatchEvent(vm *goja.Runtime, event *goja.Object, phase
 			continue
 		}
 
-		// Call the listener with currentTarget as 'this'
-		// Per DOM spec, the 'this' value for event listeners is the currentTarget
-		// Goja returns an error if the callback throws an exception. Per HTML spec,
-		// we should report this to the global error handler and continue dispatching.
-		_, err := l.callback(currentTarget, event)
+		var err error
+		if l.isObject {
+			// Per DOM spec, for object listeners, we must Get("handleEvent") on each dispatch.
+			// This allows getters to be called each time.
+			handleEventVal := l.listenerObj.Get("handleEvent")
+
+			// If getting handleEvent throws, report to error handler
+			// (In goja, Get doesn't throw but we handle the getter case below)
+
+			// Check if handleEvent is callable
+			handleEvent, isCallable := goja.AssertFunction(handleEventVal)
+			if !isCallable {
+				// Per DOM spec, if handleEvent is not callable, throw TypeError
+				// and report to error handler
+				if et.errorHandler != nil {
+					// Create a proper TypeError and pass it to the error handler
+					typeErr := vm.NewTypeError("handleEvent is not a function")
+					et.errorHandler(typeErr)
+				}
+				// Continue to next listener
+				continue
+			}
+
+			// Call handleEvent with the listener object as 'this'
+			_, err = handleEvent(l.listenerObj, event)
+		} else {
+			// Call the function listener with currentTarget as 'this'
+			// Per DOM spec, the 'this' value for function listeners is the currentTarget
+			_, err = l.callback(currentTarget, event)
+		}
+
 		if err != nil {
 			// An exception was thrown in the listener
 			// Per HTML spec, we should report this to the global error handler
@@ -322,8 +352,29 @@ func (eb *EventBinder) BindEventTarget(obj *goja.Object) {
 		}
 
 		eventType := call.Arguments[0].String()
-		callback, ok := goja.AssertFunction(call.Arguments[1])
-		if !ok {
+		listenerArg := call.Arguments[1]
+
+		// Per DOM spec, listener can be a function or an object with handleEvent method
+		var callback goja.Callable
+		var isObject bool
+		var listenerObj *goja.Object
+
+		if fn, ok := goja.AssertFunction(listenerArg); ok {
+			// Listener is a function
+			callback = fn
+			isObject = false
+		} else if listenerArg != nil && !goja.IsNull(listenerArg) && !goja.IsUndefined(listenerArg) {
+			// Check if it's an object (could have handleEvent)
+			listenerObj = listenerArg.ToObject(vm)
+			if listenerObj != nil {
+				// Accept any object - we'll check handleEvent at dispatch time per DOM spec
+				isObject = true
+			} else {
+				// Not a function and not an object - ignore
+				return goja.Undefined()
+			}
+		} else {
+			// null or undefined - ignore
 			return goja.Undefined()
 		}
 
@@ -348,7 +399,7 @@ func (eb *EventBinder) BindEventTarget(obj *goja.Object) {
 		}
 
 		target := eb.GetOrCreateTarget(obj)
-		target.AddEventListener(eventType, callback, call.Arguments[1], opts)
+		target.AddEventListener(eventType, callback, listenerArg, isObject, listenerObj, opts)
 		return goja.Undefined()
 	})
 

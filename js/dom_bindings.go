@@ -10056,10 +10056,10 @@ func (b *DOMBinder) bindEventHandlerAttributes(jsObj *goja.Object) {
 				// Store the handler
 				handlers[eventTypeCopy] = newHandler
 
-				// Add as event listener
+				// Add as event listener (these are always functions, not objects)
 				if b.eventBinder != nil {
 					target := b.eventBinder.GetOrCreateTarget(jsObj)
-					target.AddEventListener(eventTypeCopy, callable, newHandler, listenerOptions{})
+					target.AddEventListener(eventTypeCopy, callable, newHandler, false, nil, listenerOptions{})
 				}
 
 				return goja.Undefined()

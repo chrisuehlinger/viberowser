@@ -180,10 +180,10 @@ func NewScriptExecutor(runtime *Runtime) *ScriptExecutor {
 		},
 	)
 
-	// Set up listener error handler to call window.onerror
-	// Per HTML spec, exceptions in event listeners should be reported to the error handler
+	// Set up listener error handler to dispatch ErrorEvent on window
+	// Per HTML spec, exceptions in event listeners should be reported via error events
 	eventBinder.SetListenerErrorHandler(func(err goja.Value) {
-		// Get window.onerror
+		// Get window
 		window := runtime.vm.Get("window")
 		if window == nil || goja.IsUndefined(window) {
 			return
@@ -192,18 +192,8 @@ func NewScriptExecutor(runtime *Runtime) *ScriptExecutor {
 		if windowObj == nil {
 			return
 		}
-		onerror := windowObj.Get("onerror")
-		if onerror == nil || goja.IsUndefined(onerror) || goja.IsNull(onerror) {
-			return
-		}
-		callback, ok := goja.AssertFunction(onerror)
-		if !ok {
-			return
-		}
 
 		// Extract error message
-		// Per HTML spec, window.onerror receives: (message, source, lineno, colno, error)
-		// For now, we pass a simplified version
 		message := ""
 		if err != nil && !goja.IsUndefined(err) && !goja.IsNull(err) {
 			errObj := err.ToObject(runtime.vm)
@@ -218,19 +208,27 @@ func NewScriptExecutor(runtime *Runtime) *ScriptExecutor {
 			}
 		}
 
-		// Call window.onerror(message, source, lineno, colno, error)
-		// Per HTML spec, for runtime script errors:
-		// - message is a string describing the error
-		// - source is the URL of the script (empty for inline)
-		// - lineno and colno are the line and column numbers
-		// - error is the Error object
-		callback(windowObj,
-			runtime.vm.ToValue(message), // message
-			runtime.vm.ToValue(""),       // source (filename)
-			runtime.vm.ToValue(0),        // lineno
-			runtime.vm.ToValue(0),        // colno
-			err,                          // error object
-		)
+		// Create and dispatch ErrorEvent on window
+		// Per HTML spec, uncaught exceptions dispatch an ErrorEvent on window
+		errorEventOptions := map[string]interface{}{
+			"bubbles":    false,
+			"cancelable": true,
+		}
+		errorEvent := eventBinder.CreateEvent("error", errorEventOptions)
+		errorEvent.Set("message", message)
+		errorEvent.Set("filename", "")
+		errorEvent.Set("lineno", 0)
+		errorEvent.Set("colno", 0)
+		errorEvent.Set("error", err)
+
+		// Dispatch the error event on window
+		// This will trigger event listeners added via addEventListener
+		dispatchEventFn := windowObj.Get("dispatchEvent")
+		if dispatchEventFn != nil && !goja.IsUndefined(dispatchEventFn) {
+			if fn, ok := goja.AssertFunction(dispatchEventFn); ok {
+				fn(windowObj, errorEvent)
+			}
+		}
 	})
 
 	// Create mutation observer manager
@@ -559,8 +557,29 @@ func (se *ScriptExecutor) bindGlobalEventTargetMethods() {
 		}
 
 		eventType := call.Arguments[0].String()
-		callback, ok := goja.AssertFunction(call.Arguments[1])
-		if !ok {
+		listenerArg := call.Arguments[1]
+
+		// Per DOM spec, listener can be a function or an object with handleEvent method
+		var callback goja.Callable
+		var isObject bool
+		var listenerObj *goja.Object
+
+		if fn, ok := goja.AssertFunction(listenerArg); ok {
+			// Listener is a function
+			callback = fn
+			isObject = false
+		} else if listenerArg != nil && !goja.IsNull(listenerArg) && !goja.IsUndefined(listenerArg) {
+			// Check if it's an object (could have handleEvent)
+			listenerObj = listenerArg.ToObject(vm)
+			if listenerObj != nil {
+				// Accept any object - we'll check handleEvent at dispatch time per DOM spec
+				isObject = true
+			} else {
+				// Not a function and not an object - ignore
+				return goja.Undefined()
+			}
+		} else {
+			// null or undefined - ignore
 			return goja.Undefined()
 		}
 
@@ -582,7 +601,7 @@ func (se *ScriptExecutor) bindGlobalEventTargetMethods() {
 			}
 		}
 
-		windowTarget.AddEventListener(eventType, callback, call.Arguments[1], opts)
+		windowTarget.AddEventListener(eventType, callback, listenerArg, isObject, listenerObj, opts)
 		return goja.Undefined()
 	}))
 
