@@ -1330,3 +1330,104 @@ func (e *Element) SetScrollLeft(value float64) {
 func lookupAtom(tagName string) atom.Atom {
 	return atom.Lookup([]byte(tagName))
 }
+
+// ShadowRoot returns the shadow root attached to this element, or nil if none.
+// For closed shadow roots, this returns nil unless accessed from within the shadow tree.
+func (e *Element) ShadowRoot() *ShadowRoot {
+	if e.AsNode().elementData == nil {
+		return nil
+	}
+	sr := e.AsNode().elementData.shadowRoot
+	if sr == nil {
+		return nil
+	}
+	// Per spec, closed shadow roots are not exposed via element.shadowRoot
+	if sr.Mode() == ShadowRootModeClosed {
+		return nil
+	}
+	return sr
+}
+
+// GetShadowRoot returns the shadow root attached to this element, or nil if none.
+// Unlike ShadowRoot(), this returns the shadow root regardless of mode (internal use).
+func (e *Element) GetShadowRoot() *ShadowRoot {
+	if e.AsNode().elementData == nil {
+		return nil
+	}
+	return e.AsNode().elementData.shadowRoot
+}
+
+// AttachShadow attaches a shadow DOM tree to this element and returns the ShadowRoot.
+// Returns an error if:
+// - The element is not a valid shadow host (custom element or specific HTML elements)
+// - The element already has an attached shadow root
+func (e *Element) AttachShadow(mode ShadowRootMode, options map[string]interface{}) (*ShadowRoot, error) {
+	// Check if element can have a shadow root
+	if !e.canAttachShadow() {
+		return nil, ErrNotSupported("Failed to execute 'attachShadow' on 'Element': This element does not support attachShadow")
+	}
+
+	// Check if already has a shadow root
+	if e.AsNode().elementData == nil {
+		e.AsNode().elementData = &elementData{}
+	}
+	if e.AsNode().elementData.shadowRoot != nil {
+		return nil, ErrNotSupported("Failed to execute 'attachShadow' on 'Element': Shadow root cannot be created on a host which already hosts a shadow tree.")
+	}
+
+	// Validate mode
+	if mode != ShadowRootModeOpen && mode != ShadowRootModeClosed {
+		return nil, ErrNotSupported("Failed to execute 'attachShadow' on 'Element': The provided value '" + string(mode) + "' is not a valid enum value of type ShadowRootMode.")
+	}
+
+	// Create the shadow root
+	sr := NewShadowRoot(e, mode, options)
+
+	// Attach it to this element
+	e.AsNode().elementData.shadowRoot = sr
+
+	return sr, nil
+}
+
+// canAttachShadow returns true if this element can have a shadow root attached.
+// Per spec, valid shadow hosts are:
+// - Custom elements (element names containing a hyphen)
+// - article, aside, blockquote, body, div, footer, h1-h6, header, main, nav, p, section, span
+func (e *Element) canAttachShadow() bool {
+	localName := e.LocalName()
+	ns := e.NamespaceURI()
+
+	// Only HTML namespace elements can be shadow hosts (for built-in elements)
+	if ns != "" && ns != HTMLNamespace {
+		return false
+	}
+
+	// Custom elements (autonomous custom elements have a hyphen in their name)
+	if strings.Contains(localName, "-") {
+		return true
+	}
+
+	// Valid built-in shadow hosts
+	validHosts := map[string]bool{
+		"article":    true,
+		"aside":      true,
+		"blockquote": true,
+		"body":       true,
+		"div":        true,
+		"footer":     true,
+		"h1":         true,
+		"h2":         true,
+		"h3":         true,
+		"h4":         true,
+		"h5":         true,
+		"h6":         true,
+		"header":     true,
+		"main":       true,
+		"nav":        true,
+		"p":          true,
+		"section":    true,
+		"span":       true,
+	}
+
+	return validHosts[localName]
+}

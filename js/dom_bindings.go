@@ -171,6 +171,8 @@ type DOMBinder struct {
 	rangeProto                   *goja.Object
 	rangeCache                   map[*dom.Range]*goja.Object
 	treeWalkerProto              *goja.Object
+	shadowRootProto              *goja.Object
+	shadowRootCache              map[*dom.ShadowRoot]*goja.Object
 }
 
 // NewDOMBinder creates a new DOM binder for the given runtime.
@@ -187,6 +189,7 @@ func NewDOMBinder(runtime *Runtime) *DOMBinder {
 		domTokenListCache:      make(map[*dom.DOMTokenList]*goja.Object),
 		attrCache:              make(map[*dom.Attr]*goja.Object),
 		rangeCache:             make(map[*dom.Range]*goja.Object),
+		shadowRootCache:        make(map[*dom.ShadowRoot]*goja.Object),
 	}
 	b.setupPrototypes()
 	return b
@@ -465,6 +468,21 @@ func (b *DOMBinder) setupPrototypes() {
 
 	// Add DocumentFragment prototype methods
 	b.setupDocumentFragmentPrototypeMethods()
+
+	// Create ShadowRoot prototype (extends DocumentFragment)
+	b.shadowRootProto = vm.NewObject()
+	b.shadowRootProto.SetPrototype(b.documentFragmentProto)
+	shadowRootConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		// ShadowRoot cannot be constructed directly - must use attachShadow
+		panic(vm.NewTypeError("Illegal constructor"))
+	})
+	shadowRootConstructorObj := shadowRootConstructor.ToObject(vm)
+	shadowRootConstructorObj.Set("prototype", b.shadowRootProto)
+	b.shadowRootProto.Set("constructor", shadowRootConstructorObj)
+	vm.Set("ShadowRoot", shadowRootConstructorObj)
+
+	// Add ShadowRoot prototype methods
+	b.setupShadowRootPrototypeMethods()
 
 	// Create DOMImplementation prototype
 	b.domImplementationProto = vm.NewObject()
@@ -2782,6 +2800,66 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		return b.BindHTMLCollection(collection)
 	})
 
+	// Shadow DOM methods
+	jsEl.DefineAccessorProperty("shadowRoot", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		sr := el.ShadowRoot()
+		if sr == nil {
+			return goja.Null()
+		}
+		return b.BindShadowRoot(sr)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsEl.Set("attachShadow", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'attachShadow' on 'Element': 1 argument required, but only 0 present."))
+		}
+
+		initObj := call.Arguments[0].ToObject(vm)
+		if initObj == nil {
+			panic(vm.NewTypeError("Failed to execute 'attachShadow' on 'Element': The provided value is not of type 'ShadowRootInit'."))
+		}
+
+		// Get mode (required)
+		modeVal := initObj.Get("mode")
+		if modeVal == nil || goja.IsUndefined(modeVal) {
+			panic(vm.NewTypeError("Failed to execute 'attachShadow' on 'Element': Failed to read the 'mode' property from 'ShadowRootInit': Required member is undefined."))
+		}
+		modeStr := modeVal.String()
+		var mode dom.ShadowRootMode
+		if modeStr == "open" {
+			mode = dom.ShadowRootModeOpen
+		} else if modeStr == "closed" {
+			mode = dom.ShadowRootModeClosed
+		} else {
+			panic(vm.NewTypeError("Failed to execute 'attachShadow' on 'Element': The provided value '" + modeStr + "' is not a valid enum value of type ShadowRootMode."))
+		}
+
+		// Get optional parameters
+		options := make(map[string]interface{})
+		if df := initObj.Get("delegatesFocus"); df != nil && !goja.IsUndefined(df) {
+			options["delegatesFocus"] = df.ToBoolean()
+		}
+		if sa := initObj.Get("slotAssignment"); sa != nil && !goja.IsUndefined(sa) {
+			options["slotAssignment"] = sa.String()
+		}
+		if c := initObj.Get("clonable"); c != nil && !goja.IsUndefined(c) {
+			options["clonable"] = c.ToBoolean()
+		}
+		if s := initObj.Get("serializable"); s != nil && !goja.IsUndefined(s) {
+			options["serializable"] = s.ToBoolean()
+		}
+
+		sr, err := el.AttachShadow(mode, options)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				b.throwDOMError(vm, domErr)
+			}
+			panic(vm.NewTypeError(err.Error()))
+		}
+
+		return b.BindShadowRoot(sr)
+	})
+
 	jsEl.Set("matches", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
 			return vm.ToValue(false)
@@ -4291,6 +4369,181 @@ func (b *DOMBinder) BindDocumentFragment(frag *dom.DocumentFragment) *goja.Objec
 	return jsFrag
 }
 
+// BindShadowRoot creates a JavaScript object from a DOM ShadowRoot.
+func (b *DOMBinder) BindShadowRoot(sr *dom.ShadowRoot) *goja.Object {
+	if sr == nil {
+		return nil
+	}
+
+	// Check cache
+	if jsObj, ok := b.shadowRootCache[sr]; ok {
+		return jsObj
+	}
+
+	node := sr.AsNode()
+
+	// Also check node map (shouldn't be there, but just in case)
+	if jsObj, ok := b.nodeMap[node]; ok {
+		return jsObj
+	}
+
+	vm := b.runtime.vm
+	jsSR := vm.NewObject()
+
+	// Set prototype for instanceof to work
+	if b.shadowRootProto != nil {
+		jsSR.SetPrototype(b.shadowRootProto)
+	}
+
+	jsSR.Set("_goNode", node)
+	jsSR.Set("_goShadowRoot", sr)
+
+	jsSR.Set("nodeType", int(dom.DocumentFragmentNode))
+	jsSR.Set("nodeName", "#document-fragment")
+
+	// ShadowRoot-specific properties
+	jsSR.DefineAccessorProperty("mode", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(string(sr.Mode()))
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsSR.DefineAccessorProperty("host", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		host := sr.Host()
+		if host == nil {
+			return goja.Null()
+		}
+		return b.BindElement(host)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsSR.DefineAccessorProperty("delegatesFocus", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(sr.DelegatesFocus())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsSR.DefineAccessorProperty("slotAssignment", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(sr.SlotAssignment())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsSR.DefineAccessorProperty("clonable", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(sr.Clonable())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsSR.DefineAccessorProperty("serializable", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(sr.Serializable())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// innerHTML
+	jsSR.DefineAccessorProperty("innerHTML", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(sr.InnerHTML())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			sr.SetInnerHTML(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// Query methods
+	jsSR.Set("querySelector", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		selector := call.Arguments[0].String()
+		el := sr.QuerySelector(selector)
+		if el == nil {
+			return goja.Null()
+		}
+		return b.BindElement(el)
+	})
+
+	jsSR.Set("querySelectorAll", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return b.createEmptyNodeList()
+		}
+		selector := call.Arguments[0].String()
+		nodeList := sr.QuerySelectorAll(selector)
+		return b.BindNodeList(nodeList)
+	})
+
+	jsSR.Set("getElementById", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		id := call.Arguments[0].String()
+		el := sr.GetElementById(id)
+		if el == nil {
+			return goja.Null()
+		}
+		return b.BindElement(el)
+	})
+
+	// ParentNode mixin properties
+	jsSR.DefineAccessorProperty("children", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindHTMLCollection(sr.Children())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsSR.DefineAccessorProperty("childElementCount", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(sr.ChildElementCount())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsSR.DefineAccessorProperty("firstElementChild", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		child := sr.FirstElementChild()
+		if child == nil {
+			return goja.Null()
+		}
+		return b.BindElement(child)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsSR.DefineAccessorProperty("lastElementChild", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		child := sr.LastElementChild()
+		if child == nil {
+			return goja.Null()
+		}
+		return b.BindElement(child)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// ParentNode mixin methods
+	jsSR.Set("append", func(call goja.FunctionCall) goja.Value {
+		nodes := b.convertJSNodesToGo(call.Arguments)
+		sr.Append(nodes...)
+		return goja.Undefined()
+	})
+
+	jsSR.Set("prepend", func(call goja.FunctionCall) goja.Value {
+		nodes := b.convertJSNodesToGo(call.Arguments)
+		sr.Prepend(nodes...)
+		return goja.Undefined()
+	})
+
+	jsSR.Set("replaceChildren", func(call goja.FunctionCall) goja.Value {
+		nodes := b.convertJSNodesToGo(call.Arguments)
+		sr.ReplaceChildren(nodes...)
+		return goja.Undefined()
+	})
+
+	// textContent
+	jsSR.DefineAccessorProperty("textContent", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(node.TextContent())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			arg := call.Arguments[0]
+			var value string
+			if goja.IsNull(arg) || goja.IsUndefined(arg) {
+				value = ""
+			} else {
+				value = arg.String()
+			}
+			node.SetTextContent(value)
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	b.bindNodeProperties(jsSR, node)
+
+	// Cache the binding
+	b.shadowRootCache[sr] = jsSR
+	b.nodeMap[node] = jsSR
+
+	return jsSR
+}
+
 // BindRange creates a JavaScript object from a DOM Range.
 func (b *DOMBinder) BindRange(r *dom.Range) *goja.Object {
 	if r == nil {
@@ -5418,9 +5671,23 @@ func (b *DOMBinder) bindNodeProperties(jsObj *goja.Object, node *dom.Node) {
 	})
 
 	jsObj.Set("getRootNode", func(call goja.FunctionCall) goja.Value {
-		root := node.GetRootNode()
+		// Check for options argument with composed property
+		composed := false
+		if len(call.Arguments) > 0 && !goja.IsNull(call.Arguments[0]) && !goja.IsUndefined(call.Arguments[0]) {
+			optObj := call.Arguments[0].ToObject(vm)
+			if composedVal := optObj.Get("composed"); composedVal != nil && !goja.IsUndefined(composedVal) {
+				composed = composedVal.ToBoolean()
+			}
+		}
+
+		root := node.GetRootNodeWithOptions(composed)
 		if root == nil {
 			return goja.Null()
+		}
+
+		// Check if root is a shadow root - if so, bind it as ShadowRoot
+		if root.IsShadowRoot() {
+			return b.BindShadowRoot(root.GetShadowRoot())
 		}
 		return b.BindNode(root)
 	})
@@ -5722,9 +5989,24 @@ func (b *DOMBinder) setupNodePrototypeMethods() {
 		if node == nil {
 			panic(vm.NewTypeError("Illegal invocation"))
 		}
-		root := node.GetRootNode()
+
+		// Check for options argument with composed property
+		composed := false
+		if len(call.Arguments) > 0 && !goja.IsNull(call.Arguments[0]) && !goja.IsUndefined(call.Arguments[0]) {
+			optObj := call.Arguments[0].ToObject(vm)
+			if composedVal := optObj.Get("composed"); composedVal != nil && !goja.IsUndefined(composedVal) {
+				composed = composedVal.ToBoolean()
+			}
+		}
+
+		root := node.GetRootNodeWithOptions(composed)
 		if root == nil {
 			return goja.Null()
+		}
+
+		// Check if root is a shadow root - if so, bind it as ShadowRoot
+		if root.IsShadowRoot() {
+			return b.BindShadowRoot(root.GetShadowRoot())
 		}
 		return b.BindNode(root)
 	})
@@ -5879,6 +6161,18 @@ func (b *DOMBinder) setupDocumentFragmentPrototypeMethods() {
 		nodeList := frag.QuerySelectorAll(selector)
 		return b.bindStaticNodeList(nodeList.ToSlice())
 	})
+}
+
+// setupShadowRootPrototypeMethods sets up methods on the ShadowRoot prototype.
+func (b *DOMBinder) setupShadowRootPrototypeMethods() {
+	// ShadowRoot inherits from DocumentFragment, so most methods are already available
+	// through the prototype chain. We just need to add ShadowRoot-specific behavior
+	// if any (most properties are set in BindShadowRoot as they're instance-specific).
+
+	// The following methods from DocumentFragment prototype will work via inheritance:
+	// - getElementById
+	// - querySelector
+	// - querySelectorAll
 }
 
 // getGoNode extracts the Go *dom.Node from a JavaScript object.

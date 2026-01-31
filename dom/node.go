@@ -26,6 +26,9 @@ type Node struct {
 	commentData  *string
 	documentData *documentData
 	docTypeData  *docTypeData
+
+	// Shadow DOM support: back-reference when this node is a ShadowRoot's underlying node
+	shadowRoot *ShadowRoot
 }
 
 // ElementGeometry holds computed layout geometry for an element.
@@ -66,6 +69,9 @@ type elementData struct {
 
 	// Layout geometry - set during layout computation
 	geometry *ElementGeometry
+
+	// Shadow DOM support: the shadow root attached to this element (if any)
+	shadowRoot *ShadowRoot
 }
 
 // documentData holds data specific to Document nodes.
@@ -226,10 +232,30 @@ func (n *Node) HasChildNodes() bool {
 }
 
 // IsConnected returns true if the node is connected to a document.
-// A node is connected if its root is a document.
+// A node is connected if its shadow-including root is a document.
+// Per spec, this means traversing through shadow boundaries to check
+// if the node is ultimately connected to a document.
 func (n *Node) IsConnected() bool {
-	root := n.GetRootNode()
+	root := n.GetShadowIncludingRoot()
 	return root != nil && root.nodeType == DocumentNode
+}
+
+// GetShadowIncludingRoot returns the shadow-including root of this node.
+// This traverses through shadow boundaries by going from shadow roots
+// to their host elements.
+func (n *Node) GetShadowIncludingRoot() *Node {
+	root := n.GetRootNode()
+
+	// If the root is a shadow root, continue through the host
+	for root != nil && root.shadowRoot != nil {
+		host := root.shadowRoot.Host()
+		if host == nil {
+			break
+		}
+		root = host.AsNode().GetRootNode()
+	}
+
+	return root
 }
 
 // TextContent returns the text content of the node and its descendants.
@@ -994,6 +1020,26 @@ func (n *Node) GetRootNode() *Node {
 		root = root.parentNode
 	}
 	return root
+}
+
+// GetRootNodeWithOptions returns the root of the tree containing this node.
+// If composed is true, it returns the shadow-including root (traverses shadow boundaries).
+// If composed is false (default), it returns the normal root (which may be a ShadowRoot).
+func (n *Node) GetRootNodeWithOptions(composed bool) *Node {
+	if composed {
+		return n.GetShadowIncludingRoot()
+	}
+	return n.GetRootNode()
+}
+
+// IsShadowRoot returns true if this node is the underlying node of a ShadowRoot.
+func (n *Node) IsShadowRoot() bool {
+	return n.shadowRoot != nil
+}
+
+// GetShadowRoot returns the ShadowRoot if this node is its underlying node, or nil.
+func (n *Node) GetShadowRoot() *ShadowRoot {
+	return n.shadowRoot
 }
 
 // CompareDocumentPosition returns a bitmask indicating the position of the given node relative to this node.
