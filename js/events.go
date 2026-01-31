@@ -679,6 +679,54 @@ func (eb *EventBinder) SetupEventConstructors() {
 				}
 			}
 		}
+
+		// initCustomEvent(type, bubbles, cancelable, detail) - legacy method
+		// Per DOM spec, this is used to initialize CustomEvents created via createEvent()
+		event.Set("initCustomEvent", func(call goja.FunctionCall) goja.Value {
+			// Per DOM spec: If event's dispatch flag is set, terminate these steps
+			dispatchFlag := event.Get("_dispatch")
+			if dispatchFlag != nil && dispatchFlag.ToBoolean() {
+				return goja.Undefined()
+			}
+
+			// Per DOM spec, the type argument is required
+			if len(call.Arguments) < 1 {
+				panic(vm.NewTypeError("Failed to execute 'initCustomEvent' on 'CustomEvent': 1 argument required, but only 0 present."))
+			}
+
+			// Get type argument
+			newType := call.Arguments[0].String()
+
+			// Get bubbles argument (optional, defaults to false)
+			bubbles := false
+			if len(call.Arguments) > 1 {
+				bubbles = call.Arguments[1].ToBoolean()
+			}
+
+			// Get cancelable argument (optional, defaults to false)
+			cancelable := false
+			if len(call.Arguments) > 2 {
+				cancelable = call.Arguments[2].ToBoolean()
+			}
+
+			// Get detail argument (optional, defaults to null)
+			detail := goja.Null()
+			if len(call.Arguments) > 3 {
+				detail = call.Arguments[3]
+			}
+
+			// Set the initialized flag and properties
+			event.Set("_initialized", true)
+			event.Set("_stopPropagation", false)
+			event.Set("_stopImmediate", false)
+			event.Set("defaultPrevented", false)
+			event.Set("type", newType)
+			event.Set("bubbles", bubbles)
+			event.Set("cancelable", cancelable)
+			event.Set("detail", detail)
+
+			return goja.Undefined()
+		})
 	})
 
 	// UIEvent - extends Event

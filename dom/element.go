@@ -119,10 +119,11 @@ func (e *Element) Attributes() *NamedNodeMap {
 
 // GetAttribute returns the value of the attribute with the given name.
 // For HTML elements in an HTML document, the name is lowercased before lookup.
+// Per DOM spec, only ASCII letters (A-Z) are lowercased.
 func (e *Element) GetAttribute(name string) string {
 	// For HTML elements in an HTML document, lowercase the name
 	if e.isHTMLElementInHTMLDocument() {
-		name = strings.ToLower(name)
+		name = toASCIILowercase(name)
 	}
 	return e.Attributes().GetValue(name)
 }
@@ -151,8 +152,9 @@ func (e *Element) SetAttributeWithError(name, value string) error {
 	}
 
 	// Step 2: For HTML elements in an HTML document, lowercase the name
+	// Per DOM spec, only ASCII letters (A-Z) are lowercased
 	if e.isHTMLElementInHTMLDocument() {
-		name = strings.ToLower(name)
+		name = toASCIILowercase(name)
 	}
 
 	e.Attributes().SetValue(name, value)
@@ -224,10 +226,11 @@ func (e *Element) SetAttributeNSWithError(namespaceURI, qualifiedName, value str
 
 // HasAttribute returns true if the element has the given attribute.
 // For HTML elements in an HTML document, the name is lowercased before lookup.
+// Per DOM spec, only ASCII letters (A-Z) are lowercased.
 func (e *Element) HasAttribute(name string) bool {
 	// For HTML elements in an HTML document, lowercase the name
 	if e.isHTMLElementInHTMLDocument() {
-		name = strings.ToLower(name)
+		name = toASCIILowercase(name)
 	}
 	return e.Attributes().Has(name)
 }
@@ -239,10 +242,11 @@ func (e *Element) HasAttributeNS(namespaceURI, localName string) bool {
 
 // RemoveAttribute removes the attribute with the given name.
 // For HTML elements in an HTML document, the name is lowercased before lookup.
+// Per DOM spec, only ASCII letters (A-Z) are lowercased.
 func (e *Element) RemoveAttribute(name string) {
 	// For HTML elements in an HTML document, lowercase the name
 	if e.isHTMLElementInHTMLDocument() {
-		name = strings.ToLower(name)
+		name = toASCIILowercase(name)
 	}
 	e.Attributes().RemoveNamedItem(name)
 }
@@ -269,8 +273,9 @@ func (e *Element) ToggleAttributeWithError(name string, force ...bool) (bool, er
 	}
 
 	// Step 2: For HTML elements in an HTML document, lowercase the name
+	// Per DOM spec, only ASCII letters (A-Z) are lowercased
 	if e.isHTMLElementInHTMLDocument() {
-		name = strings.ToLower(name)
+		name = toASCIILowercase(name)
 	}
 
 	has := e.Attributes().Has(name)
@@ -1046,9 +1051,12 @@ func (e *Element) InsertAdjacentElement(position string, element *Element) (*Ele
 		return nil, nil
 	}
 	node := element.AsNode()
-	err := e.insertAdjacentNode(position, node)
+	inserted, err := e.insertAdjacentNode(position, node)
 	if err != nil {
 		return nil, err
+	}
+	if !inserted {
+		return nil, nil
 	}
 	return element, nil
 }
@@ -1061,11 +1069,14 @@ func (e *Element) InsertAdjacentText(position string, data string) error {
 		return ErrHierarchyRequest("element has no owner document")
 	}
 	textNode := doc.CreateTextNode(data)
-	return e.insertAdjacentNode(position, textNode)
+	_, err := e.insertAdjacentNode(position, textNode)
+	return err
 }
 
 // insertAdjacentNode is the internal implementation for insertAdjacent* methods.
-func (e *Element) insertAdjacentNode(position string, node *Node) error {
+// Returns (true, nil) if insertion happened, (false, nil) if insertion was skipped
+// (e.g., no parent for beforebegin/afterend), or (false, error) if an error occurred.
+func (e *Element) insertAdjacentNode(position string, node *Node) (bool, error) {
 	// Normalize position to lowercase for case-insensitive comparison
 	pos := strings.ToLower(position)
 
@@ -1074,35 +1085,35 @@ func (e *Element) insertAdjacentNode(position string, node *Node) error {
 		// Insert before this element
 		parent := e.AsNode().parentNode
 		if parent == nil {
-			// No parent, nothing to do (per spec, we just return)
-			return nil
+			// No parent, per spec return null for insertAdjacentElement
+			return false, nil
 		}
 		_, err := parent.InsertBeforeWithError(node, e.AsNode())
-		return err
+		return err == nil, err
 
 	case "afterbegin":
 		// Insert as first child
 		_, err := e.AsNode().InsertBeforeWithError(node, e.AsNode().firstChild)
-		return err
+		return err == nil, err
 
 	case "beforeend":
 		// Insert as last child (same as appendChild)
 		_, err := e.AsNode().AppendChildWithError(node)
-		return err
+		return err == nil, err
 
 	case "afterend":
 		// Insert after this element
 		parent := e.AsNode().parentNode
 		if parent == nil {
-			// No parent, nothing to do (per spec, we just return)
-			return nil
+			// No parent, per spec return null for insertAdjacentElement
+			return false, nil
 		}
 		_, err := parent.InsertBeforeWithError(node, e.AsNode().nextSibling)
-		return err
+		return err == nil, err
 
 	default:
 		// Invalid position
-		return ErrSyntax("The value provided ('" + position + "') is not one of 'beforebegin', 'afterbegin', 'beforeend', or 'afterend'.")
+		return false, ErrSyntax("The value provided ('" + position + "') is not one of 'beforebegin', 'afterbegin', 'beforeend', or 'afterend'.")
 	}
 }
 

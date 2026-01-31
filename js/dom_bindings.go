@@ -8850,14 +8850,22 @@ func (b *DOMBinder) BindNamedNodeMap(nnm *dom.NamedNodeMap) *goja.Object {
 				return goja.Undefined()
 			}
 
-			// Try named property (attribute name)
+			// Per WebIDL, check prototype chain FIRST for built-in properties
+			// Named properties should not shadow prototype properties (methods like item, setNamedItem, etc.)
+			// or special properties like "length"
+			protoVal := target.Get(property)
+			if protoVal != nil && !goja.IsUndefined(protoVal) {
+				return protoVal
+			}
+
+			// Only if property is not on prototype, try named property (attribute name)
 			attr := nnm.GetNamedItem(property)
 			if attr != nil {
 				return b.BindAttr(attr)
 			}
 
-			// Fall back to prototype chain (for methods like item, getNamedItem, etc.)
-			return target.Get(property)
+			// Property not found
+			return goja.Undefined()
 		},
 
 		// OwnKeys returns only numeric indices and named attribute properties
