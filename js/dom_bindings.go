@@ -2894,6 +2894,10 @@ func (b *DOMBinder) bindNodeProperties(jsObj *goja.Object, node *dom.Node) {
 		return b.BindDocument(doc)
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 
+	jsObj.DefineAccessorProperty("isConnected", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(node.IsConnected())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
 	// Child methods
 	jsObj.Set("hasChildNodes", func(call goja.FunctionCall) goja.Value {
 		return vm.ToValue(node.HasChildNodes())

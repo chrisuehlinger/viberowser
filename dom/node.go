@@ -164,6 +164,13 @@ func (n *Node) HasChildNodes() bool {
 	return n.firstChild != nil
 }
 
+// IsConnected returns true if the node is connected to a document.
+// A node is connected if its root is a document.
+func (n *Node) IsConnected() bool {
+	root := n.GetRootNode()
+	return root != nil && root.nodeType == DocumentNode
+}
+
 // TextContent returns the text content of the node and its descendants.
 func (n *Node) TextContent() string {
 	switch n.nodeType {
