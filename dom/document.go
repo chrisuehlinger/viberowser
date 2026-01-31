@@ -202,6 +202,39 @@ func (d *Document) CreateComment(data string) *Node {
 	return node
 }
 
+// CreateCDATASection creates a new CDATASection node with the given data.
+// Per the DOM spec, this method throws a NotSupportedError for HTML documents.
+// Returns nil if this is an HTML document.
+func (d *Document) CreateCDATASection(data string) *Node {
+	node, _ := d.CreateCDATASectionWithError(data)
+	return node
+}
+
+// CreateCDATASectionWithError creates a new CDATASection node with the given data.
+// Per the DOM spec, this method throws a NotSupportedError for HTML documents.
+// Returns an error if this is an HTML document or if data contains "]]>".
+func (d *Document) CreateCDATASectionWithError(data string) (*Node, error) {
+	// Per DOM spec, throw NotSupportedError for HTML documents
+	if d.IsHTML() {
+		return nil, ErrNotSupported("CDATASection nodes are not allowed in HTML documents.")
+	}
+
+	// Per DOM spec, throw InvalidCharacterError if data contains "]]>"
+	if containsCDATASectionClose(data) {
+		return nil, ErrInvalidCharacter("CDATASection data cannot contain ']]>'.")
+	}
+
+	node := newNode(CDATASectionNode, "#cdata-section", d)
+	node.textData = &data
+	node.nodeValue = &data
+	return node, nil
+}
+
+// containsCDATASectionClose checks if data contains the CDATA section close delimiter "]]>".
+func containsCDATASectionClose(data string) bool {
+	return strings.Contains(data, "]]>")
+}
+
 // CreateProcessingInstruction creates a new processing instruction node.
 // The target is the application to which the instruction is targeted.
 // The data is the content of the processing instruction.

@@ -1271,6 +1271,140 @@ func TestDOMBinderProcessingInstructionErrors(t *testing.T) {
 	}
 }
 
+func TestDOMBinderCDATASection(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	// Create XML document using DOMImplementation
+	impl := dom.NewDOMImplementation(nil)
+	xmlDoc := impl.CreateDocument("http://example.com", "root", nil)
+	binder.BindDocument(xmlDoc)
+
+	// Test createCDATASection exists
+	result, err := r.Execute("typeof document.createCDATASection")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "function" {
+		t.Errorf("Expected createCDATASection to be a function, got %v", result.String())
+	}
+
+	// Test creating a CDATASection
+	result, err = r.Execute(`
+		var cdata = document.createCDATASection('test content');
+		cdata.nodeType
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 4 {
+		t.Errorf("Expected nodeType = 4, got %v", result.String())
+	}
+
+	// Test nodeName
+	result, err = r.Execute(`cdata.nodeName`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "#cdata-section" {
+		t.Errorf("Expected nodeName = '#cdata-section', got %v", result.String())
+	}
+
+	// Test data property
+	result, err = r.Execute(`cdata.data`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "test content" {
+		t.Errorf("Expected data = 'test content', got %v", result.String())
+	}
+
+	// Test length property
+	result, err = r.Execute(`cdata.length`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 12 { // "test content" = 12 characters
+		t.Errorf("Expected length = 12, got %v", result.String())
+	}
+
+	// Test instanceof CDATASection
+	result, err = r.Execute(`cdata instanceof CDATASection`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "true" {
+		t.Errorf("Expected cdata instanceof CDATASection to be true, got %v", result.String())
+	}
+
+	// Test instanceof Text (CDATASection extends Text)
+	result, err = r.Execute(`cdata instanceof Text`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "true" {
+		t.Errorf("Expected cdata instanceof Text to be true, got %v", result.String())
+	}
+
+	// Test instanceof CharacterData
+	result, err = r.Execute(`cdata instanceof CharacterData`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "true" {
+		t.Errorf("Expected cdata instanceof CharacterData to be true, got %v", result.String())
+	}
+
+	// Test setting data
+	result, err = r.Execute(`
+		cdata.data = 'new data';
+		cdata.data
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "new data" {
+		t.Errorf("Expected data = 'new data', got %v", result.String())
+	}
+
+	// Test CharacterData methods
+	result, err = r.Execute(`cdata.substringData(0, 3)`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "new" {
+		t.Errorf("Expected substringData(0, 3) = 'new', got %v", result.String())
+	}
+}
+
+func TestDOMBinderCDATASectionErrors(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	// Test with HTML document - should throw NotSupportedError
+	doc, _ := dom.ParseHTML("<!DOCTYPE html><html><body></body></html>")
+	binder.BindDocument(doc)
+
+	_, err := r.Execute(`document.createCDATASection('test')`)
+	if err == nil {
+		t.Error("Expected NotSupportedError for CDATASection in HTML document")
+	}
+
+	// Test with XML document - should throw InvalidCharacterError for data with "]]>"
+	impl := dom.NewDOMImplementation(nil)
+	xmlDoc := impl.CreateDocument("http://example.com", "root", nil)
+
+	// Create a new runtime for XML doc
+	r2 := NewRuntime()
+	binder2 := NewDOMBinder(r2)
+	binder2.BindDocument(xmlDoc)
+
+	_, err = r2.Execute(`document.createCDATASection('data with ]]> in it')`)
+	if err == nil {
+		t.Error("Expected InvalidCharacterError for data containing ']]>'")
+	}
+}
+
 func TestBeforeAfterNullUndefined(t *testing.T) {
 	r := NewRuntime()
 	doc, _ := dom.ParseHTML(`<div id="parent"><span id="test">test</span></div>`)

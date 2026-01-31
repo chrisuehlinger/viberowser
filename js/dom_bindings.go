@@ -116,6 +116,7 @@ type DOMBinder struct {
 	characterDataProto           *goja.Object
 	textProto                    *goja.Object
 	commentProto                 *goja.Object
+	cdataSectionProto            *goja.Object
 	processingInstructionProto   *goja.Object
 	elementProto                 *goja.Object
 	documentProto                *goja.Object
@@ -273,6 +274,18 @@ func (b *DOMBinder) setupPrototypes() {
 	commentConstructorObj.Set("prototype", b.commentProto)
 	b.commentProto.Set("constructor", commentConstructorObj)
 	vm.Set("Comment", commentConstructorObj)
+
+	// Create CDATASection prototype (extends Text per DOM spec)
+	b.cdataSectionProto = vm.NewObject()
+	b.cdataSectionProto.SetPrototype(b.textProto)
+	cdataSectionConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		// CDATASection cannot be constructed directly - must use createCDATASection
+		panic(vm.NewTypeError("Illegal constructor"))
+	})
+	cdataSectionConstructorObj := cdataSectionConstructor.ToObject(vm)
+	cdataSectionConstructorObj.Set("prototype", b.cdataSectionProto)
+	b.cdataSectionProto.Set("constructor", cdataSectionConstructorObj)
+	vm.Set("CDATASection", cdataSectionConstructorObj)
 
 	// Create ProcessingInstruction prototype (extends CharacterData)
 	b.processingInstructionProto = vm.NewObject()
@@ -492,6 +505,21 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 		}
 		node := doc.CreateComment(data)
 		return b.BindNode(node)
+	})
+
+	jsDoc.Set("createCDATASection", func(call goja.FunctionCall) goja.Value {
+		data := ""
+		if len(call.Arguments) > 0 {
+			data = call.Arguments[0].String()
+		}
+		node, err := doc.CreateCDATASectionWithError(data)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("NotSupportedError", err.Error()))
+		}
+		return b.BindCDATASectionNode(node, nil)
 	})
 
 	jsDoc.Set("createProcessingInstruction", func(call goja.FunctionCall) goja.Value {
@@ -757,6 +785,21 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 		}
 		node := doc.CreateComment(data)
 		return b.BindNode(node)
+	})
+
+	jsDoc.Set("createCDATASection", func(call goja.FunctionCall) goja.Value {
+		data := ""
+		if len(call.Arguments) > 0 {
+			data = call.Arguments[0].String()
+		}
+		node, err := doc.CreateCDATASectionWithError(data)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("NotSupportedError", err.Error()))
+		}
+		return b.BindCDATASectionNode(node, nil)
 	})
 
 	jsDoc.Set("createProcessingInstruction", func(call goja.FunctionCall) goja.Value {
@@ -1347,6 +1390,8 @@ func (b *DOMBinder) BindNode(node *dom.Node) *goja.Object {
 		return b.BindTextNode(node, nil)
 	case dom.CommentNode:
 		return b.BindCommentNode(node, nil)
+	case dom.CDATASectionNode:
+		return b.BindCDATASectionNode(node, nil)
 	case dom.ProcessingInstructionNode:
 		return b.BindProcessingInstructionNode(node, nil)
 	case dom.DocumentTypeNode:
@@ -1498,6 +1543,92 @@ func (b *DOMBinder) BindCommentNode(node *dom.Node, proto *goja.Object) *goja.Ob
 	jsNode.Set("_goNode", node)
 	jsNode.Set("nodeType", int(dom.CommentNode))
 	jsNode.Set("nodeName", "#comment")
+
+	// CharacterData properties
+	// Per spec, setting data/nodeValue/textContent to null should result in empty string
+	jsNode.DefineAccessorProperty("data", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(node.NodeValue())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			val := ""
+			if !goja.IsNull(call.Arguments[0]) {
+				val = call.Arguments[0].String()
+			}
+			node.SetNodeValue(val)
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsNode.DefineAccessorProperty("nodeValue", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(node.NodeValue())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			val := ""
+			if !goja.IsNull(call.Arguments[0]) {
+				val = call.Arguments[0].String()
+			}
+			node.SetNodeValue(val)
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsNode.DefineAccessorProperty("textContent", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(node.TextContent())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			val := ""
+			if !goja.IsNull(call.Arguments[0]) {
+				val = call.Arguments[0].String()
+			}
+			node.SetTextContent(val)
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsNode.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Return length in UTF-16 code units per the CharacterData spec
+		return vm.ToValue(utf16Length(node.NodeValue()))
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// CharacterData mutation methods
+	b.bindCharacterDataMethods(jsNode, node)
+
+	// ChildNode mixin methods
+	b.bindCharacterDataChildNodeMixin(jsNode, node)
+
+	// Common node properties
+	b.bindNodeProperties(jsNode, node)
+
+	// Cache
+	b.nodeMap[node] = jsNode
+
+	return jsNode
+}
+
+// BindCDATASectionNode creates a JavaScript object from a DOM CDATASection node with proper prototype.
+func (b *DOMBinder) BindCDATASectionNode(node *dom.Node, proto *goja.Object) *goja.Object {
+	if node == nil {
+		return nil
+	}
+
+	// Check cache
+	if jsObj, ok := b.nodeMap[node]; ok {
+		return jsObj
+	}
+
+	vm := b.runtime.vm
+	jsNode := vm.NewObject()
+
+	// Set prototype for instanceof to work
+	if proto != nil {
+		jsNode.SetPrototype(proto)
+	} else if b.cdataSectionProto != nil {
+		jsNode.SetPrototype(b.cdataSectionProto)
+	}
+
+	jsNode.Set("_goNode", node)
+	jsNode.Set("nodeType", int(dom.CDATASectionNode))
+	jsNode.Set("nodeName", "#cdata-section")
 
 	// CharacterData properties
 	// Per spec, setting data/nodeValue/textContent to null should result in empty string

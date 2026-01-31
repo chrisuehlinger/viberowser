@@ -65,6 +65,70 @@ func TestDocument_CreateComment(t *testing.T) {
 	}
 }
 
+func TestDocument_CreateCDATASection(t *testing.T) {
+	// Test creating CDATASection in XML document
+	impl := NewDOMImplementation(nil)
+	xmlDoc := impl.CreateDocument("http://example.com", "root", nil)
+
+	cdata, err := xmlDoc.CreateCDATASectionWithError("CDATA content here")
+	if err != nil {
+		t.Fatalf("CreateCDATASection returned error for XML document: %v", err)
+	}
+	if cdata == nil {
+		t.Fatal("CreateCDATASection returned nil for XML document")
+	}
+	if cdata.NodeType() != CDATASectionNode {
+		t.Errorf("Expected CDATASectionNode, got %v", cdata.NodeType())
+	}
+	if cdata.NodeName() != "#cdata-section" {
+		t.Errorf("Expected '#cdata-section', got '%s'", cdata.NodeName())
+	}
+	if cdata.NodeValue() != "CDATA content here" {
+		t.Errorf("Expected 'CDATA content here', got '%s'", cdata.NodeValue())
+	}
+}
+
+func TestDocument_CreateCDATASection_HTMLDocumentThrows(t *testing.T) {
+	// Test that CDATASection throws NotSupportedError for HTML documents
+	doc := NewDocument()
+
+	_, err := doc.CreateCDATASectionWithError("test")
+	if err == nil {
+		t.Fatal("Expected error for CDATASection in HTML document")
+	}
+	domErr, ok := err.(*DOMError)
+	if !ok {
+		t.Fatalf("Expected DOMError, got %T", err)
+	}
+	if domErr.Name != "NotSupportedError" {
+		t.Errorf("Expected NotSupportedError, got %s", domErr.Name)
+	}
+
+	// Also test the non-error version returns nil
+	node := doc.CreateCDATASection("test")
+	if node != nil {
+		t.Error("Expected nil for CDATASection in HTML document")
+	}
+}
+
+func TestDocument_CreateCDATASection_InvalidData(t *testing.T) {
+	// Test that CDATASection throws InvalidCharacterError for data containing "]]>"
+	impl := NewDOMImplementation(nil)
+	xmlDoc := impl.CreateDocument("http://example.com", "root", nil)
+
+	_, err := xmlDoc.CreateCDATASectionWithError("data with ]]> in it")
+	if err == nil {
+		t.Fatal("Expected error for data containing ']]>'")
+	}
+	domErr, ok := err.(*DOMError)
+	if !ok {
+		t.Fatalf("Expected DOMError, got %T", err)
+	}
+	if domErr.Name != "InvalidCharacterError" {
+		t.Errorf("Expected InvalidCharacterError, got %s", domErr.Name)
+	}
+}
+
 func TestDocument_CreateDocumentFragment(t *testing.T) {
 	doc := NewDocument()
 	frag := doc.CreateDocumentFragment()

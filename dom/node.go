@@ -92,10 +92,10 @@ func (n *Node) NodeValue() string {
 }
 
 // SetNodeValue sets the value of the node.
-// This only has an effect on text, comment, and processing instruction nodes.
+// This only has an effect on text, comment, CDATASection, and processing instruction nodes.
 func (n *Node) SetNodeValue(value string) {
 	switch n.nodeType {
-	case TextNode:
+	case TextNode, CDATASectionNode:
 		if n.textData != nil {
 			*n.textData = value
 		}
@@ -168,7 +168,7 @@ func (n *Node) TextContent() string {
 	switch n.nodeType {
 	case DocumentNode, DocumentTypeNode:
 		return ""
-	case TextNode, CommentNode, ProcessingInstructionNode:
+	case TextNode, CommentNode, ProcessingInstructionNode, CDATASectionNode:
 		return n.NodeValue()
 	default:
 		var sb strings.Builder
@@ -180,7 +180,7 @@ func (n *Node) TextContent() string {
 func (n *Node) collectTextContent(sb *strings.Builder) {
 	for child := n.firstChild; child != nil; child = child.nextSibling {
 		switch child.nodeType {
-		case TextNode:
+		case TextNode, CDATASectionNode:
 			sb.WriteString(child.NodeValue())
 		case ElementNode, DocumentFragmentNode:
 			child.collectTextContent(sb)
@@ -195,7 +195,7 @@ func (n *Node) SetTextContent(value string) {
 	case DocumentNode, DocumentTypeNode:
 		// Do nothing per the spec
 		return
-	case TextNode, CommentNode, ProcessingInstructionNode:
+	case TextNode, CommentNode, ProcessingInstructionNode, CDATASectionNode:
 		n.SetNodeValue(value)
 	default:
 		// Remove all children
@@ -313,7 +313,7 @@ func (n *Node) isValidChildType(node *Node) bool {
 	}
 	switch node.nodeType {
 	case DocumentFragmentNode, DocumentTypeNode, ElementNode, TextNode,
-		ProcessingInstructionNode, CommentNode:
+		ProcessingInstructionNode, CommentNode, CDATASectionNode:
 		return true
 	default:
 		// Document nodes and other types cannot be children
@@ -613,7 +613,7 @@ func (n *Node) shallowClone() *Node {
 				}
 			}
 		}
-	case TextNode:
+	case TextNode, CDATASectionNode:
 		if n.textData != nil {
 			text := *n.textData
 			clone.textData = &text
