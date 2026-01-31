@@ -1849,6 +1849,45 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 		return goja.Undefined()
 	})
 
+	// moveBefore - state-preserving atomic move API
+	jsDoc.Set("moveBefore", func(movedNode, referenceNode goja.Value) goja.Value {
+		// First argument must be a Node (not null or undefined or missing)
+		if movedNode == nil || goja.IsNull(movedNode) || goja.IsUndefined(movedNode) {
+			panic(vm.NewTypeError("Failed to execute 'moveBefore' on 'Document': parameter 1 is not of type 'Node'."))
+		}
+
+		movedObj := movedNode.ToObject(vm)
+		goMovedNode := b.getGoNode(movedObj)
+		if goMovedNode == nil {
+			panic(vm.NewTypeError("Failed to execute 'moveBefore' on 'Document': parameter 1 is not of type 'Node'."))
+		}
+
+		// Second argument is required per WebIDL
+		if referenceNode == nil {
+			panic(vm.NewTypeError("Failed to execute 'moveBefore' on 'Document': 2 arguments required, but only 1 present."))
+		}
+
+		// Second argument can be Node, null, or undefined (null and undefined treated as null)
+		var goRefChild *dom.Node
+		if !goja.IsNull(referenceNode) && !goja.IsUndefined(referenceNode) {
+			refChildObj := referenceNode.ToObject(vm)
+			goRefChild = b.getGoNode(refChildObj)
+			if goRefChild == nil {
+				// Not a Node and not null - throw TypeError
+				panic(vm.NewTypeError("Failed to execute 'moveBefore' on 'Document': parameter 2 is not of type 'Node'."))
+			}
+		}
+
+		err := doc.AsNode().MoveBefore(goMovedNode, goRefChild)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				b.throwDOMError(vm, domErr)
+			}
+			return goja.Undefined()
+		}
+		return goja.Undefined()
+	})
+
 	// document.createEvent(interface) - legacy method to create events
 	jsDoc.Set("createEvent", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
@@ -2330,6 +2369,45 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 				panic(b.createDOMException(domErr.Name, domErr.Message))
 			}
 			panic(b.createDOMException("HierarchyRequestError", err.Error()))
+		}
+		return goja.Undefined()
+	})
+
+	// moveBefore - state-preserving atomic move API
+	jsDoc.Set("moveBefore", func(movedNode, referenceNode goja.Value) goja.Value {
+		// First argument must be a Node (not null or undefined or missing)
+		if movedNode == nil || goja.IsNull(movedNode) || goja.IsUndefined(movedNode) {
+			panic(vm.NewTypeError("Failed to execute 'moveBefore' on 'Document': parameter 1 is not of type 'Node'."))
+		}
+
+		movedObj := movedNode.ToObject(vm)
+		goMovedNode := b.getGoNode(movedObj)
+		if goMovedNode == nil {
+			panic(vm.NewTypeError("Failed to execute 'moveBefore' on 'Document': parameter 1 is not of type 'Node'."))
+		}
+
+		// Second argument is required per WebIDL
+		if referenceNode == nil {
+			panic(vm.NewTypeError("Failed to execute 'moveBefore' on 'Document': 2 arguments required, but only 1 present."))
+		}
+
+		// Second argument can be Node, null, or undefined (null and undefined treated as null)
+		var goRefChild *dom.Node
+		if !goja.IsNull(referenceNode) && !goja.IsUndefined(referenceNode) {
+			refChildObj := referenceNode.ToObject(vm)
+			goRefChild = b.getGoNode(refChildObj)
+			if goRefChild == nil {
+				// Not a Node and not null - throw TypeError
+				panic(vm.NewTypeError("Failed to execute 'moveBefore' on 'Document': parameter 2 is not of type 'Node'."))
+			}
+		}
+
+		err := doc.AsNode().MoveBefore(goMovedNode, goRefChild)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				b.throwDOMError(vm, domErr)
+			}
+			return goja.Undefined()
 		}
 		return goja.Undefined()
 	})
@@ -3141,6 +3219,45 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 				panic(b.createDOMException(domErr.Name, domErr.Message))
 			}
 			panic(b.createDOMException("HierarchyRequestError", err.Error()))
+		}
+		return goja.Undefined()
+	})
+
+	// moveBefore - state-preserving atomic move API
+	jsEl.Set("moveBefore", func(movedNode, referenceNode goja.Value) goja.Value {
+		// First argument must be a Node (not null or undefined or missing)
+		if movedNode == nil || goja.IsNull(movedNode) || goja.IsUndefined(movedNode) {
+			panic(vm.NewTypeError("Failed to execute 'moveBefore' on 'Element': parameter 1 is not of type 'Node'."))
+		}
+
+		movedObj := movedNode.ToObject(vm)
+		goMovedNode := b.getGoNode(movedObj)
+		if goMovedNode == nil {
+			panic(vm.NewTypeError("Failed to execute 'moveBefore' on 'Element': parameter 1 is not of type 'Node'."))
+		}
+
+		// Second argument is required per WebIDL
+		if referenceNode == nil {
+			panic(vm.NewTypeError("Failed to execute 'moveBefore' on 'Element': 2 arguments required, but only 1 present."))
+		}
+
+		// Second argument can be Node, null, or undefined (null and undefined treated as null)
+		var goRefChild *dom.Node
+		if !goja.IsNull(referenceNode) && !goja.IsUndefined(referenceNode) {
+			refChildObj := referenceNode.ToObject(vm)
+			goRefChild = b.getGoNode(refChildObj)
+			if goRefChild == nil {
+				// Not a Node and not null - throw TypeError
+				panic(vm.NewTypeError("Failed to execute 'moveBefore' on 'Element': parameter 2 is not of type 'Node'."))
+			}
+		}
+
+		err := el.AsNode().MoveBefore(goMovedNode, goRefChild)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				b.throwDOMError(vm, domErr)
+			}
+			return goja.Undefined()
 		}
 		return goja.Undefined()
 	})
@@ -4697,6 +4814,45 @@ func (b *DOMBinder) BindDocumentFragment(frag *dom.DocumentFragment) *goja.Objec
 		return goja.Undefined()
 	})
 
+	// moveBefore - state-preserving atomic move API
+	jsFrag.Set("moveBefore", func(movedNode, referenceNode goja.Value) goja.Value {
+		// First argument must be a Node (not null or undefined or missing)
+		if movedNode == nil || goja.IsNull(movedNode) || goja.IsUndefined(movedNode) {
+			panic(vm.NewTypeError("Failed to execute 'moveBefore' on 'DocumentFragment': parameter 1 is not of type 'Node'."))
+		}
+
+		movedObj := movedNode.ToObject(vm)
+		goMovedNode := b.getGoNode(movedObj)
+		if goMovedNode == nil {
+			panic(vm.NewTypeError("Failed to execute 'moveBefore' on 'DocumentFragment': parameter 1 is not of type 'Node'."))
+		}
+
+		// Second argument is required per WebIDL
+		if referenceNode == nil {
+			panic(vm.NewTypeError("Failed to execute 'moveBefore' on 'DocumentFragment': 2 arguments required, but only 1 present."))
+		}
+
+		// Second argument can be Node, null, or undefined (null and undefined treated as null)
+		var goRefChild *dom.Node
+		if !goja.IsNull(referenceNode) && !goja.IsUndefined(referenceNode) {
+			refChildObj := referenceNode.ToObject(vm)
+			goRefChild = b.getGoNode(refChildObj)
+			if goRefChild == nil {
+				// Not a Node and not null - throw TypeError
+				panic(vm.NewTypeError("Failed to execute 'moveBefore' on 'DocumentFragment': parameter 2 is not of type 'Node'."))
+			}
+		}
+
+		err := node.MoveBefore(goMovedNode, goRefChild)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				b.throwDOMError(vm, domErr)
+			}
+			return goja.Undefined()
+		}
+		return goja.Undefined()
+	})
+
 	// getElementById is now on the prototype (setupDocumentFragmentPrototypeMethods)
 	// but we keep an instance method for efficiency since it can directly access frag
 
@@ -4872,6 +5028,45 @@ func (b *DOMBinder) BindShadowRoot(sr *dom.ShadowRoot) *goja.Object {
 	jsSR.Set("replaceChildren", func(call goja.FunctionCall) goja.Value {
 		nodes := b.convertJSNodesToGo(call.Arguments)
 		sr.ReplaceChildren(nodes...)
+		return goja.Undefined()
+	})
+
+	// moveBefore - state-preserving atomic move API
+	jsSR.Set("moveBefore", func(movedNode, referenceNode goja.Value) goja.Value {
+		// First argument must be a Node (not null or undefined or missing)
+		if movedNode == nil || goja.IsNull(movedNode) || goja.IsUndefined(movedNode) {
+			panic(vm.NewTypeError("Failed to execute 'moveBefore' on 'ShadowRoot': parameter 1 is not of type 'Node'."))
+		}
+
+		movedObj := movedNode.ToObject(vm)
+		goMovedNode := b.getGoNode(movedObj)
+		if goMovedNode == nil {
+			panic(vm.NewTypeError("Failed to execute 'moveBefore' on 'ShadowRoot': parameter 1 is not of type 'Node'."))
+		}
+
+		// Second argument is required per WebIDL
+		if referenceNode == nil {
+			panic(vm.NewTypeError("Failed to execute 'moveBefore' on 'ShadowRoot': 2 arguments required, but only 1 present."))
+		}
+
+		// Second argument can be Node, null, or undefined (null and undefined treated as null)
+		var goRefChild *dom.Node
+		if !goja.IsNull(referenceNode) && !goja.IsUndefined(referenceNode) {
+			refChildObj := referenceNode.ToObject(vm)
+			goRefChild = b.getGoNode(refChildObj)
+			if goRefChild == nil {
+				// Not a Node and not null - throw TypeError
+				panic(vm.NewTypeError("Failed to execute 'moveBefore' on 'ShadowRoot': parameter 2 is not of type 'Node'."))
+			}
+		}
+
+		err := node.MoveBefore(goMovedNode, goRefChild)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				b.throwDOMError(vm, domErr)
+			}
+			return goja.Undefined()
+		}
 		return goja.Undefined()
 	})
 
@@ -5982,6 +6177,50 @@ func (b *DOMBinder) bindNodeProperties(jsObj *goja.Object, node *dom.Node) {
 		// Return the existing JS binding for the removed node to preserve object identity
 		return b.BindNode(result)
 	})
+
+	// moveBefore - state-preserving atomic move API
+	// Only available on ParentNode types (Document, DocumentFragment, Element)
+	// Not on Text, Comment, DocumentType, ProcessingInstruction, etc.
+	nodeType := node.NodeType()
+	if nodeType == dom.DocumentNode || nodeType == dom.DocumentFragmentNode || nodeType == dom.ElementNode {
+		jsObj.Set("moveBefore", func(movedNode, referenceNode goja.Value) goja.Value {
+			// First argument must be a Node (not null or undefined or missing)
+			if movedNode == nil || goja.IsNull(movedNode) || goja.IsUndefined(movedNode) {
+				panic(vm.NewTypeError("Failed to execute 'moveBefore' on 'Node': parameter 1 is not of type 'Node'."))
+			}
+
+			movedObj := movedNode.ToObject(vm)
+			goMovedNode := b.getGoNode(movedObj)
+			if goMovedNode == nil {
+				panic(vm.NewTypeError("Failed to execute 'moveBefore' on 'Node': parameter 1 is not of type 'Node'."))
+			}
+
+			// Second argument is required per WebIDL
+			if referenceNode == nil {
+				panic(vm.NewTypeError("Failed to execute 'moveBefore' on 'Node': 2 arguments required, but only 1 present."))
+			}
+
+			// Second argument can be Node, null, or undefined (null and undefined treated as null)
+			var goRefChild *dom.Node
+			if !goja.IsNull(referenceNode) && !goja.IsUndefined(referenceNode) {
+				refChildObj := referenceNode.ToObject(vm)
+				goRefChild = b.getGoNode(refChildObj)
+				if goRefChild == nil {
+					// Not a Node and not null - throw TypeError
+					panic(vm.NewTypeError("Failed to execute 'moveBefore' on 'Node': parameter 2 is not of type 'Node'."))
+				}
+			}
+
+			err := node.MoveBefore(goMovedNode, goRefChild)
+			if err != nil {
+				if domErr, ok := err.(*dom.DOMError); ok {
+					b.throwDOMError(vm, domErr)
+				}
+				return goja.Undefined()
+			}
+			return goja.Undefined()
+		})
+	}
 
 	jsObj.Set("cloneNode", func(call goja.FunctionCall) goja.Value {
 		deep := false

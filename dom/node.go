@@ -1517,3 +1517,149 @@ func (n *Node) DoctypeSystemId() string {
 	}
 	return ""
 }
+
+// MoveBefore atomically moves a node to a new position in the DOM tree while preserving state.
+// Unlike InsertBefore, this is specifically for moving nodes that are already in a tree.
+// Returns an error if the operation violates DOM hierarchy constraints.
+//
+// Pre-move validity checks (different from pre-insertion):
+// 1. Both parent and node must be connected, or share the same shadow-including root
+// 2. Parent must be a Document, DocumentFragment, or Element
+// 3. Node must not be a host-including inclusive ancestor of parent
+// 4. Node must be an Element or CharacterData node
+// 5. If child is non-null, its parent must be parent
+func (n *Node) MoveBefore(node, child *Node) error {
+	// Validate the move according to the moveBefore spec
+	if err := n.validatePreMove(node, child); err != nil {
+		return err
+	}
+
+	// If moving a node before itself, no-op
+	if node == child {
+		return nil
+	}
+
+	// Capture old parent and siblings for mutation notification
+	oldParent := node.parentNode
+	oldPrevSib := node.prevSibling
+	oldNextSib := node.nextSibling
+
+	// Get sibling info for the insertion point before any modifications
+	var newPrevSib *Node
+	if child != nil {
+		newPrevSib = child.prevSibling
+	} else {
+		newPrevSib = n.lastChild
+	}
+
+	// Remove from old parent (without triggering mutation notification yet)
+	if oldParent != nil {
+		oldParent.removeChildInternal(node)
+	}
+
+	// Insert at new position (without triggering mutation notification yet)
+	n.insertBeforeInternal(node, child)
+
+	// Notify about the move: removal from old parent, then insertion to new parent
+	// Per spec, moveBefore generates both a removal and insertion MutationRecord
+	if oldParent != nil {
+		notifyChildListMutation(oldParent, nil, []*Node{node}, oldPrevSib, oldNextSib)
+	}
+	notifyChildListMutation(n, []*Node{node}, nil, newPrevSib, child)
+
+	return nil
+}
+
+// validatePreMove implements the pre-move validation steps from the DOM spec.
+// https://whatpr.org/dom/1307.html#concept-node-ensure-pre-move-validity
+func (n *Node) validatePreMove(node, child *Node) error {
+	// Step 1: If either parent or node are not connected, then check if they share
+	// the same shadow-including root
+	parentRoot := n.GetShadowIncludingRoot()
+	nodeRoot := node.GetShadowIncludingRoot()
+
+	// If they're in different trees (disconnected from each other), it's an error
+	// Note: Two nodes in the same disconnected tree are allowed
+	if parentRoot != nodeRoot {
+		return ErrHierarchyRequest("The operation would yield an incorrect node tree.")
+	}
+
+	// Step 2: Parent's shadow-including root must be same as node's shadow-including root
+	// (Already checked above since we require same tree)
+
+	// Step 3: If parent is not a Document, DocumentFragment, or Element node
+	if !n.canHaveChildren() {
+		return ErrHierarchyRequest("The operation would yield an incorrect node tree.")
+	}
+
+	// Step 4: If node is a host-including inclusive ancestor of parent
+	if n.isInclusiveAncestor(node) {
+		return ErrHierarchyRequest("The new child element contains the parent.")
+	}
+
+	// Step 5: If node is not an Element or CharacterData node
+	if !isElementOrCharacterData(node) {
+		return ErrHierarchyRequest("The operation would yield an incorrect node tree.")
+	}
+
+	// Step 6: If child is non-null and its parent is not parent
+	if child != nil && child.parentNode != n {
+		return ErrNotFound("The node before which the new node is to be inserted is not a child of this node.")
+	}
+
+	// Additional validation for Document parent - reuse the pre-insertion validation logic
+	// since moveBefore must follow the same Document child constraints as insertBefore
+	if n.nodeType == DocumentNode {
+		// For moveBefore into a Document, we need to exclude the node being moved
+		// from element/doctype counts if it's currently a child of this document
+		var exclude *Node
+		if node.parentNode == n {
+			exclude = node
+		}
+		if err := n.validateDocumentMove(node, child, exclude); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateDocumentMove validates moving a node into a Document.
+// This is similar to validateDocumentInsertionOrReplace but specific to moveBefore.
+func (n *Node) validateDocumentMove(node, child, exclude *Node) error {
+	switch node.nodeType {
+	case ElementNode:
+		// Document can only have one element child
+		// If node is already a child of this document, it's being moved within the document
+		// so we don't count it towards the element limit
+		if n.hasElementChildExcluding(exclude) {
+			return ErrHierarchyRequest("Document already has a document element.")
+		}
+		// Check if a doctype follows the reference child
+		if child != nil && child != exclude {
+			if child.nodeType == DocumentTypeNode || n.doctypeFollows(child) {
+				return ErrHierarchyRequest("Cannot insert element before doctype.")
+			}
+		}
+
+	case TextNode:
+		// Text nodes cannot be direct children of Document
+		return ErrHierarchyRequest("Cannot insert Text node as a direct child of Document.")
+	}
+
+	return nil
+}
+
+// isElementOrCharacterData returns true if the node is an Element or CharacterData node.
+// CharacterData includes Text, Comment, CDATASection, and ProcessingInstruction.
+func isElementOrCharacterData(node *Node) bool {
+	if node == nil {
+		return false
+	}
+	switch node.nodeType {
+	case ElementNode, TextNode, CommentNode, CDATASectionNode, ProcessingInstructionNode:
+		return true
+	default:
+		return false
+	}
+}
