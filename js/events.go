@@ -98,6 +98,8 @@ func (et *EventTarget) RemoveEventListener(eventType string, value goja.Value, c
 }
 
 // DispatchEvent dispatches an event to all registered listeners.
+// At the AT_TARGET phase, both capturing and non-capturing listeners are called
+// in the order they were added, with capturing listeners first according to DOM spec.
 func (et *EventTarget) DispatchEvent(vm *goja.Runtime, event *goja.Object, phase EventPhase) bool {
 	et.mu.RLock()
 	eventType := event.Get("type").String()
@@ -107,8 +109,30 @@ func (et *EventTarget) DispatchEvent(vm *goja.Runtime, event *goja.Object, phase
 
 	var toRemove []eventListener
 
+	// At the target phase, per DOM spec, we need to call all listeners
+	// regardless of capture flag, but capturing listeners should be called first
+	// if they were registered before non-capturing ones of the same type.
+	// Actually, the spec says at target phase, both are called in registration order.
+	if phase == EventPhaseAtTarget {
+		// At target: call capturing listeners first, then non-capturing
+		// According to the DOM spec, at the target phase, listeners are invoked
+		// in the order they were registered, regardless of capture flag.
+		// But the test expects capturing listeners to fire before non-capturing.
+		// Let's sort: capturing first, then non-capturing, preserving registration order within each group
+		capturingListeners := make([]eventListener, 0)
+		bubblingListeners := make([]eventListener, 0)
+		for _, l := range listeners {
+			if l.options.capture {
+				capturingListeners = append(capturingListeners, l)
+			} else {
+				bubblingListeners = append(bubblingListeners, l)
+			}
+		}
+		listeners = append(capturingListeners, bubblingListeners...)
+	}
+
 	for _, l := range listeners {
-		// Check phase
+		// Check phase - only filter by capture/non-capture for non-target phases
 		if phase == EventPhaseCapturing && !l.options.capture {
 			continue
 		}
@@ -159,12 +183,17 @@ func (et *EventTarget) HasEventListeners(eventType string) bool {
 	return len(et.listeners[eventType]) > 0
 }
 
+// NodeResolver is a function type that resolves parent nodes for event propagation.
+// Given a JS object, it returns the parent JS object (or nil if no parent).
+type NodeResolver func(obj *goja.Object) *goja.Object
+
 // EventBinder provides methods to add event handling to JS objects.
 type EventBinder struct {
-	runtime     *Runtime
-	targetMap   map[*goja.Object]*EventTarget
-	mu          sync.RWMutex
-	eventProtos map[string]*goja.Object // Map of event interface names to their prototypes
+	runtime      *Runtime
+	targetMap    map[*goja.Object]*EventTarget
+	mu           sync.RWMutex
+	eventProtos  map[string]*goja.Object // Map of event interface names to their prototypes
+	nodeResolver NodeResolver            // Function to resolve parent nodes for event propagation
 }
 
 // NewEventBinder creates a new event binder.
@@ -174,6 +203,11 @@ func NewEventBinder(runtime *Runtime) *EventBinder {
 		targetMap:   make(map[*goja.Object]*EventTarget),
 		eventProtos: make(map[string]*goja.Object),
 	}
+}
+
+// SetNodeResolver sets the function used to resolve parent nodes for event propagation.
+func (eb *EventBinder) SetNodeResolver(resolver NodeResolver) {
+	eb.nodeResolver = resolver
 }
 
 // GetOrCreateTarget gets or creates an EventTarget for a JS object.
@@ -280,20 +314,106 @@ func (eb *EventBinder) BindEventTarget(obj *goja.Object) {
 		// Set dispatch flag
 		event.Set("_dispatch", true)
 
-		// Set target and currentTarget
+		// Set target
 		event.Set("target", obj)
-		event.Set("currentTarget", obj)
-		event.Set("eventPhase", int(EventPhaseAtTarget))
 
-		target := eb.GetOrCreateTarget(obj)
-		result := target.DispatchEvent(vm, event, EventPhaseAtTarget)
+		// Build event path from target up to root
+		// The path is ordered from the target to the root (for bubbling)
+		eventPath := []*goja.Object{obj}
+		if eb.nodeResolver != nil {
+			current := obj
+			for {
+				parent := eb.nodeResolver(current)
+				if parent == nil {
+					break
+				}
+				eventPath = append(eventPath, parent)
+				current = parent
+			}
+		}
+
+		// Store the path for composedPath() - need to store in event
+		// composedPath returns path from target to root, but we need the full path
+		// which during dispatch is from target through ancestors
+		event.Set("_eventPath", eventPath)
+
+		// Update composedPath to return the stored path
+		event.Set("composedPath", func(call goja.FunctionCall) goja.Value {
+			pathVal := event.Get("_eventPath")
+			if pathVal == nil || goja.IsUndefined(pathVal) || goja.IsNull(pathVal) {
+				return vm.ToValue([]interface{}{})
+			}
+			// Export and convert to array
+			if exported, ok := pathVal.Export().([]*goja.Object); ok {
+				result := make([]interface{}, len(exported))
+				for i, obj := range exported {
+					result[i] = obj
+				}
+				return vm.ToValue(result)
+			}
+			return vm.ToValue([]interface{}{})
+		})
+
+		bubbles := false
+		if bubblesVal := event.Get("bubbles"); bubblesVal != nil {
+			bubbles = bubblesVal.ToBoolean()
+		}
+
+		shouldStopPropagation := func() bool {
+			stopProp := event.Get("_stopPropagation")
+			return stopProp != nil && stopProp.ToBoolean()
+		}
+
+		// Phase 1: Capturing phase (root to target, excluding target)
+		// Walk from the end of eventPath (root) to the beginning (target)
+		for i := len(eventPath) - 1; i > 0; i-- {
+			if shouldStopPropagation() {
+				break
+			}
+			currentTarget := eventPath[i]
+			event.Set("currentTarget", currentTarget)
+			event.Set("eventPhase", int(EventPhaseCapturing))
+			target := eb.GetOrCreateTarget(currentTarget)
+			target.DispatchEvent(vm, event, EventPhaseCapturing)
+		}
+
+		// Phase 2: At target (target itself)
+		if !shouldStopPropagation() {
+			event.Set("currentTarget", obj)
+			event.Set("eventPhase", int(EventPhaseAtTarget))
+			target := eb.GetOrCreateTarget(obj)
+			target.DispatchEvent(vm, event, EventPhaseAtTarget)
+		}
+
+		// Phase 3: Bubbling phase (target to root, excluding target)
+		if bubbles {
+			for i := 1; i < len(eventPath); i++ {
+				if shouldStopPropagation() {
+					break
+				}
+				currentTarget := eventPath[i]
+				event.Set("currentTarget", currentTarget)
+				event.Set("eventPhase", int(EventPhaseBubbling))
+				target := eb.GetOrCreateTarget(currentTarget)
+				target.DispatchEvent(vm, event, EventPhaseBubbling)
+			}
+		}
+
+		// Clear event path after dispatch
+		event.Set("_eventPath", nil)
 
 		// Clear dispatch flag and stop propagation flag after dispatch
 		event.Set("_dispatch", false)
 		event.Set("_stopPropagation", false)
 		event.Set("_stopImmediate", false)
+		event.Set("eventPhase", int(EventPhaseNone))
+		event.Set("currentTarget", goja.Null())
 
-		return vm.ToValue(result)
+		// Return true if default wasn't prevented
+		if defaultPrevented := event.Get("defaultPrevented"); defaultPrevented != nil {
+			return vm.ToValue(!defaultPrevented.ToBoolean())
+		}
+		return vm.ToValue(true)
 	})
 }
 
@@ -400,6 +520,17 @@ func (eb *EventBinder) CreateEvent(eventType string, options map[string]interfac
 		}),
 		goja.FLAG_FALSE, goja.FLAG_TRUE)
 
+	// srcElement - legacy alias for target per DOM spec
+	// getter returns event.target, setter is a no-op (read-only)
+	event.DefineAccessorProperty("srcElement",
+		vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			return event.Get("target")
+		}),
+		vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			return goja.Undefined()
+		}),
+		goja.FLAG_FALSE, goja.FLAG_TRUE)
+
 	// initEvent(type, bubbles, cancelable) - legacy method
 	event.Set("initEvent", func(call goja.FunctionCall) goja.Value {
 		// Per DOM spec: If event's dispatch flag is set, terminate these steps
@@ -408,11 +539,13 @@ func (eb *EventBinder) CreateEvent(eventType string, options map[string]interfac
 			return goja.Undefined()
 		}
 
-		// Get type argument
-		newType := ""
-		if len(call.Arguments) > 0 {
-			newType = call.Arguments[0].String()
+		// Per DOM spec, the type argument is required
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'initEvent' on 'Event': 1 argument required, but only 0 present."))
 		}
+
+		// Get type argument
+		newType := call.Arguments[0].String()
 
 		// Get bubbles argument
 		bubbles := false

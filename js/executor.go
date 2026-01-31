@@ -40,6 +40,25 @@ func NewScriptExecutor(runtime *Runtime) *ScriptExecutor {
 	// Set the event binder on DOM binder so all nodes get EventTarget methods
 	domBinder.SetEventBinder(eventBinder)
 
+	// Set the node resolver so events can propagate through the DOM tree
+	eventBinder.SetNodeResolver(func(obj *goja.Object) *goja.Object {
+		if obj == nil {
+			return nil
+		}
+		// Get the Go node from the JS object
+		goNode := domBinder.getGoNode(obj)
+		if goNode == nil {
+			return nil
+		}
+		// Get the parent node
+		parentNode := goNode.ParentNode()
+		if parentNode == nil {
+			return nil
+		}
+		// Return the JS binding for the parent node
+		return domBinder.BindNode(parentNode)
+	})
+
 	// Create mutation observer manager
 	mutationManager := NewMutationObserverManager()
 
