@@ -461,6 +461,41 @@ func (r *Runtime) setupWindow() {
 		return style
 	})
 
+	// window.getSelection (stub - will be overridden when document is set up)
+	window.Set("getSelection", func(call goja.FunctionCall) goja.Value {
+		// Return a stub selection object
+		selection := r.vm.NewObject()
+		selection.Set("anchorNode", goja.Null())
+		selection.Set("anchorOffset", 0)
+		selection.Set("focusNode", goja.Null())
+		selection.Set("focusOffset", 0)
+		selection.Set("isCollapsed", true)
+		selection.Set("rangeCount", 0)
+		selection.Set("type", "None")
+		selection.Set("toString", func(call goja.FunctionCall) goja.Value {
+			return r.vm.ToValue("")
+		})
+		selection.Set("getRangeAt", func(call goja.FunctionCall) goja.Value {
+			panic(r.vm.NewTypeError("IndexSizeError: Index out of range"))
+		})
+		selection.Set("addRange", func(call goja.FunctionCall) goja.Value {
+			return goja.Undefined()
+		})
+		selection.Set("removeRange", func(call goja.FunctionCall) goja.Value {
+			return goja.Undefined()
+		})
+		selection.Set("removeAllRanges", func(call goja.FunctionCall) goja.Value {
+			return goja.Undefined()
+		})
+		selection.Set("empty", func(call goja.FunctionCall) goja.Value {
+			return goja.Undefined()
+		})
+		return selection
+	})
+
+	// Also set getSelection globally
+	r.vm.Set("getSelection", window.Get("getSelection"))
+
 	// window.matchMedia (stub)
 	window.Set("matchMedia", func(call goja.FunctionCall) goja.Value {
 		result := r.vm.NewObject()

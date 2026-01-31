@@ -1000,6 +1000,15 @@ func (d *Document) Implementation() *DOMImplementation {
 	return d.AsNode().documentData.implementation
 }
 
+// GetSelection returns the Selection object for this document.
+// Per the Selection API spec, each document has an associated Selection.
+func (d *Document) GetSelection() *Selection {
+	if d.AsNode().documentData.selection == nil {
+		d.AsNode().documentData.selection = NewSelection(d)
+	}
+	return d.AsNode().documentData.selection
+}
+
 // CreateHTMLDocument creates a new HTML document with the given title.
 // If title is nil, no title element is created.
 // If title is non-nil (even empty string), a title element is created.

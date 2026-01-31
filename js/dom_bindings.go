@@ -338,6 +338,8 @@ type DOMBinder struct {
 	nodeIteratorProto            *goja.Object
 	shadowRootProto              *goja.Object
 	shadowRootCache              map[*dom.ShadowRoot]*goja.Object
+	selectionProto               *goja.Object
+	selectionCache               map[*dom.Selection]*goja.Object
 
 	// Event handler storage: maps JS object -> event type -> handler function
 	eventHandlers                map[*goja.Object]map[string]goja.Value
@@ -358,6 +360,7 @@ func NewDOMBinder(runtime *Runtime) *DOMBinder {
 		attrCache:              make(map[*dom.Attr]*goja.Object),
 		rangeCache:             make(map[*dom.Range]*goja.Object),
 		shadowRootCache:        make(map[*dom.ShadowRoot]*goja.Object),
+		selectionCache:         make(map[*dom.Selection]*goja.Object),
 		eventHandlers:          make(map[*goja.Object]map[string]goja.Value),
 	}
 	b.setupPrototypes()
@@ -709,6 +712,17 @@ func (b *DOMBinder) setupPrototypes() {
 	b.rangeProto.Set("END_TO_START", dom.EndToStart)
 
 	vm.Set("Range", rangeConstructorObj)
+
+	// Create Selection prototype
+	b.selectionProto = vm.NewObject()
+	selectionConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		// Selection cannot be constructed directly - must use getSelection()
+		panic(vm.NewTypeError("Illegal constructor"))
+	})
+	selectionConstructorObj := selectionConstructor.ToObject(vm)
+	selectionConstructorObj.Set("prototype", b.selectionProto)
+	b.selectionProto.Set("constructor", selectionConstructorObj)
+	vm.Set("Selection", selectionConstructorObj)
 
 	// Create DOMRect prototype and constructor
 	domRectProto := vm.NewObject()
@@ -1928,6 +1942,11 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 		return b.BindRange(r)
 	})
 
+	jsDoc.Set("getSelection", func(call goja.FunctionCall) goja.Value {
+		selection := doc.GetSelection()
+		return b.BindSelection(selection)
+	})
+
 	jsDoc.Set("createAttribute", func(call goja.FunctionCall) goja.Value {
 		name := ""
 		if len(call.Arguments) > 0 {
@@ -2548,6 +2567,11 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 	jsDoc.Set("createRange", func(call goja.FunctionCall) goja.Value {
 		r := doc.CreateRange()
 		return b.BindRange(r)
+	})
+
+	jsDoc.Set("getSelection", func(call goja.FunctionCall) goja.Value {
+		selection := doc.GetSelection()
+		return b.BindSelection(selection)
 	})
 
 	jsDoc.Set("createAttribute", func(call goja.FunctionCall) goja.Value {
@@ -6305,6 +6329,320 @@ func (b *DOMBinder) BindRange(r *dom.Range) *goja.Object {
 	b.rangeCache[r] = jsRange
 
 	return jsRange
+}
+
+// BindSelection creates a JavaScript object from a DOM Selection.
+func (b *DOMBinder) BindSelection(s *dom.Selection) *goja.Object {
+	if s == nil {
+		return nil
+	}
+
+	// Check cache
+	if jsObj, ok := b.selectionCache[s]; ok {
+		return jsObj
+	}
+
+	vm := b.runtime.vm
+	jsSelection := vm.NewObject()
+
+	// Set prototype for instanceof to work
+	if b.selectionProto != nil {
+		jsSelection.SetPrototype(b.selectionProto)
+	}
+
+	jsSelection.Set("_goSelection", s)
+
+	// Read-only accessor properties
+	jsSelection.DefineAccessorProperty("anchorNode", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		node := s.AnchorNode()
+		if node == nil {
+			return goja.Null()
+		}
+		return b.BindNode(node)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsSelection.DefineAccessorProperty("anchorOffset", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(s.AnchorOffset())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsSelection.DefineAccessorProperty("focusNode", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		node := s.FocusNode()
+		if node == nil {
+			return goja.Null()
+		}
+		return b.BindNode(node)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsSelection.DefineAccessorProperty("focusOffset", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(s.FocusOffset())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsSelection.DefineAccessorProperty("isCollapsed", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(s.IsCollapsed())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsSelection.DefineAccessorProperty("rangeCount", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(s.RangeCount())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsSelection.DefineAccessorProperty("type", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(s.Type())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsSelection.DefineAccessorProperty("direction", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(s.Direction())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// Methods
+	jsSelection.Set("getRangeAt", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'getRangeAt' on 'Selection': 1 argument required."))
+		}
+		index := int(call.Arguments[0].ToInteger())
+		r, err := s.GetRangeAt(index)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("IndexSizeError", err.Error()))
+		}
+		return b.BindRange(r)
+	})
+
+	jsSelection.Set("addRange", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'addRange' on 'Selection': 1 argument required."))
+		}
+		rangeArg := call.Arguments[0]
+		if goja.IsNull(rangeArg) || goja.IsUndefined(rangeArg) {
+			panic(vm.NewTypeError("Failed to execute 'addRange' on 'Selection': parameter 1 is not of type 'Range'."))
+		}
+		r := b.getGoRange(rangeArg.ToObject(vm))
+		if r == nil {
+			panic(vm.NewTypeError("Failed to execute 'addRange' on 'Selection': parameter 1 is not of type 'Range'."))
+		}
+		s.AddRange(r)
+		return goja.Undefined()
+	})
+
+	jsSelection.Set("removeRange", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'removeRange' on 'Selection': 1 argument required."))
+		}
+		rangeArg := call.Arguments[0]
+		if goja.IsNull(rangeArg) || goja.IsUndefined(rangeArg) {
+			panic(vm.NewTypeError("Failed to execute 'removeRange' on 'Selection': parameter 1 is not of type 'Range'."))
+		}
+		r := b.getGoRange(rangeArg.ToObject(vm))
+		if r == nil {
+			panic(vm.NewTypeError("Failed to execute 'removeRange' on 'Selection': parameter 1 is not of type 'Range'."))
+		}
+		if err := s.RemoveRange(r); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("NotFoundError", err.Error()))
+		}
+		return goja.Undefined()
+	})
+
+	jsSelection.Set("removeAllRanges", func(call goja.FunctionCall) goja.Value {
+		s.RemoveAllRanges()
+		return goja.Undefined()
+	})
+
+	jsSelection.Set("empty", func(call goja.FunctionCall) goja.Value {
+		s.Empty()
+		return goja.Undefined()
+	})
+
+	jsSelection.Set("collapse", func(call goja.FunctionCall) goja.Value {
+		var node *dom.Node
+		offset := 0
+		if len(call.Arguments) > 0 && !goja.IsNull(call.Arguments[0]) && !goja.IsUndefined(call.Arguments[0]) {
+			node = b.getGoNode(call.Arguments[0].ToObject(vm))
+		}
+		if len(call.Arguments) > 1 {
+			offset = int(call.Arguments[1].ToInteger())
+		}
+		if err := s.Collapse(node, offset); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("IndexSizeError", err.Error()))
+		}
+		return goja.Undefined()
+	})
+
+	jsSelection.Set("setPosition", func(call goja.FunctionCall) goja.Value {
+		var node *dom.Node
+		offset := 0
+		if len(call.Arguments) > 0 && !goja.IsNull(call.Arguments[0]) && !goja.IsUndefined(call.Arguments[0]) {
+			node = b.getGoNode(call.Arguments[0].ToObject(vm))
+		}
+		if len(call.Arguments) > 1 {
+			offset = int(call.Arguments[1].ToInteger())
+		}
+		if err := s.SetPosition(node, offset); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("IndexSizeError", err.Error()))
+		}
+		return goja.Undefined()
+	})
+
+	jsSelection.Set("collapseToStart", func(call goja.FunctionCall) goja.Value {
+		if err := s.CollapseToStart(); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("InvalidStateError", err.Error()))
+		}
+		return goja.Undefined()
+	})
+
+	jsSelection.Set("collapseToEnd", func(call goja.FunctionCall) goja.Value {
+		if err := s.CollapseToEnd(); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("InvalidStateError", err.Error()))
+		}
+		return goja.Undefined()
+	})
+
+	jsSelection.Set("extend", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'extend' on 'Selection': 1 argument required."))
+		}
+		nodeArg := call.Arguments[0]
+		if goja.IsNull(nodeArg) || goja.IsUndefined(nodeArg) {
+			panic(vm.NewTypeError("Failed to execute 'extend' on 'Selection': parameter 1 is not of type 'Node'."))
+		}
+		node := b.getGoNode(nodeArg.ToObject(vm))
+		if node == nil {
+			panic(vm.NewTypeError("Failed to execute 'extend' on 'Selection': parameter 1 is not of type 'Node'."))
+		}
+		offset := 0
+		if len(call.Arguments) > 1 {
+			offset = int(call.Arguments[1].ToInteger())
+		}
+		if err := s.Extend(node, offset); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("InvalidStateError", err.Error()))
+		}
+		return goja.Undefined()
+	})
+
+	jsSelection.Set("selectAllChildren", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'selectAllChildren' on 'Selection': 1 argument required."))
+		}
+		nodeArg := call.Arguments[0]
+		if goja.IsNull(nodeArg) || goja.IsUndefined(nodeArg) {
+			panic(vm.NewTypeError("Failed to execute 'selectAllChildren' on 'Selection': parameter 1 is not of type 'Node'."))
+		}
+		node := b.getGoNode(nodeArg.ToObject(vm))
+		if node == nil {
+			panic(vm.NewTypeError("Failed to execute 'selectAllChildren' on 'Selection': parameter 1 is not of type 'Node'."))
+		}
+		if err := s.SelectAllChildren(node); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("InvalidNodeTypeError", err.Error()))
+		}
+		return goja.Undefined()
+	})
+
+	jsSelection.Set("setBaseAndExtent", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 4 {
+			panic(vm.NewTypeError("Failed to execute 'setBaseAndExtent' on 'Selection': 4 arguments required."))
+		}
+		anchorNodeArg := call.Arguments[0]
+		if goja.IsNull(anchorNodeArg) || goja.IsUndefined(anchorNodeArg) {
+			panic(vm.NewTypeError("Failed to execute 'setBaseAndExtent' on 'Selection': parameter 1 is not of type 'Node'."))
+		}
+		anchorNode := b.getGoNode(anchorNodeArg.ToObject(vm))
+		if anchorNode == nil {
+			panic(vm.NewTypeError("Failed to execute 'setBaseAndExtent' on 'Selection': parameter 1 is not of type 'Node'."))
+		}
+		anchorOffset := int(call.Arguments[1].ToInteger())
+		focusNodeArg := call.Arguments[2]
+		if goja.IsNull(focusNodeArg) || goja.IsUndefined(focusNodeArg) {
+			panic(vm.NewTypeError("Failed to execute 'setBaseAndExtent' on 'Selection': parameter 3 is not of type 'Node'."))
+		}
+		focusNode := b.getGoNode(focusNodeArg.ToObject(vm))
+		if focusNode == nil {
+			panic(vm.NewTypeError("Failed to execute 'setBaseAndExtent' on 'Selection': parameter 3 is not of type 'Node'."))
+		}
+		focusOffset := int(call.Arguments[3].ToInteger())
+		if err := s.SetBaseAndExtent(anchorNode, anchorOffset, focusNode, focusOffset); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("IndexSizeError", err.Error()))
+		}
+		return goja.Undefined()
+	})
+
+	jsSelection.Set("containsNode", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'containsNode' on 'Selection': 1 argument required."))
+		}
+		nodeArg := call.Arguments[0]
+		if goja.IsNull(nodeArg) || goja.IsUndefined(nodeArg) {
+			return vm.ToValue(false)
+		}
+		node := b.getGoNode(nodeArg.ToObject(vm))
+		if node == nil {
+			return vm.ToValue(false)
+		}
+		partialContainment := false
+		if len(call.Arguments) > 1 {
+			partialContainment = call.Arguments[1].ToBoolean()
+		}
+		return vm.ToValue(s.ContainsNode(node, partialContainment))
+	})
+
+	jsSelection.Set("deleteFromDocument", func(call goja.FunctionCall) goja.Value {
+		if err := s.DeleteFromDocument(); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("HierarchyRequestError", err.Error()))
+		}
+		return goja.Undefined()
+	})
+
+	jsSelection.Set("toString", func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(s.ToString())
+	})
+
+	jsSelection.Set("modify", func(call goja.FunctionCall) goja.Value {
+		alter := ""
+		direction := ""
+		granularity := ""
+		if len(call.Arguments) > 0 {
+			alter = call.Arguments[0].String()
+		}
+		if len(call.Arguments) > 1 {
+			direction = call.Arguments[1].String()
+		}
+		if len(call.Arguments) > 2 {
+			granularity = call.Arguments[2].String()
+		}
+		s.Modify(alter, direction, granularity)
+		return goja.Undefined()
+	})
+
+	// Cache the binding
+	b.selectionCache[s] = jsSelection
+
+	return jsSelection
 }
 
 // BindTreeWalker creates a JavaScript TreeWalker object.

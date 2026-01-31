@@ -335,6 +335,28 @@ func (se *ScriptExecutor) setupGetComputedStyle() {
 	vm.Set("getComputedStyle", windowObj.Get("getComputedStyle"))
 }
 
+// setupGetSelection sets up the window.getSelection function.
+func (se *ScriptExecutor) setupGetSelection(doc *dom.Document) {
+	vm := se.runtime.vm
+	window := vm.Get("window")
+	if window == nil {
+		return
+	}
+	windowObj := window.ToObject(vm)
+	if windowObj == nil {
+		return
+	}
+
+	// Set up window.getSelection to return the document's Selection
+	windowObj.Set("getSelection", func(call goja.FunctionCall) goja.Value {
+		selection := doc.GetSelection()
+		return se.domBinder.BindSelection(selection)
+	})
+
+	// Also set it globally for scripts that use getSelection without window prefix
+	vm.Set("getSelection", windowObj.Get("getSelection"))
+}
+
 // SetupDocument sets up the document object and returns the JS document.
 func (se *ScriptExecutor) SetupDocument(doc *dom.Document) {
 	// Clear previous document's mutation callback if any
@@ -362,6 +384,9 @@ func (se *ScriptExecutor) SetupDocument(doc *dom.Document) {
 
 	// Set up window.frames property to access iframe content windows
 	se.setupWindowFrames(doc, window)
+
+	// Set up window.getSelection() to return the document's selection
+	se.setupGetSelection(doc)
 
 	// Add global addEventListener/removeEventListener/dispatchEvent
 	// These are needed because in browsers, the global scope IS the window,

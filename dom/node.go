@@ -109,6 +109,7 @@ type documentData struct {
 	implementation  *DOMImplementation // The document's DOMImplementation
 	url             string             // The document's URL (defaults to "about:blank")
 	characterSet    string             // The document's character encoding (defaults to "UTF-8")
+	selection       *Selection         // The document's Selection object
 }
 
 // docTypeData holds data specific to DocumentType nodes.
