@@ -1277,7 +1277,7 @@ func TestDOMBinderCDATASection(t *testing.T) {
 
 	// Create XML document using DOMImplementation
 	impl := dom.NewDOMImplementation(nil)
-	xmlDoc := impl.CreateDocument("http://example.com", "root", nil)
+	xmlDoc, _ := impl.CreateDocument("http://example.com", "root", nil)
 	binder.BindDocument(xmlDoc)
 
 	// Test createCDATASection exists
@@ -1392,7 +1392,7 @@ func TestDOMBinderCDATASectionErrors(t *testing.T) {
 
 	// Test with XML document - should throw InvalidCharacterError for data with "]]>"
 	impl := dom.NewDOMImplementation(nil)
-	xmlDoc := impl.CreateDocument("http://example.com", "root", nil)
+	xmlDoc, _ := impl.CreateDocument("http://example.com", "root", nil)
 
 	// Create a new runtime for XML doc
 	r2 := NewRuntime()

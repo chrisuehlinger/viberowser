@@ -48,3 +48,8 @@ func ErrIndexSize(message string) *DOMError {
 func ErrWrongDocument(message string) *DOMError {
 	return &DOMError{Name: "WrongDocumentError", Message: message}
 }
+
+// ErrNamespace creates a NamespaceError.
+func ErrNamespace(message string) *DOMError {
+	return &DOMError{Name: "NamespaceError", Message: message}
+}

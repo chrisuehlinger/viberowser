@@ -47,6 +47,8 @@ type documentData struct {
 	documentElement *Node              // root Element
 	contentType     string             // The content type (MIME type) of the document
 	implementation  *DOMImplementation // The document's DOMImplementation
+	url             string             // The document's URL (defaults to "about:blank")
+	characterSet    string             // The document's character encoding (defaults to "UTF-8")
 }
 
 // docTypeData holds data specific to DocumentType nodes.

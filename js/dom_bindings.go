@@ -1,6 +1,7 @@
 package js
 
 import (
+	"fmt"
 	"strings"
 	"unicode/utf16"
 
@@ -128,6 +129,8 @@ type DOMBinder struct {
 	htmlElementProto             *goja.Object
 	htmlElementProtoMap          map[string]*goja.Object // Maps tag name to specific prototype
 	documentProto                *goja.Object
+	documentTypeProto            *goja.Object
+	xmlDocumentProto             *goja.Object
 	documentFragmentProto        *goja.Object
 	domExceptionProto            *goja.Object
 	domImplementationProto       *goja.Object
@@ -390,6 +393,30 @@ func (b *DOMBinder) setupPrototypes() {
 	documentConstructorObj.Set("prototype", b.documentProto)
 	b.documentProto.Set("constructor", documentConstructorObj)
 	vm.Set("Document", documentConstructorObj)
+
+	// Create XMLDocument prototype (extends Document)
+	b.xmlDocumentProto = vm.NewObject()
+	b.xmlDocumentProto.SetPrototype(b.documentProto)
+	xmlDocumentConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		// XMLDocument cannot be constructed directly via new
+		panic(vm.NewTypeError("Illegal constructor"))
+	})
+	xmlDocumentConstructorObj := xmlDocumentConstructor.ToObject(vm)
+	xmlDocumentConstructorObj.Set("prototype", b.xmlDocumentProto)
+	b.xmlDocumentProto.Set("constructor", xmlDocumentConstructorObj)
+	vm.Set("XMLDocument", xmlDocumentConstructorObj)
+
+	// Create DocumentType prototype (extends Node)
+	b.documentTypeProto = vm.NewObject()
+	b.documentTypeProto.SetPrototype(b.nodeProto)
+	documentTypeConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		// DocumentType cannot be constructed directly via new
+		panic(vm.NewTypeError("Illegal constructor"))
+	})
+	documentTypeConstructorObj := documentTypeConstructor.ToObject(vm)
+	documentTypeConstructorObj.Set("prototype", b.documentTypeProto)
+	b.documentTypeProto.Set("constructor", documentTypeConstructorObj)
+	vm.Set("DocumentType", documentTypeConstructorObj)
 
 	// Create DocumentFragment prototype (extends Node)
 	b.documentFragmentProto = vm.NewObject()
@@ -772,6 +799,41 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
 
+	// Document metadata properties (per DOM spec)
+	jsDoc.DefineAccessorProperty("URL", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(doc.URL())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("documentURI", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(doc.DocumentURI())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("compatMode", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(doc.CompatMode())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("characterSet", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(doc.CharacterSet())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// charset and inputEncoding are aliases for characterSet (per HTML spec)
+	jsDoc.DefineAccessorProperty("charset", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(doc.CharacterSet())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("inputEncoding", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(doc.CharacterSet())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("contentType", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(doc.ContentType())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// location is null for documents without a browsing context (per spec)
+	jsDoc.DefineAccessorProperty("location", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return goja.Null()
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
 	// Document methods
 	jsDoc.Set("getElementById", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
@@ -838,11 +900,17 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 			return goja.Null()
 		}
 		namespaceURI := ""
-		if !goja.IsNull(call.Arguments[0]) {
+		if !goja.IsNull(call.Arguments[0]) && !goja.IsUndefined(call.Arguments[0]) {
 			namespaceURI = call.Arguments[0].String()
 		}
 		qualifiedName := call.Arguments[1].String()
-		el := doc.CreateElementNS(namespaceURI, qualifiedName)
+		el, err := doc.CreateElementNSWithError(namespaceURI, qualifiedName)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("Error", err.Error()))
+		}
 		return b.BindElement(el)
 	})
 
@@ -1093,6 +1161,41 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
 
+	// Document metadata properties (per DOM spec)
+	jsDoc.DefineAccessorProperty("URL", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(doc.URL())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("documentURI", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(doc.DocumentURI())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("compatMode", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(doc.CompatMode())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("characterSet", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(doc.CharacterSet())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// charset and inputEncoding are aliases for characterSet (per HTML spec)
+	jsDoc.DefineAccessorProperty("charset", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(doc.CharacterSet())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("inputEncoding", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(doc.CharacterSet())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("contentType", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(doc.ContentType())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// location is null for documents without a browsing context (per spec)
+	jsDoc.DefineAccessorProperty("location", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return goja.Null()
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
 	// Document methods
 	jsDoc.Set("getElementById", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
@@ -1159,11 +1262,17 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 			return goja.Null()
 		}
 		namespaceURI := ""
-		if !goja.IsNull(call.Arguments[0]) {
+		if !goja.IsNull(call.Arguments[0]) && !goja.IsUndefined(call.Arguments[0]) {
 			namespaceURI = call.Arguments[0].String()
 		}
 		qualifiedName := call.Arguments[1].String()
-		el := doc.CreateElementNS(namespaceURI, qualifiedName)
+		el, err := doc.CreateElementNSWithError(namespaceURI, qualifiedName)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("Error", err.Error()))
+		}
 		return b.BindElement(el)
 	})
 
@@ -1344,6 +1453,20 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 	return jsDoc
 }
 
+// bindXMLDocument creates a JavaScript object for an XMLDocument.
+// This is used for documents created via createDocument.
+func (b *DOMBinder) bindXMLDocument(doc *dom.Document) *goja.Object {
+	// Use the same binding as bindDocumentInternal, but set XMLDocument prototype
+	jsDoc := b.bindDocumentInternal(doc)
+
+	// Override the prototype to be XMLDocument
+	if b.xmlDocumentProto != nil {
+		jsDoc.SetPrototype(b.xmlDocumentProto)
+	}
+
+	return jsDoc
+}
+
 // bindDOMImplementation creates a JavaScript object for a DOMImplementation.
 func (b *DOMBinder) bindDOMImplementation(impl *dom.DOMImplementation) *goja.Object {
 	if impl == nil {
@@ -1376,23 +1499,48 @@ func (b *DOMBinder) bindDOMImplementation(impl *dom.DOMImplementation) *goja.Obj
 
 	// createDocument(namespaceURI, qualifiedName, doctype)
 	jsImpl.Set("createDocument", func(call goja.FunctionCall) goja.Value {
+		// Per WebIDL, createDocument requires at least 2 arguments
+		if len(call.Arguments) < 2 {
+			panic(vm.NewTypeError("Failed to execute 'createDocument' on 'DOMImplementation': 2 arguments required, but only " + fmt.Sprint(len(call.Arguments)) + " present."))
+		}
+
 		namespaceURI := ""
 		qualifiedName := ""
 		var doctype *dom.Node
 
-		if len(call.Arguments) > 0 && !goja.IsNull(call.Arguments[0]) {
+		if !goja.IsNull(call.Arguments[0]) && !goja.IsUndefined(call.Arguments[0]) {
 			namespaceURI = call.Arguments[0].String()
 		}
-		if len(call.Arguments) > 1 && !goja.IsNull(call.Arguments[1]) {
-			qualifiedName = call.Arguments[1].String()
+		arg := call.Arguments[1]
+		// Per spec: null → empty string, undefined → "undefined"
+		if goja.IsNull(arg) {
+			qualifiedName = ""
+		} else if goja.IsUndefined(arg) {
+			qualifiedName = "undefined"
+		} else {
+			qualifiedName = arg.String()
 		}
-		if len(call.Arguments) > 2 && !goja.IsNull(call.Arguments[2]) && !goja.IsUndefined(call.Arguments[2]) {
-			obj := call.Arguments[2].ToObject(vm)
-			doctype = b.getGoNode(obj)
+		if len(call.Arguments) > 2 {
+			arg := call.Arguments[2]
+			if !goja.IsNull(arg) && !goja.IsUndefined(arg) {
+				// Must be a DocumentType node or throw TypeError
+				obj := arg.ToObject(vm)
+				node := b.getGoNode(obj)
+				if node == nil || node.NodeType() != dom.DocumentTypeNode {
+					panic(vm.NewTypeError("Failed to execute 'createDocument' on 'DOMImplementation': parameter 3 is not of type 'DocumentType'."))
+				}
+				doctype = node
+			}
 		}
 
-		doc := impl.CreateDocument(namespaceURI, qualifiedName, doctype)
-		return b.bindDocumentInternal(doc)
+		doc, err := impl.CreateDocument(namespaceURI, qualifiedName, doctype)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("Error", err.Error()))
+		}
+		return b.bindXMLDocument(doc)
 	})
 
 	// createDocumentType(qualifiedName, publicId, systemId)
@@ -1404,7 +1552,13 @@ func (b *DOMBinder) bindDOMImplementation(impl *dom.DOMImplementation) *goja.Obj
 		publicId := call.Arguments[1].String()
 		systemId := call.Arguments[2].String()
 
-		doctype := impl.CreateDocumentType(qualifiedName, publicId, systemId)
+		doctype, err := impl.CreateDocumentType(qualifiedName, publicId, systemId)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("Error", err.Error()))
+		}
 		return b.BindNode(doctype)
 	})
 
@@ -2347,9 +2501,9 @@ func (b *DOMBinder) BindDocumentTypeNode(node *dom.Node) *goja.Object {
 	vm := b.runtime.vm
 	jsNode := vm.NewObject()
 
-	// Set prototype (use the generic node prototype)
-	if b.nodeProto != nil {
-		jsNode.SetPrototype(b.nodeProto)
+	// Set prototype (use DocumentType prototype)
+	if b.documentTypeProto != nil {
+		jsNode.SetPrototype(b.documentTypeProto)
 	}
 
 	jsNode.Set("_goNode", node)

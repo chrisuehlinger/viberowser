@@ -36,6 +36,41 @@ func (d *Document) ContentType() string {
 	return d.AsNode().documentData.contentType
 }
 
+// URL returns the document's URL. Defaults to "about:blank".
+func (d *Document) URL() string {
+	if d.AsNode().documentData.url == "" {
+		return "about:blank"
+	}
+	return d.AsNode().documentData.url
+}
+
+// SetURL sets the document's URL.
+func (d *Document) SetURL(url string) {
+	d.AsNode().documentData.url = url
+}
+
+// DocumentURI returns the document's URI. Same as URL per spec.
+func (d *Document) DocumentURI() string {
+	return d.URL()
+}
+
+// CharacterSet returns the document's character encoding. Defaults to "UTF-8".
+func (d *Document) CharacterSet() string {
+	if d.AsNode().documentData.characterSet == "" {
+		return "UTF-8"
+	}
+	return d.AsNode().documentData.characterSet
+}
+
+// CompatMode returns the document's compatibility mode.
+// Returns "CSS1Compat" for standards mode (always for XML documents).
+func (d *Document) CompatMode() string {
+	// For XML documents, always return CSS1Compat
+	// For HTML documents, this would depend on the doctype
+	// For now, we return CSS1Compat (standards mode) as default
+	return "CSS1Compat"
+}
+
 // AsNode returns the underlying Node.
 func (d *Document) AsNode() *Node {
 	return (*Node)(d)
@@ -150,10 +185,6 @@ func (d *Document) SetTitle(title string) {
 // Per DOM spec, the element's namespace is the HTML namespace when document is an
 // HTML document or document's content type is "application/xhtml+xml"; otherwise null.
 func (d *Document) CreateElement(tagName string) *Element {
-	// For HTML documents, tag names are lowercased for storage but uppercased for TagName
-	localName := strings.ToLower(tagName)
-	upperTagName := strings.ToUpper(tagName)
-
 	// Determine namespace based on document type
 	// Per DOM spec: "The element's namespace is the HTML namespace when document is an
 	// HTML document or document's content type is 'application/xhtml+xml'; otherwise null."
@@ -163,10 +194,23 @@ func (d *Document) CreateElement(tagName string) *Element {
 		namespace = HTMLNamespace
 	}
 
-	node := newNode(ElementNode, upperTagName, d)
+	var localName, resultTagName string
+	// Per DOM spec step 2: "If context object is an HTML document, let localName be converted to ASCII lowercase."
+	// Only true HTML documents (text/html) should lowercase. XHTML documents preserve case.
+	if d.IsHTML() {
+		// For HTML documents, tag names are lowercased for storage but uppercased for TagName
+		localName = strings.ToLower(tagName)
+		resultTagName = strings.ToUpper(tagName)
+	} else {
+		// For XML/XHTML documents, preserve case exactly
+		localName = tagName
+		resultTagName = tagName
+	}
+
+	node := newNode(ElementNode, resultTagName, d)
 	node.elementData = &elementData{
 		localName:    localName,
-		tagName:      upperTagName,
+		tagName:      resultTagName,
 		namespaceURI: namespace,
 	}
 	node.elementData.attributes = newNamedNodeMap((*Element)(node))
@@ -176,24 +220,35 @@ func (d *Document) CreateElement(tagName string) *Element {
 
 // CreateElementNS creates a new element with the given namespace and qualified name.
 func (d *Document) CreateElementNS(namespaceURI, qualifiedName string) *Element {
-	prefix, localName := parseQualifiedName(qualifiedName)
+	el, _ := d.CreateElementNSWithError(namespaceURI, qualifiedName)
+	return el
+}
+
+// CreateElementNSWithError creates a new element with the given namespace and qualified name.
+// Returns an error if the qualified name is invalid or the namespace is incorrect.
+func (d *Document) CreateElementNSWithError(namespaceURI, qualifiedName string) (*Element, error) {
+	// Validate and extract the qualified name
+	namespace, prefix, localName, err := ValidateAndExtractQualifiedName(namespaceURI, qualifiedName)
+	if err != nil {
+		return nil, err
+	}
 
 	// For HTML namespace, tagName is uppercase. For other namespaces, preserve case.
 	tagName := qualifiedName
-	if namespaceURI == "http://www.w3.org/1999/xhtml" {
+	if namespace == HTMLNamespace {
 		tagName = strings.ToUpper(qualifiedName)
 	}
 
 	node := newNode(ElementNode, qualifiedName, d)
 	node.elementData = &elementData{
 		localName:    localName,
-		namespaceURI: namespaceURI,
+		namespaceURI: namespace,
 		prefix:       prefix,
 		tagName:      tagName,
 	}
 	node.elementData.attributes = newNamedNodeMap((*Element)(node))
 
-	return (*Element)(node)
+	return (*Element)(node), nil
 }
 
 // CreateTextNode creates a new text node with the given data.
@@ -824,7 +879,21 @@ func (impl *DOMImplementation) CreateHTMLDocument(title *string) *Document {
 }
 
 // CreateDocument creates a new XML document with the given namespace and qualified name.
-func (impl *DOMImplementation) CreateDocument(namespaceURI, qualifiedName string, doctype *Node) *Document {
+func (impl *DOMImplementation) CreateDocument(namespaceURI, qualifiedName string, doctype *Node) (*Document, error) {
+	return impl.CreateDocumentWithError(namespaceURI, qualifiedName, doctype)
+}
+
+// CreateDocumentWithError creates a new XML document with validation.
+// Returns an error if the qualified name is invalid.
+func (impl *DOMImplementation) CreateDocumentWithError(namespaceURI, qualifiedName string, doctype *Node) (*Document, error) {
+	// Validate qualifiedName if not empty
+	if qualifiedName != "" {
+		_, _, _, err := ValidateAndExtractQualifiedName(namespaceURI, qualifiedName)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	doc := NewDocument()
 
 	// Per DOM spec, content type is determined by namespace:
@@ -847,22 +916,34 @@ func (impl *DOMImplementation) CreateDocument(namespaceURI, qualifiedName string
 
 	// Create root element if qualified name is provided
 	if qualifiedName != "" {
-		root := doc.CreateElementNS(namespaceURI, qualifiedName)
+		root, err := doc.CreateElementNSWithError(namespaceURI, qualifiedName)
+		if err != nil {
+			return nil, err
+		}
 		doc.AsNode().AppendChild(root.AsNode())
 	}
 
-	return doc
+	return doc, nil
 }
 
 // CreateDocumentType creates a new DocumentType node.
-func (impl *DOMImplementation) CreateDocumentType(qualifiedName, publicId, systemId string) *Node {
-	doctype := newNode(DocumentTypeNode, qualifiedName, nil)
+// The ownerDocument is set to the associated document of this implementation.
+func (impl *DOMImplementation) CreateDocumentType(qualifiedName, publicId, systemId string) (*Node, error) {
+	// Per browser behavior, only reject names containing '>' or whitespace
+	// Browsers are very permissive with doctype names
+	for _, ch := range qualifiedName {
+		if ch == '>' || ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+			return nil, ErrInvalidCharacter("The string did not match the expected pattern.")
+		}
+	}
+
+	doctype := newNode(DocumentTypeNode, qualifiedName, impl.document)
 	doctype.docTypeData = &docTypeData{
 		name:     qualifiedName,
 		publicId: publicId,
 		systemId: systemId,
 	}
-	return doctype
+	return doctype, nil
 }
 
 // HasFeature returns true. Per spec, always returns true for compatibility.

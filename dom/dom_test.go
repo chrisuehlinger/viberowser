@@ -68,7 +68,7 @@ func TestDocument_CreateComment(t *testing.T) {
 func TestDocument_CreateCDATASection(t *testing.T) {
 	// Test creating CDATASection in XML document
 	impl := NewDOMImplementation(nil)
-	xmlDoc := impl.CreateDocument("http://example.com", "root", nil)
+	xmlDoc, _ := impl.CreateDocument("http://example.com", "root", nil)
 
 	cdata, err := xmlDoc.CreateCDATASectionWithError("CDATA content here")
 	if err != nil {
@@ -114,7 +114,7 @@ func TestDocument_CreateCDATASection_HTMLDocumentThrows(t *testing.T) {
 func TestDocument_CreateCDATASection_InvalidData(t *testing.T) {
 	// Test that CDATASection throws InvalidCharacterError for data containing "]]>"
 	impl := NewDOMImplementation(nil)
-	xmlDoc := impl.CreateDocument("http://example.com", "root", nil)
+	xmlDoc, _ := impl.CreateDocument("http://example.com", "root", nil)
 
 	_, err := xmlDoc.CreateCDATASectionWithError("data with ]]> in it")
 	if err == nil {

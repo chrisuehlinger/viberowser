@@ -197,25 +197,22 @@ func NewProcessingInstructionNode(target, data string) *Node {
 // isValidXMLName checks if a string is a valid XML name.
 // Per XML spec, names must start with a letter, underscore, or colon,
 // and can contain letters, digits, hyphens, underscores, colons, and periods.
+// Note: DOM validation is more permissive than strict XML 1.0 to match browser behavior.
 func isValidXMLName(name string) bool {
 	if name == "" {
 		return false
 	}
 
-	// XML Name regex pattern
-	// NameStartChar ::= ":" | [A-Z] | "_" | [a-z] | [#xC0-#xD6] | [#xD8-#xF6] | etc.
-	// NameChar ::= NameStartChar | "-" | "." | [0-9] | #xB7 | [#x0300-#x036F] | [#x203F-#x2040]
-	// For simplicity, we use a basic pattern that covers most common cases
+	runes := []rune(name)
 
-	// Check first character
-	firstChar := rune(name[0])
-	if !isXMLNameStartChar(firstChar) {
+	// Check first character - must be valid start char
+	if !isXMLNameStartChar(runes[0]) {
 		return false
 	}
 
-	// Check remaining characters
-	for _, ch := range name[1:] {
-		if !isXMLNameChar(ch) {
+	// Check remaining characters - more permissive than strict XML 1.0
+	for _, ch := range runes[1:] {
+		if !isXMLNameCharPermissive(ch) {
 			return false
 		}
 	}
@@ -223,24 +220,36 @@ func isValidXMLName(name string) bool {
 	return true
 }
 
+// isXMLNameCharPermissive checks if a rune is valid in the middle/end of an XML name.
+// This is more permissive than strict XML 1.0 to match browser behavior.
+// Characters that are definitely invalid anywhere: space, >, tab, newline
+func isXMLNameCharPermissive(ch rune) bool {
+	// Definitely invalid anywhere
+	if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '>' {
+		return false
+	}
+	// Everything else is allowed in middle/end of name per browser behavior
+	return true
+}
+
 // isXMLNameStartChar checks if a rune is a valid XML name start character.
+// This is more permissive than strict XML 1.0 to match browser behavior.
 func isXMLNameStartChar(ch rune) bool {
-	return ch == ':' ||
-		(ch >= 'A' && ch <= 'Z') ||
-		ch == '_' ||
-		(ch >= 'a' && ch <= 'z') ||
-		(ch >= 0xC0 && ch <= 0xD6) ||
-		(ch >= 0xD8 && ch <= 0xF6) ||
-		(ch >= 0xF8 && ch <= 0x2FF) ||
-		(ch >= 0x370 && ch <= 0x37D) ||
-		(ch >= 0x37F && ch <= 0x1FFF) ||
-		(ch >= 0x200C && ch <= 0x200D) ||
-		(ch >= 0x2070 && ch <= 0x218F) ||
-		(ch >= 0x2C00 && ch <= 0x2FEF) ||
-		(ch >= 0x3001 && ch <= 0xD7FF) ||
-		(ch >= 0xF900 && ch <= 0xFDCF) ||
-		(ch >= 0xFDF0 && ch <= 0xFFFD) ||
-		(ch >= 0x10000 && ch <= 0xEFFFF)
+	// Definitely invalid start characters - based on WPT tests
+	if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' ||
+		ch == '<' || ch == '>' || ch == '}' || ch == '{' ||
+		ch == '-' || ch == '.' || ch == '^' ||
+		ch == '~' || ch == '\'' || ch == '!' || ch == '@' ||
+		ch == '#' || ch == '$' || ch == '%' || ch == '&' ||
+		ch == '*' || ch == '(' || ch == ')' || ch == '+' ||
+		ch == '=' || ch == '[' || ch == ']' || ch == '\\' ||
+		ch == '/' || ch == ';' || ch == '`' || ch == ',' ||
+		ch == '"' ||
+		(ch >= '0' && ch <= '9') {
+		return false
+	}
+	// Everything else is allowed as start character per browser behavior
+	return true
 }
 
 // isXMLNameChar checks if a rune is a valid XML name character.
@@ -273,4 +282,242 @@ func ValidateProcessingInstructionData(data string) error {
 		return ErrInvalidCharacter("The data contains the invalid sequence '?>'.")
 	}
 	return nil
+}
+
+// isXMLNCNameStartChar checks if a rune is a valid NCName start character (no colon).
+// This is more permissive than strict XML 1.0 to match browser behavior.
+func isXMLNCNameStartChar(ch rune) bool {
+	// Same as NameStartChar but also excludes colon
+	if ch == ':' {
+		return false
+	}
+	return isXMLNameStartChar(ch)
+}
+
+// isXMLNCNameChar checks if a rune is a valid NCName character (no colon).
+func isXMLNCNameChar(ch rune) bool {
+	return isXMLNCNameStartChar(ch) ||
+		ch == '-' ||
+		ch == '.' ||
+		(ch >= '0' && ch <= '9') ||
+		ch == 0xB7 ||
+		(ch >= 0x0300 && ch <= 0x036F) ||
+		(ch >= 0x203F && ch <= 0x2040)
+}
+
+// isValidNCName checks if a string is a valid NCName (non-colonized name).
+// NCName is an XML Name that does not contain colons.
+// Uses permissive validation to match browser behavior.
+func isValidNCName(name string) bool {
+	if name == "" {
+		return false
+	}
+
+	runes := []rune(name)
+	if !isXMLNCNameStartChar(runes[0]) {
+		return false
+	}
+
+	// Check remaining chars - must not contain colon, and must be valid name chars
+	for _, ch := range runes[1:] {
+		if ch == ':' {
+			return false // NCName cannot contain colons
+		}
+		if !isXMLNameCharPermissive(ch) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// XMLNamespace and XMLNSNamespace constants
+const (
+	XMLNamespaceURI   = "http://www.w3.org/XML/1998/namespace"
+	XMLNSNamespaceURI = "http://www.w3.org/2000/xmlns/"
+)
+
+// ValidateAndExtractQualifiedName validates a qualified name and extracts namespace, prefix, and localName.
+// Per DOM spec: https://dom.spec.whatwg.org/#validate-and-extract
+// Returns (namespace, prefix, localName, error)
+func ValidateAndExtractQualifiedName(namespaceURI, qualifiedName string) (string, string, string, error) {
+	// Step 1: Validate qualifiedName
+	// When namespace is provided, browsers are more permissive (allow multiple colons, etc.)
+	if err := ValidateQualifiedNameWithNamespace(qualifiedName, namespaceURI != ""); err != nil {
+		return "", "", "", err
+	}
+
+	// Step 2: Initialize prefix to null, localName to qualifiedName
+	prefix := ""
+	localName := qualifiedName
+
+	// Step 3: If qualifiedName contains ":", split it
+	// For multiple colons, browsers use the first two segments only
+	// (matching JavaScript's split(":", 2) behavior)
+	colonIndex := strings.Index(qualifiedName, ":")
+	if colonIndex >= 0 {
+		prefix = qualifiedName[:colonIndex]
+		rest := qualifiedName[colonIndex+1:]
+		// If rest contains another colon, only take up to that colon
+		secondColonIndex := strings.Index(rest, ":")
+		if secondColonIndex >= 0 {
+			localName = rest[:secondColonIndex]
+		} else {
+			localName = rest
+		}
+	}
+
+	// Step 4: If prefix is non-empty and namespace is empty, throw NamespaceError
+	if prefix != "" && namespaceURI == "" {
+		return "", "", "", ErrNamespace("Prefix is not allowed when namespace is null.")
+	}
+
+	// Step 5: If prefix is "xml" and namespace is not the XML namespace, throw NamespaceError
+	if prefix == "xml" && namespaceURI != XMLNamespaceURI {
+		return "", "", "", ErrNamespace("The 'xml' prefix must be used with the XML namespace.")
+	}
+
+	// Step 6: If qualifiedName is "xmlns" or prefix is "xmlns", namespace must be XMLNS namespace
+	if (qualifiedName == "xmlns" || prefix == "xmlns") && namespaceURI != XMLNSNamespaceURI {
+		return "", "", "", ErrNamespace("The 'xmlns' prefix or localName must be used with the XMLNS namespace.")
+	}
+
+	// Step 7: If namespace is XMLNS namespace and neither qualifiedName is "xmlns" nor prefix is "xmlns"
+	if namespaceURI == XMLNSNamespaceURI && qualifiedName != "xmlns" && prefix != "xmlns" {
+		return "", "", "", ErrNamespace("Elements in the XMLNS namespace must use the 'xmlns' prefix or localName.")
+	}
+
+	// Return the validated values
+	return namespaceURI, prefix, localName, nil
+}
+
+// ValidateQualifiedName validates a qualified name per DOM spec (without namespace).
+// Returns an error if the name is invalid.
+func ValidateQualifiedName(qualifiedName string) error {
+	return ValidateQualifiedNameWithNamespace(qualifiedName, false)
+}
+
+// ValidateQualifiedNameWithNamespace validates a qualified name with namespace awareness.
+// When hasNamespace is true, validation is more permissive to match browser behavior.
+func ValidateQualifiedNameWithNamespace(qualifiedName string, hasNamespace bool) error {
+	// Handle empty string
+	if qualifiedName == "" {
+		return nil // Empty qualifiedName is allowed (results in no element)
+	}
+
+	// Check for "::" which is always invalid
+	if strings.Contains(qualifiedName, "::") {
+		return ErrInvalidCharacter("The qualified name contains '::'.")
+	}
+
+	// If contains colon, must be prefix:localName
+	colonIndex := strings.Index(qualifiedName, ":")
+	if colonIndex >= 0 {
+		prefix := qualifiedName[:colonIndex]
+		localName := qualifiedName[colonIndex+1:]
+
+		// Empty prefix or localName is invalid
+		if prefix == "" {
+			return ErrInvalidCharacter("The qualified name has an empty prefix.")
+		}
+		if localName == "" {
+			return ErrInvalidCharacter("The qualified name has an empty local name.")
+		}
+
+		// When no namespace is provided, multiple colons are a namespace error
+		if !hasNamespace && strings.Contains(localName, ":") {
+			return ErrNamespace("The qualified name contains multiple colons.")
+		}
+
+		// Prefix validation - when namespace is provided, be more permissive
+		if hasNamespace {
+			// With namespace, prefix can start with digits (like "0:a")
+			if !isValidPrefixPermissive(prefix) {
+				return ErrInvalidCharacter("The prefix contains invalid characters.")
+			}
+		} else {
+			// Without namespace, prefix must be a valid NCName
+			if !isValidNCName(prefix) {
+				return ErrInvalidCharacter("The prefix is not a valid NCName.")
+			}
+		}
+
+		// LocalName validation - when namespace is provided, be more permissive
+		if hasNamespace {
+			// With namespace, only check that localName starts with valid char
+			// and doesn't contain definitely invalid chars (space, >, etc.)
+			if !isValidNamePermissive(localName) {
+				return ErrInvalidCharacter("The local name contains invalid characters.")
+			}
+		} else {
+			// Without namespace, localName must be a valid NCName
+			if !isValidNCName(localName) {
+				return ErrInvalidCharacter("The local name is not a valid NCName.")
+			}
+		}
+	} else {
+		// No colon: must be valid XML Name
+		if !isValidXMLName(qualifiedName) {
+			return ErrInvalidCharacter("The qualified name is not a valid XML name.")
+		}
+		// Also check it's not just ":"
+		if qualifiedName == ":" {
+			return ErrInvalidCharacter("The qualified name cannot be just ':'.")
+		}
+		// Check the first character isn't ":"
+		if qualifiedName[0] == ':' {
+			return ErrInvalidCharacter("The qualified name cannot start with ':'.")
+		}
+	}
+
+	return nil
+}
+
+// isValidNamePermissive checks if a name is valid with permissive rules.
+// This is used for localName when a namespace is provided.
+func isValidNamePermissive(name string) bool {
+	if name == "" {
+		return false
+	}
+
+	runes := []rune(name)
+
+	// First character must be valid start char
+	if !isXMLNameStartChar(runes[0]) {
+		return false
+	}
+
+	// Remaining chars - only reject definitely invalid characters
+	for _, ch := range runes[1:] {
+		if !isXMLNameCharPermissive(ch) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// isValidPrefixPermissive checks if a prefix is valid with permissive rules.
+// Browsers allow prefixes starting with digits when a namespace is provided.
+func isValidPrefixPermissive(name string) bool {
+	if name == "" {
+		return false
+	}
+
+	// For prefixes with namespace, even digits at start are allowed
+	runes := []rune(name)
+
+	// Only check that characters aren't definitely invalid
+	for _, ch := range runes {
+		if !isXMLNameCharPermissive(ch) && ch != ':' {
+			return false
+		}
+	}
+
+	// But colon is not allowed in prefix
+	if strings.Contains(name, ":") {
+		return false
+	}
+
+	return true
 }
