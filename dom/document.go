@@ -699,12 +699,12 @@ func (d *Document) adoptNode(node *Node) {
 }
 
 // CreateNodeIterator creates a NodeIterator for traversing the document.
-// This is a simplified stub - full implementation would be more complex.
 func (d *Document) CreateNodeIterator(root *Node, whatToShow uint32) *NodeIterator {
 	return &NodeIterator{
-		root:       root,
-		whatToShow: whatToShow,
-		current:    root,
+		root:                       root,
+		whatToShow:                 whatToShow,
+		referenceNode:              root,
+		pointerBeforeReferenceNode: true,
 	}
 }
 
@@ -719,46 +719,38 @@ func (d *Document) CreateTreeWalker(root *Node, whatToShow uint32) *TreeWalker {
 }
 
 // NodeIterator provides a way to iterate over nodes in a subtree.
+// Implements the DOM NodeIterator interface.
 type NodeIterator struct {
-	root       *Node
-	whatToShow uint32
-	current    *Node
+	root                       *Node
+	whatToShow                 uint32
+	referenceNode              *Node
+	pointerBeforeReferenceNode bool
 }
 
-// NextNode returns the next node in document order.
-func (ni *NodeIterator) NextNode() *Node {
-	// Simplified implementation
-	if ni.current == nil {
-		return nil
-	}
+// Root returns the root node of the iterator.
+func (ni *NodeIterator) Root() *Node {
+	return ni.root
+}
 
-	// Try first child
-	if ni.current.firstChild != nil {
-		ni.current = ni.current.firstChild
-		return ni.current
-	}
+// WhatToShow returns the whatToShow value.
+func (ni *NodeIterator) WhatToShow() uint32 {
+	return ni.whatToShow
+}
 
-	// Try next sibling
-	if ni.current.nextSibling != nil {
-		ni.current = ni.current.nextSibling
-		return ni.current
-	}
+// ReferenceNode returns the reference node.
+func (ni *NodeIterator) ReferenceNode() *Node {
+	return ni.referenceNode
+}
 
-	// Go up and try next sibling
-	for ni.current.parentNode != nil {
-		ni.current = ni.current.parentNode
-		if ni.current == ni.root {
-			ni.current = nil
-			return nil
-		}
-		if ni.current.nextSibling != nil {
-			ni.current = ni.current.nextSibling
-			return ni.current
-		}
-	}
+// PointerBeforeReferenceNode returns whether the pointer is before the reference node.
+func (ni *NodeIterator) PointerBeforeReferenceNode() bool {
+	return ni.pointerBeforeReferenceNode
+}
 
-	ni.current = nil
-	return nil
+// SetReferenceNode sets the reference node and pointer position.
+func (ni *NodeIterator) SetReferenceNode(node *Node, before bool) {
+	ni.referenceNode = node
+	ni.pointerBeforeReferenceNode = before
 }
 
 // TreeWalker provides a way to walk the document tree.

@@ -335,6 +335,7 @@ type DOMBinder struct {
 	rangeProto                   *goja.Object
 	rangeCache                   map[*dom.Range]*goja.Object
 	treeWalkerProto              *goja.Object
+	nodeIteratorProto            *goja.Object
 	shadowRootProto              *goja.Object
 	shadowRootCache              map[*dom.ShadowRoot]*goja.Object
 
@@ -1211,6 +1212,18 @@ func (b *DOMBinder) setupPrototypes() {
 
 	vm.Set("TreeWalker", treeWalkerConstructorObj)
 
+	// Create NodeIterator prototype
+	// NodeIterator is not directly constructable - it's created via document.createNodeIterator
+	b.nodeIteratorProto = vm.NewObject()
+	nodeIteratorConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		panic(vm.NewTypeError("Illegal constructor"))
+	})
+	nodeIteratorConstructorObj := nodeIteratorConstructor.ToObject(vm)
+	nodeIteratorConstructorObj.Set("prototype", b.nodeIteratorProto)
+	b.nodeIteratorProto.Set("constructor", nodeIteratorConstructorObj)
+
+	vm.Set("NodeIterator", nodeIteratorConstructorObj)
+
 	// Create DOMParser prototype and constructor
 	domParserProto := vm.NewObject()
 	domParserConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
@@ -2031,6 +2044,45 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 		return b.BindTreeWalker(tw, root, whatToShow, filter)
 	})
 
+	// document.createNodeIterator(root, whatToShow, filter) - creates a NodeIterator
+	jsDoc.Set("createNodeIterator", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'createNodeIterator' on 'Document': 1 argument required"))
+		}
+
+		// Get root node - must be a Node
+		rootArg := call.Arguments[0]
+		if goja.IsNull(rootArg) || goja.IsUndefined(rootArg) {
+			panic(vm.NewTypeError("Failed to execute 'createNodeIterator' on 'Document': parameter 1 is not of type 'Node'."))
+		}
+
+		rootObj := rootArg.ToObject(vm)
+		root := b.getGoNode(rootObj)
+		if root == nil {
+			panic(vm.NewTypeError("Failed to execute 'createNodeIterator' on 'Document': parameter 1 is not of type 'Node'."))
+		}
+
+		// Get whatToShow (default 0xFFFFFFFF = SHOW_ALL)
+		var whatToShow uint32 = 0xFFFFFFFF
+		if len(call.Arguments) > 1 && !goja.IsUndefined(call.Arguments[1]) {
+			if goja.IsNull(call.Arguments[1]) {
+				whatToShow = 0
+			} else {
+				whatToShow = uint32(call.Arguments[1].ToInteger())
+			}
+		}
+
+		// Get filter (can be null/undefined, a function, or an object with acceptNode method)
+		var filter goja.Value = goja.Null()
+		if len(call.Arguments) > 2 && !goja.IsNull(call.Arguments[2]) && !goja.IsUndefined(call.Arguments[2]) {
+			filter = call.Arguments[2]
+		}
+
+		// Create the NodeIterator
+		ni := doc.CreateNodeIterator(root, whatToShow)
+		return b.BindNodeIterator(ni, root, whatToShow, filter)
+	})
+
 	// textContent is null for Document (per spec) and setting it does nothing
 	jsDoc.DefineAccessorProperty("textContent", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		return goja.Null()
@@ -2606,6 +2658,45 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 		// Create the TreeWalker
 		tw := doc.CreateTreeWalker(root, whatToShow)
 		return b.BindTreeWalker(tw, root, whatToShow, filter)
+	})
+
+	// document.createNodeIterator(root, whatToShow, filter) - creates a NodeIterator
+	jsDoc.Set("createNodeIterator", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'createNodeIterator' on 'Document': 1 argument required"))
+		}
+
+		// Get root node - must be a Node
+		rootArg := call.Arguments[0]
+		if goja.IsNull(rootArg) || goja.IsUndefined(rootArg) {
+			panic(vm.NewTypeError("Failed to execute 'createNodeIterator' on 'Document': parameter 1 is not of type 'Node'."))
+		}
+
+		rootObj := rootArg.ToObject(vm)
+		root := b.getGoNode(rootObj)
+		if root == nil {
+			panic(vm.NewTypeError("Failed to execute 'createNodeIterator' on 'Document': parameter 1 is not of type 'Node'."))
+		}
+
+		// Get whatToShow (default 0xFFFFFFFF = SHOW_ALL)
+		var whatToShow uint32 = 0xFFFFFFFF
+		if len(call.Arguments) > 1 && !goja.IsUndefined(call.Arguments[1]) {
+			if goja.IsNull(call.Arguments[1]) {
+				whatToShow = 0
+			} else {
+				whatToShow = uint32(call.Arguments[1].ToInteger())
+			}
+		}
+
+		// Get filter (can be null/undefined, a function, or an object with acceptNode method)
+		var filter goja.Value = goja.Null()
+		if len(call.Arguments) > 2 && !goja.IsNull(call.Arguments[2]) && !goja.IsUndefined(call.Arguments[2]) {
+			filter = call.Arguments[2]
+		}
+
+		// Create the NodeIterator
+		ni := doc.CreateNodeIterator(root, whatToShow)
+		return b.BindNodeIterator(ni, root, whatToShow, filter)
 	})
 
 	// textContent is null for Document (per spec) and setting it does nothing
@@ -6164,6 +6255,256 @@ func (b *DOMBinder) traverseSiblings(tw *dom.TreeWalker, root *dom.Node, filterN
 
 		// Run these substeps again (continue the outer loop)
 	}
+}
+
+// BindNodeIterator creates a JavaScript NodeIterator object.
+// The filter can be null, a function, or an object with an acceptNode method.
+func (b *DOMBinder) BindNodeIterator(ni *dom.NodeIterator, root *dom.Node, whatToShow uint32, filter goja.Value) *goja.Object {
+	vm := b.runtime.vm
+	jsNodeIterator := vm.NewObject()
+
+	// Set prototype for instanceof to work
+	if b.nodeIteratorProto != nil {
+		jsNodeIterator.SetPrototype(b.nodeIteratorProto)
+	}
+
+	// Store the Go NodeIterator and filter
+	jsNodeIterator.Set("_goNodeIterator", ni)
+	jsNodeIterator.Set("_filter", filter)
+
+	// Read-only root property
+	jsRootBound := b.BindNode(root)
+	jsNodeIterator.DefineAccessorProperty("root", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return jsRootBound
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// Read-only whatToShow property
+	jsNodeIterator.DefineAccessorProperty("whatToShow", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(whatToShow)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// Read-only filter property
+	jsNodeIterator.DefineAccessorProperty("filter", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if goja.IsNull(filter) || goja.IsUndefined(filter) {
+			return goja.Null()
+		}
+		return filter
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// Read-only referenceNode property
+	jsNodeIterator.DefineAccessorProperty("referenceNode", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		refNode := ni.ReferenceNode()
+		if refNode == nil {
+			return goja.Null()
+		}
+		return b.BindNode(refNode)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// Read-only pointerBeforeReferenceNode property
+	jsNodeIterator.DefineAccessorProperty("pointerBeforeReferenceNode", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(ni.PointerBeforeReferenceNode())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// Active flag for detecting recursive filter calls (per DOM spec)
+	activeFlag := false
+
+	// Helper function to call the filter
+	callFilter := func(node *dom.Node) int {
+		// If no filter, accept all
+		if goja.IsNull(filter) || goja.IsUndefined(filter) {
+			return 1 // FILTER_ACCEPT
+		}
+
+		// Check for recursive filter calls
+		if activeFlag {
+			panic(b.createDOMException("InvalidStateError", "Failed to execute filter: The NodeIterator is in an invalid state."))
+		}
+
+		// Set the active flag before calling filter
+		activeFlag = true
+		defer func() { activeFlag = false }()
+
+		jsNode := b.BindNode(node)
+
+		// If filter is callable (a function), call it directly
+		if filterFunc, ok := goja.AssertFunction(filter); ok {
+			result, err := filterFunc(goja.Undefined(), jsNode)
+			if err != nil {
+				panic(err)
+			}
+			return int(result.ToInteger())
+		}
+
+		// If filter is an object, get its acceptNode property
+		filterObj := filter.ToObject(vm)
+		acceptNodeVal := filterObj.Get("acceptNode")
+
+		// acceptNode must be a function
+		acceptNodeFunc, ok := goja.AssertFunction(acceptNodeVal)
+		if !ok {
+			panic(vm.NewTypeError("Failed to execute 'acceptNode' on 'NodeFilter': acceptNode is not a function"))
+		}
+
+		result, err := acceptNodeFunc(filterObj, jsNode)
+		if err != nil {
+			panic(err)
+		}
+		return int(result.ToInteger())
+	}
+
+	// Helper to check if a node matches whatToShow
+	matchesWhatToShow := func(node *dom.Node) bool {
+		if whatToShow == 0xFFFFFFFF {
+			return true // SHOW_ALL
+		}
+		nodeType := node.NodeType()
+		// Map node type to the bit position (1 << (nodeType - 1))
+		mask := uint32(1 << (nodeType - 1))
+		return (whatToShow & mask) != 0
+	}
+
+	// filterNode applies whatToShow and filter to a node
+	filterNode := func(node *dom.Node) int {
+		if !matchesWhatToShow(node) {
+			return 3 // FILTER_SKIP
+		}
+		return callFilter(node)
+	}
+
+	// Helper to check if node is in the iterator collection (within root's subtree)
+	isInCollection := func(node *dom.Node) bool {
+		if node == nil {
+			return false
+		}
+		for n := node; n != nil; n = n.ParentNode() {
+			if n == root {
+				return true
+			}
+		}
+		return false
+	}
+
+	// nextNode method - implements the DOM "traverse" algorithm with direction "next"
+	jsNodeIterator.Set("nextNode", func(call goja.FunctionCall) goja.Value {
+		// Let node be referenceNode
+		node := ni.ReferenceNode()
+		// Let beforeNode be pointerBeforeReferenceNode
+		beforeNode := ni.PointerBeforeReferenceNode()
+
+		for {
+			if !beforeNode {
+				// Find the first node following node in document order that is in the collection
+				node = b.nextNodeInDocumentOrder(node, root)
+				if node == nil {
+					return goja.Null()
+				}
+			}
+			beforeNode = false
+
+			// Filter node
+			result := filterNode(node)
+			if result == 1 { // FILTER_ACCEPT
+				ni.SetReferenceNode(node, false)
+				return b.BindNode(node)
+			}
+			// If FILTER_SKIP or FILTER_REJECT, continue to next node
+		}
+	})
+
+	// previousNode method - implements the DOM "traverse" algorithm with direction "previous"
+	jsNodeIterator.Set("previousNode", func(call goja.FunctionCall) goja.Value {
+		// Let node be referenceNode
+		node := ni.ReferenceNode()
+		// Let beforeNode be pointerBeforeReferenceNode
+		beforeNode := ni.PointerBeforeReferenceNode()
+
+		for {
+			if beforeNode {
+				// Find the first node preceding node in document order that is in the collection
+				node = b.previousNodeInDocumentOrder(node, root)
+				if node == nil {
+					return goja.Null()
+				}
+			}
+			beforeNode = true
+
+			// Filter node
+			result := filterNode(node)
+			if result == 1 { // FILTER_ACCEPT
+				ni.SetReferenceNode(node, true)
+				return b.BindNode(node)
+			}
+			// If FILTER_SKIP or FILTER_REJECT, continue to previous node
+		}
+	})
+
+	// detach method - does nothing per modern spec (kept for backwards compatibility)
+	jsNodeIterator.Set("detach", func(call goja.FunctionCall) goja.Value {
+		// Per DOM spec: "The detach() method steps are to do nothing."
+		return goja.Undefined()
+	})
+
+	// toString method
+	jsNodeIterator.Set("toString", func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue("[object NodeIterator]")
+	})
+
+	// Helper for getting the node at a position - not used but kept for completeness
+	_ = isInCollection
+
+	return jsNodeIterator
+}
+
+// nextNodeInDocumentOrder finds the next node in document order within the subtree rooted at root.
+// The "iterator collection" is all nodes that are inclusive descendants of root, in document order.
+func (b *DOMBinder) nextNodeInDocumentOrder(node *dom.Node, root *dom.Node) *dom.Node {
+	if node == nil {
+		return nil
+	}
+
+	// Try first child (descendants are always in collection)
+	if child := node.FirstChild(); child != nil {
+		return child
+	}
+
+	// Can't go outside the root subtree
+	for node != root {
+		// Try next sibling
+		if sibling := node.NextSibling(); sibling != nil {
+			return sibling
+		}
+		// Go up to parent
+		node = node.ParentNode()
+		if node == nil {
+			return nil
+		}
+	}
+
+	return nil
+}
+
+// previousNodeInDocumentOrder finds the previous node in document order within the subtree rooted at root.
+// The "iterator collection" is all nodes that are inclusive descendants of root, in document order.
+func (b *DOMBinder) previousNodeInDocumentOrder(node *dom.Node, root *dom.Node) *dom.Node {
+	if node == nil || node == root {
+		return nil
+	}
+
+	// Try previous sibling's deepest last descendant
+	if sibling := node.PreviousSibling(); sibling != nil {
+		// Go to the deepest last descendant
+		for sibling.LastChild() != nil {
+			sibling = sibling.LastChild()
+		}
+		return sibling
+	}
+
+	// Try parent (but not if it is root - root is the boundary, not part of what we can return)
+	parent := node.ParentNode()
+	if parent == nil || parent == root {
+		return nil
+	}
+	return parent
 }
 
 // getGoRange extracts the Go Range from a JavaScript object.
