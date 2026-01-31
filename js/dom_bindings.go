@@ -1071,8 +1071,11 @@ var htmlElementTypeMap = map[string]string{
 	"body": "HTMLBodyElement",
 
 	// Deprecated but still used
-	"font":   "HTMLFontElement",
-	"center": "HTMLElement",
+	"font":     "HTMLFontElement",
+	"center":   "HTMLElement",
+	"dir":      "HTMLDirectoryElement",
+	"frame":    "HTMLFrameElement",
+	"frameset": "HTMLFrameSetElement",
 
 	// Unknown elements use HTMLUnknownElement
 }

@@ -1966,6 +1966,17 @@ func TestHTMLElementTypeConstructors(t *testing.T) {
 		{"document.createElement('custom-element') instanceof HTMLUnknownElement", "true"},
 		{"document.createElement('custom-element') instanceof HTMLElement", "true"},
 		{"document.createElement('custom-element') instanceof Element", "true"},
+
+		// Check deprecated/legacy elements (WPT compatibility)
+		{"typeof HTMLDirectoryElement", "function"},
+		{"typeof HTMLFrameElement", "function"},
+		{"typeof HTMLFrameSetElement", "function"},
+		{"document.createElement('dir') instanceof HTMLDirectoryElement", "true"},
+		{"document.createElement('frame') instanceof HTMLFrameElement", "true"},
+		{"document.createElement('frameset') instanceof HTMLFrameSetElement", "true"},
+		{"document.createElement('dir') instanceof HTMLElement", "true"},
+		{"document.createElement('frame') instanceof HTMLElement", "true"},
+		{"document.createElement('frameset') instanceof HTMLElement", "true"},
 	}
 
 	for _, tt := range tests {
