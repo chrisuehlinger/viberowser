@@ -311,7 +311,12 @@ func (d *Document) CreateAttributeNS(namespaceURI, qualifiedName string) *Attr {
 }
 
 // GetElementById returns the element with the given id.
+// Per DOM spec, returns null if id is empty string since elements
+// with empty id attribute are not considered to have an ID.
 func (d *Document) GetElementById(id string) *Element {
+	if id == "" {
+		return nil
+	}
 	return d.findElementById(d.AsNode(), id)
 }
 

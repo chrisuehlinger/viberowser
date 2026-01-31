@@ -1618,6 +1618,75 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		return vm.ToValue(names)
 	})
 
+	// attributes property - returns NamedNodeMap
+	jsEl.DefineAccessorProperty("attributes", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindNamedNodeMap(el.Attributes())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// getAttributeNode method - returns Attr or null
+	jsEl.Set("getAttributeNode", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		name := call.Arguments[0].String()
+		attr := el.GetAttributeNode(name)
+		if attr == nil {
+			return goja.Null()
+		}
+		return b.BindAttr(attr)
+	})
+
+	// getAttributeNodeNS method - returns Attr or null
+	jsEl.Set("getAttributeNodeNS", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			return goja.Null()
+		}
+		ns := ""
+		if !goja.IsNull(call.Arguments[0]) {
+			ns = call.Arguments[0].String()
+		}
+		localName := call.Arguments[1].String()
+		attr := el.GetAttributeNodeNS(ns, localName)
+		if attr == nil {
+			return goja.Null()
+		}
+		return b.BindAttr(attr)
+	})
+
+	// setAttributeNode method
+	jsEl.Set("setAttributeNode", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		jsAttr := call.Arguments[0].ToObject(vm)
+		goAttr := b.extractAttr(jsAttr)
+		if goAttr == nil {
+			return goja.Null()
+		}
+		oldAttr := el.SetAttributeNode(goAttr)
+		if oldAttr == nil {
+			return goja.Null()
+		}
+		return b.BindAttr(oldAttr)
+	})
+
+	// removeAttributeNode method
+	jsEl.Set("removeAttributeNode", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		jsAttr := call.Arguments[0].ToObject(vm)
+		goAttr := b.extractAttr(jsAttr)
+		if goAttr == nil {
+			return goja.Null()
+		}
+		removedAttr := el.RemoveAttributeNode(goAttr)
+		if removedAttr == nil {
+			return goja.Null()
+		}
+		return b.BindAttr(removedAttr)
+	})
+
 	// Query methods
 	jsEl.Set("querySelector", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
@@ -3775,6 +3844,9 @@ func (b *DOMBinder) BindAttr(attr *dom.Attr) *goja.Object {
 	vm := b.runtime.vm
 	jsAttr := vm.NewObject()
 
+	// Store reference to Go Attr for extraction
+	jsAttr.Set("_goAttr", attr)
+
 	// Node-like properties
 	jsAttr.Set("nodeType", int(dom.AttributeNode))
 	jsAttr.Set("nodeName", attr.Name())
@@ -4085,4 +4157,150 @@ func camelToKebab(s string) string {
 	}
 
 	return str
+}
+
+// BindNamedNodeMap creates a JavaScript object from a DOM NamedNodeMap.
+// The NamedNodeMap is array-like with indexed access and methods like item(), getNamedItem().
+func (b *DOMBinder) BindNamedNodeMap(nnm *dom.NamedNodeMap) *goja.Object {
+	if nnm == nil {
+		return nil
+	}
+
+	vm := b.runtime.vm
+	jsMap := vm.NewObject()
+
+	// Length property
+	jsMap.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(nnm.Length())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// item(index) method
+	jsMap.Set("item", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		index := int(call.Arguments[0].ToInteger())
+		attr := nnm.Item(index)
+		if attr == nil {
+			return goja.Null()
+		}
+		return b.BindAttr(attr)
+	})
+
+	// getNamedItem(name) method
+	jsMap.Set("getNamedItem", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		name := call.Arguments[0].String()
+		attr := nnm.GetNamedItem(name)
+		if attr == nil {
+			return goja.Null()
+		}
+		return b.BindAttr(attr)
+	})
+
+	// getNamedItemNS(namespaceURI, localName) method
+	jsMap.Set("getNamedItemNS", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			return goja.Null()
+		}
+		ns := ""
+		if !goja.IsNull(call.Arguments[0]) {
+			ns = call.Arguments[0].String()
+		}
+		localName := call.Arguments[1].String()
+		attr := nnm.GetNamedItemNS(ns, localName)
+		if attr == nil {
+			return goja.Null()
+		}
+		return b.BindAttr(attr)
+	})
+
+	// setNamedItem(attr) method
+	jsMap.Set("setNamedItem", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		// Extract the Go Attr from the JS object
+		jsAttr := call.Arguments[0].ToObject(vm)
+		goAttr := b.extractAttr(jsAttr)
+		if goAttr == nil {
+			return goja.Null()
+		}
+		oldAttr := nnm.SetAttr(goAttr)
+		if oldAttr == nil {
+			return goja.Null()
+		}
+		return b.BindAttr(oldAttr)
+	})
+
+	// removeNamedItem(name) method
+	jsMap.Set("removeNamedItem", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		name := call.Arguments[0].String()
+		attr := nnm.RemoveNamedItem(name)
+		if attr == nil {
+			return goja.Null()
+		}
+		return b.BindAttr(attr)
+	})
+
+	// removeNamedItemNS(namespaceURI, localName) method
+	jsMap.Set("removeNamedItemNS", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			return goja.Null()
+		}
+		ns := ""
+		if !goja.IsNull(call.Arguments[0]) {
+			ns = call.Arguments[0].String()
+		}
+		localName := call.Arguments[1].String()
+		attr := nnm.RemoveNamedItemNS(ns, localName)
+		if attr == nil {
+			return goja.Null()
+		}
+		return b.BindAttr(attr)
+	})
+
+	// Add indexed access using a Proxy-like approach
+	// Set numeric indices for current attributes
+	b.updateNamedNodeMapIndices(jsMap, nnm)
+
+	return jsMap
+}
+
+// updateNamedNodeMapIndices updates the numeric indices of a NamedNodeMap JS object.
+// This needs to be called dynamically since attributes can change.
+func (b *DOMBinder) updateNamedNodeMapIndices(jsMap *goja.Object, nnm *dom.NamedNodeMap) {
+	vm := b.runtime.vm
+	for i := 0; i < nnm.Length(); i++ {
+		attr := nnm.Item(i)
+		if attr != nil {
+			// Create a closure that captures the index
+			idx := i
+			jsMap.DefineAccessorProperty(vm.ToValue(idx).String(), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+				a := nnm.Item(idx)
+				if a == nil {
+					return goja.Undefined()
+				}
+				return b.BindAttr(a)
+			}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+		}
+	}
+}
+
+// extractAttr extracts a Go *dom.Attr from a JavaScript Attr object.
+func (b *DOMBinder) extractAttr(jsAttr *goja.Object) *dom.Attr {
+	if jsAttr == nil {
+		return nil
+	}
+	// Try to get internal reference first
+	if goAttr, ok := jsAttr.Get("_goAttr").Export().(*dom.Attr); ok {
+		return goAttr
+	}
+	// If not available, we can't extract
+	return nil
 }
