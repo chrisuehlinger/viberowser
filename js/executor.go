@@ -290,8 +290,9 @@ func (se *ScriptExecutor) getIframeContent(iframe *dom.Element) (goja.Value, goj
 		html.AsNode().AppendChild(body.AsNode())
 	}
 
-	// Bind the iframe document to JavaScript without replacing global document
-	jsIframeDoc := se.domBinder.BindIframeDocument(iframeDoc)
+	// Bind the iframe document to JavaScript without replacing global document.
+	// Pass the contentWindow so the document's defaultView property returns it.
+	jsIframeDoc := se.domBinder.BindIframeDocumentWithWindow(iframeDoc, contentWindow)
 
 	// Set up the content window properties
 	contentWindow.Set("document", jsIframeDoc)

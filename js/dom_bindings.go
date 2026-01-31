@@ -2059,6 +2059,21 @@ func (b *DOMBinder) BindIframeDocument(doc *dom.Document) *goja.Object {
 	return b.bindDocumentInternal(doc)
 }
 
+// BindIframeDocumentWithWindow binds a document for use in an iframe with a specific contentWindow.
+// The contentWindow will be returned by the document's defaultView property.
+func (b *DOMBinder) BindIframeDocumentWithWindow(doc *dom.Document, contentWindow *goja.Object) *goja.Object {
+	// First, bind the document normally (which sets defaultView to null)
+	jsDoc := b.bindDocumentInternal(doc)
+
+	// Now override defaultView to return the contentWindow
+	vm := b.runtime.vm
+	jsDoc.DefineAccessorProperty("defaultView", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return contentWindow
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	return jsDoc
+}
+
 // bindDocumentInternal binds a document without setting it as the global document.
 // Used for documents created via createHTMLDocument, createDocument, etc.
 func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
@@ -2164,9 +2179,11 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 
 	// defaultView returns null for documents without a browsing context
 	// (bindDocumentInternal is used for createHTMLDocument, createDocument, new Document(), cloneNode, etc.)
+	// NOTE: We use goja.FLAG_TRUE for configurable so this can be overridden for iframe documents
+	// that have a browsing context (see BindIframeDocumentWithWindow).
 	jsDoc.DefineAccessorProperty("defaultView", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		return goja.Null()
-	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	}), nil, goja.FLAG_TRUE, goja.FLAG_TRUE)
 
 	// Document methods
 	jsDoc.Set("getElementById", func(call goja.FunctionCall) goja.Value {
