@@ -1282,11 +1282,13 @@ func (b *DOMBinder) setupHTMLElementPrototypes() {
 }
 
 // getHTMLElementPrototype returns the appropriate prototype for a given tag name.
+// The tagName should be the localName of the element as stored - no case conversion is done.
+// For createElement() in HTML documents, localName is already lowercased.
+// For createElementNS(), localName preserves case, so "SPAN" won't match "span" in the map.
 func (b *DOMBinder) getHTMLElementPrototype(tagName string) *goja.Object {
-	lowerTag := strings.ToLower(tagName)
-
-	// Look up the constructor name for this tag
-	constructorName, ok := htmlElementTypeMap[lowerTag]
+	// Look up the constructor name for this tag - case-sensitive lookup
+	// The htmlElementTypeMap keys are lowercase, so only lowercase localNames will match
+	constructorName, ok := htmlElementTypeMap[tagName]
 	if !ok {
 		// Unknown HTML element - use HTMLUnknownElement
 		if proto, ok := b.htmlElementProtoMap["HTMLUnknownElement"]; ok {
@@ -2407,15 +2409,15 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 	jsEl := vm.NewObject()
 
 	// Set prototype for instanceof to work
-	// Use specific HTML element prototype for HTML elements in HTML documents
+	// Use specific HTML element prototype ONLY for elements with HTML namespace.
+	// Elements created with createElementNS(null, ...) or createElementNS("", ...)
+	// should NOT be HTMLElement instances, even in HTML documents.
 	ns := el.NamespaceURI()
-	ownerDoc := el.AsNode().OwnerDocument()
-	isHTMLDoc := ownerDoc != nil && ownerDoc.IsHTML()
-	if ns == dom.HTMLNamespace || (ns == "" && isHTMLDoc) {
+	if ns == dom.HTMLNamespace {
 		// HTML element - use specific HTML element prototype
 		jsEl.SetPrototype(b.getHTMLElementPrototype(el.LocalName()))
 	} else if b.elementProto != nil {
-		// Non-HTML element (like SVG) or element in XML document - use generic Element prototype
+		// Non-HTML element (like SVG) or element with null/empty namespace - use generic Element prototype
 		jsEl.SetPrototype(b.elementProto)
 	}
 
@@ -3158,7 +3160,7 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 	}
 
 	// Add anchor-specific properties (href with URL encoding)
-	if el.LocalName() == "a" && (ns == dom.HTMLNamespace || (ns == "" && isHTMLDoc)) {
+	if el.LocalName() == "a" && ns == dom.HTMLNamespace {
 		b.bindAnchorProperties(jsEl, el)
 	}
 

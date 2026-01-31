@@ -400,9 +400,10 @@ func ValidateQualifiedName(qualifiedName string) error {
 // ValidateQualifiedNameWithNamespace validates a qualified name with namespace awareness.
 // When hasNamespace is true, validation is more permissive to match browser behavior.
 func ValidateQualifiedNameWithNamespace(qualifiedName string, hasNamespace bool) error {
-	// Handle empty string
+	// Handle empty string - per DOM spec, an empty qualifiedName does not match the
+	// Name production and should throw INVALID_CHARACTER_ERR
 	if qualifiedName == "" {
-		return nil // Empty qualifiedName is allowed (results in no element)
+		return ErrInvalidCharacter("The string contains invalid characters.")
 	}
 
 	// Check for "::" which is always invalid

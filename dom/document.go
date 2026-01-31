@@ -297,13 +297,21 @@ func (d *Document) CreateElementNSWithError(namespaceURI, qualifiedName string) 
 		return nil, err
 	}
 
-	// For HTML namespace, tagName is ASCII uppercase. For other namespaces, preserve case.
-	tagName := qualifiedName
-	if namespace == HTMLNamespace {
-		tagName = toASCIIUppercase(qualifiedName)
+	// Compute tagName: if there's a prefix, it's prefix:localName; otherwise just localName
+	// This is important for cases like "f:o:o" where tagName should be "f:o" (prefix + ":" + localName)
+	var tagName string
+	if prefix != "" {
+		tagName = prefix + ":" + localName
+	} else {
+		tagName = localName
 	}
 
-	node := newNode(ElementNode, qualifiedName, d)
+	// For HTML namespace, tagName is ASCII uppercase. For other namespaces, preserve case.
+	if namespace == HTMLNamespace {
+		tagName = toASCIIUppercase(tagName)
+	}
+
+	node := newNode(ElementNode, tagName, d)
 	node.elementData = &elementData{
 		localName:    localName,
 		namespaceURI: namespace,
