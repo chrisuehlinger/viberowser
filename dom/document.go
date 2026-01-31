@@ -184,7 +184,23 @@ func (d *Document) SetTitle(title string) {
 // CreateElement creates a new element with the given tag name.
 // Per DOM spec, the element's namespace is the HTML namespace when document is an
 // HTML document or document's content type is "application/xhtml+xml"; otherwise null.
+// This method ignores errors for backwards compatibility. Use CreateElementWithError
+// for proper error handling.
 func (d *Document) CreateElement(tagName string) *Element {
+	el, _ := d.CreateElementWithError(tagName)
+	return el
+}
+
+// CreateElementWithError creates a new element with the given tag name.
+// Returns an InvalidCharacterError if the tag name is not a valid XML Name.
+// Per DOM spec: https://dom.spec.whatwg.org/#dom-document-createelement
+func (d *Document) CreateElementWithError(tagName string) (*Element, error) {
+	// Per DOM spec step 1: If localName does not match the Name production,
+	// throw an InvalidCharacterError DOMException.
+	if !isValidXMLName(tagName) {
+		return nil, ErrInvalidCharacter("The string contains invalid characters.")
+	}
+
 	// Determine namespace based on document type
 	// Per DOM spec: "The element's namespace is the HTML namespace when document is an
 	// HTML document or document's content type is 'application/xhtml+xml'; otherwise null."
@@ -215,7 +231,7 @@ func (d *Document) CreateElement(tagName string) *Element {
 	}
 	node.elementData.attributes = newNamedNodeMap((*Element)(node))
 
-	return (*Element)(node)
+	return (*Element)(node), nil
 }
 
 // CreateElementNS creates a new element with the given namespace and qualified name.

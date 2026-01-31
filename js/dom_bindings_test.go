@@ -116,6 +116,60 @@ func TestDOMBinderCreateElement(t *testing.T) {
 	}
 }
 
+func TestDOMBinderCreateElementInvalidName(t *testing.T) {
+	// Test that createElement throws InvalidCharacterError for invalid names
+	testCases := []struct {
+		name      string
+		wantError bool
+	}{
+		{"", true},         // empty
+		{"1foo", true},     // starts with digit
+		{"fo o", true},     // contains space
+		{"<foo", true},     // starts with <
+		{"foo>", true},     // contains >
+		{"-foo", true},     // starts with -
+		{".foo", true},     // starts with .
+		{"foo", false},     // valid
+		{"div", false},     // valid
+		{"my-element", false}, // valid with hyphen
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := NewRuntime()
+			binder := NewDOMBinder(r)
+			doc := dom.NewDocument()
+			binder.BindDocument(doc)
+
+			script := `
+				(function() {
+					try {
+						document.createElement(` + "`" + tc.name + "`" + `);
+						return "success";
+					} catch (e) {
+						return e.name;
+					}
+				})()
+			`
+			result, err := r.Execute(script)
+			if err != nil {
+				t.Fatalf("Execute failed: %v", err)
+			}
+
+			resultStr := result.String()
+			if tc.wantError {
+				if resultStr != "InvalidCharacterError" {
+					t.Errorf("Expected InvalidCharacterError, got %v", resultStr)
+				}
+			} else {
+				if resultStr != "success" {
+					t.Errorf("Expected success, got %v", resultStr)
+				}
+			}
+		})
+	}
+}
+
 func TestDOMBinderAttributes(t *testing.T) {
 	r := NewRuntime()
 	binder := NewDOMBinder(r)

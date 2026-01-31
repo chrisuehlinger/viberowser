@@ -891,7 +891,13 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 			return goja.Null()
 		}
 		tagName := call.Arguments[0].String()
-		el := doc.CreateElement(tagName)
+		el, err := doc.CreateElementWithError(tagName)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("InvalidCharacterError", err.Error()))
+		}
 		return b.BindElement(el)
 	})
 
@@ -1253,7 +1259,13 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 			return goja.Null()
 		}
 		tagName := call.Arguments[0].String()
-		el := doc.CreateElement(tagName)
+		el, err := doc.CreateElementWithError(tagName)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(b.createDOMException("InvalidCharacterError", err.Error()))
+		}
 		return b.BindElement(el)
 	})
 
