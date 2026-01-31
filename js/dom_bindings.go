@@ -985,6 +985,67 @@ func (b *DOMBinder) setupPrototypes() {
 	b.treeWalkerProto.Set("constructor", treeWalkerConstructorObj)
 
 	vm.Set("TreeWalker", treeWalkerConstructorObj)
+
+	// Create DOMParser prototype and constructor
+	domParserProto := vm.NewObject()
+	domParserConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		// DOMParser can be constructed with new DOMParser()
+		parser := call.This
+		parser.SetPrototype(domParserProto)
+
+		// parseFromString method
+		parser.Set("parseFromString", func(fc goja.FunctionCall) goja.Value {
+			if len(fc.Arguments) < 2 {
+				// Per spec, parseFromString requires both arguments
+				panic(vm.NewTypeError("Failed to execute 'parseFromString' on 'DOMParser': 2 arguments required"))
+			}
+
+			str := fc.Arguments[0].String()
+			mimeType := fc.Arguments[1].String()
+
+			switch mimeType {
+			case "text/html":
+				// Parse as HTML document
+				doc, err := dom.ParseHTML(str)
+				if err != nil {
+					// For HTML, parsing errors don't throw - the parser is lenient
+					// Return an empty document
+					doc = dom.NewDocument()
+				}
+				return b.bindDocumentInternal(doc)
+
+			case "text/xml", "application/xml", "application/xhtml+xml", "image/svg+xml":
+				// For XML-based types, we should parse as XML
+				// For now, we'll parse as HTML which handles most cases
+				// TODO: Implement proper XML parsing
+				doc, err := dom.ParseHTML(str)
+				if err != nil {
+					// For XML, create a document with a parsererror element
+					doc = dom.NewDocument()
+					html := doc.CreateElement("html")
+					body := doc.CreateElement("body")
+					parsererror := doc.CreateElement("parsererror")
+					parsererror.SetTextContent("XML parsing error: " + err.Error())
+					body.AsNode().AppendChild(parsererror.AsNode())
+					html.AsNode().AppendChild(body.AsNode())
+					doc.AsNode().AppendChild(html.AsNode())
+				}
+				// For XML types, return XMLDocument
+				return b.bindXMLDocument(doc)
+
+			default:
+				// Invalid MIME type - throw TypeError
+				panic(vm.NewTypeError("Failed to execute 'parseFromString' on 'DOMParser': The provided value '" + mimeType + "' is not a valid MIME type."))
+			}
+		})
+
+		return parser
+	})
+	domParserConstructorObj := domParserConstructor.ToObject(vm)
+	domParserConstructorObj.Set("prototype", domParserProto)
+	domParserProto.Set("constructor", domParserConstructorObj)
+
+	vm.Set("DOMParser", domParserConstructorObj)
 }
 
 // htmlElementTypeMap maps lowercase HTML tag names to their constructor names.
@@ -4118,6 +4179,19 @@ func (b *DOMBinder) BindDocumentFragment(frag *dom.DocumentFragment) *goja.Objec
 		return goja.Undefined()
 	})
 
+	// getElementById - search for element by ID within the fragment
+	jsFrag.Set("getElementById", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		id := call.Arguments[0].String()
+		el := frag.GetElementById(id)
+		if el == nil {
+			return goja.Null()
+		}
+		return b.BindElement(el)
+	})
+
 	// textContent - like Element, returns concatenated text and allows setting
 	jsFrag.DefineAccessorProperty("textContent", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		return vm.ToValue(node.TextContent())
@@ -5175,8 +5249,8 @@ func (b *DOMBinder) bindNodeProperties(jsObj *goja.Object, node *dom.Node) {
 			}
 			return goja.Null()
 		}
-		// Remove from cache since it's been detached
-		delete(b.nodeMap, result)
+		// Don't remove from cache - the node identity should remain stable
+		// even when detached from the DOM tree
 		return b.BindNode(result)
 	})
 
@@ -5426,7 +5500,8 @@ func (b *DOMBinder) setupNodePrototypeMethods() {
 			}
 			return goja.Null()
 		}
-		delete(b.nodeMap, result)
+		// Don't remove from cache - the node identity should remain stable
+		// even when detached from the DOM tree
 		return b.BindNode(result)
 	})
 

@@ -982,6 +982,58 @@ func TestDOMBinderDocumentFragmentMixinMethods(t *testing.T) {
 	}
 }
 
+func TestDocumentFragmentGetElementById(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc := dom.NewDocument()
+	binder.BindDocument(doc)
+
+	// Test getElementById on DocumentFragment
+	_, err := r.Execute(`
+		var frag = document.createDocumentFragment();
+		var div = document.createElement('div');
+		div.id = 'myDiv';
+		div.textContent = 'Hello';
+		frag.appendChild(div);
+
+		var span = document.createElement('span');
+		span.id = 'mySpan';
+		span.textContent = 'World';
+		div.appendChild(span);
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Test finding element by ID
+	result, err := r.Execute("frag.getElementById('myDiv').textContent")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "HelloWorld" {
+		t.Errorf("Expected 'HelloWorld', got %v", result.String())
+	}
+
+	// Test finding nested element by ID
+	result, err = r.Execute("frag.getElementById('mySpan').textContent")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "World" {
+		t.Errorf("Expected 'World', got %v", result.String())
+	}
+
+	// Test non-existent ID returns null
+	result, err = r.Execute("frag.getElementById('nonexistent') === null")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Errorf("Expected null for non-existent ID")
+	}
+}
+
 func TestDOMImplementation(t *testing.T) {
 	doc, _ := dom.ParseHTML("<html><body></body></html>")
 	runtime := NewRuntime()
@@ -1037,6 +1089,90 @@ func TestDOMImplementation(t *testing.T) {
 	}
 	if !result.ToBoolean() {
 		t.Error("Different documents should have different implementations")
+	}
+}
+
+func TestDOMParser(t *testing.T) {
+	runtime := NewRuntime()
+	binder := NewDOMBinder(runtime)
+
+	// Need to bind a document first for the binder to work properly
+	doc, _ := dom.ParseHTML("<html><body></body></html>")
+	binder.BindDocument(doc)
+
+	// Test that DOMParser exists
+	result, err := runtime.Execute(`typeof DOMParser`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.String() != "function" {
+		t.Errorf("DOMParser should be a function, got %s", result.String())
+	}
+
+	// Test DOMParser can be constructed
+	result, err = runtime.Execute(`typeof new DOMParser()`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.String() != "object" {
+		t.Errorf("new DOMParser() should return an object, got %s", result.String())
+	}
+
+	// Test instanceof
+	result, err = runtime.Execute(`new DOMParser() instanceof DOMParser`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.ToBoolean() {
+		t.Error("new DOMParser() should be instanceof DOMParser")
+	}
+
+	// Test parseFromString with text/html
+	result, err = runtime.Execute(`
+		var parser = new DOMParser();
+		var doc = parser.parseFromString('<div id="test">Hello</div>', 'text/html');
+		doc.getElementById('test').textContent
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.String() != "Hello" {
+		t.Errorf("Expected 'Hello', got %s", result.String())
+	}
+
+	// Test parseFromString with text/xml returns XMLDocument
+	result, err = runtime.Execute(`
+		var parser = new DOMParser();
+		var doc = parser.parseFromString('<root><item>Test</item></root>', 'text/xml');
+		doc instanceof XMLDocument
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.ToBoolean() {
+		t.Error("parseFromString with text/xml should return XMLDocument")
+	}
+
+	// Test parseFromString with application/xml
+	result, err = runtime.Execute(`
+		var parser = new DOMParser();
+		var doc = parser.parseFromString('<root>Test</root>', 'application/xml');
+		doc instanceof XMLDocument
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.ToBoolean() {
+		t.Error("parseFromString with application/xml should return XMLDocument")
+	}
+
+	// Test that parseFromString requires two arguments
+	_, err = runtime.Execute(`
+		var parser = new DOMParser();
+		parser.parseFromString('<div>test</div>');
+	`)
+	if err == nil {
+		t.Error("parseFromString with one argument should throw")
 	}
 }
 
