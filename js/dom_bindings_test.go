@@ -2818,3 +2818,270 @@ func TestDOMTokenList_Iteration(t *testing.T) {
 		t.Errorf("Expected forEach result to be '0:a,1:b,2:c', got '%s'", result.String())
 	}
 }
+
+func TestCreateNodeIteratorWithForeignDocument(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc := dom.NewDocument()
+	binder.BindDocument(doc)
+
+	// Test creating a NodeIterator with a node from a foreign document
+	_, err := r.Execute(`
+		var foreignDoc = document.implementation.createHTMLDocument("");
+		var foreignPara = foreignDoc.createElement("p");
+		foreignPara.textContent = "Hello";
+		foreignDoc.body.appendChild(foreignPara);
+		
+		// This should work - using a foreign node as root
+		var iter = document.createNodeIterator(foreignPara);
+		iter.root.nodeType; // Should be 1 (element)
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+}
+
+func TestCreateNodeIteratorWithVariousNodeTypes(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc := dom.NewDocument()
+	binder.BindDocument(doc)
+
+	tests := []struct {
+		name   string
+		script string
+	}{
+		{
+			"comment node",
+			`var comment = document.createComment("test"); document.createNodeIterator(comment);`,
+		},
+		{
+			"text node",
+			`var text = document.createTextNode("test"); document.createNodeIterator(text);`,
+		},
+		{
+			"doctype",
+			`document.createNodeIterator(document.doctype || document);`,
+		},
+		{
+			"foreign element",
+			`var foreignDoc = document.implementation.createHTMLDocument("");
+			 var para = foreignDoc.createElement("p");
+			 foreignDoc.body.appendChild(para);
+			 document.createNodeIterator(para);`,
+		},
+		{
+			"foreign text node",
+			`var foreignDoc = document.implementation.createHTMLDocument("");
+			 var text = foreignDoc.createTextNode("test");
+			 document.createNodeIterator(text);`,
+		},
+		{
+			"xml element",
+			`var xmlDoc = document.implementation.createDocument(null, null, null);
+			 var el = xmlDoc.createElement("test");
+			 xmlDoc.appendChild(el);
+			 document.createNodeIterator(el);`,
+		},
+		{
+			"processing instruction",
+			`var xmlDoc = document.implementation.createDocument(null, null, null);
+			 var pi = xmlDoc.createProcessingInstruction("test", "data");
+			 xmlDoc.appendChild(pi);
+			 document.createNodeIterator(pi);`,
+		},
+		{
+			"xml comment",
+			`var xmlDoc = document.implementation.createDocument(null, null, null);
+			 var comment = xmlDoc.createComment("test");
+			 xmlDoc.appendChild(comment);
+			 document.createNodeIterator(comment);`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := r.Execute(tt.script)
+			if err != nil {
+				t.Errorf("%s failed: %v", tt.name, err)
+			}
+		})
+	}
+}
+
+func TestWPTNodeIteratorRemovalSetup(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	// Create a document with a test div like the WPT test
+	doc, err := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head><title>Test</title></head>
+<body><div id="test"></div></body>
+</html>`)
+	if err != nil {
+		t.Fatalf("Failed to parse HTML: %v", err)
+	}
+	binder.BindDocument(doc)
+
+	// Run the WPT setup script
+	_, err = r.Execute(`
+		// Variables like the WPT test
+		var testDiv, paras, detachedDiv, detachedPara1, detachedPara2,
+		    foreignDoc, foreignPara1, foreignPara2, xmlDoc, xmlElement,
+		    detachedXmlElement, detachedTextNode, foreignTextNode,
+		    detachedForeignTextNode, xmlTextNode, detachedXmlTextNode,
+		    processingInstruction, detachedProcessingInstruction, comment,
+		    detachedComment, foreignComment, detachedForeignComment, xmlComment,
+		    detachedXmlComment, docfrag, foreignDocfrag, xmlDocfrag, doctype,
+		    foreignDoctype, xmlDoctype;
+
+		testDiv = document.querySelector("#test");
+		
+		paras = [];
+		paras.push(document.createElement("p"));
+		paras[0].setAttribute("id", "a");
+		paras[0].textContent = "test text";
+		testDiv.appendChild(paras[0]);
+
+		paras.push(document.createElement("p"));
+		paras[1].setAttribute("id", "b");
+		paras[1].textContent = "Ijklmnop\n";
+		testDiv.appendChild(paras[1]);
+
+		// Create para[5] with CDATA sections
+		paras.push(document.createElement("p")); // 2
+		paras.push(document.createElement("p")); // 3
+		paras.push(document.createElement("p")); // 4
+		paras.push(document.createElement("p")); // 5
+
+		var xmlDocument = new Document();
+		console.log("xmlDocument type:", typeof xmlDocument);
+		
+		// Create CDATA section
+		var cdata = xmlDocument.createCDATASection("1234");
+		console.log("cdata nodeType:", cdata.nodeType);
+		paras[5].appendChild(cdata);
+		testDiv.appendChild(paras[5]);
+
+		// Create foreign document
+		foreignDoc = document.implementation.createHTMLDocument("");
+		foreignPara1 = foreignDoc.createElement("p");
+		foreignPara1.appendChild(foreignDoc.createTextNode("Efghijkl"));
+		foreignDoc.body.appendChild(foreignPara1);
+
+		// Comment
+		comment = document.createComment("Alphabet soup?");
+		testDiv.appendChild(comment);
+
+		// Now test createNodeIterator with these nodes
+		var testNodes = [
+			"paras[0]",
+			"paras[0].firstChild",
+			"paras[1].firstChild",
+			"paras[5].firstChild",  // CDATA section
+			"foreignPara1",
+			"foreignPara1.firstChild",
+			"comment"
+		];
+
+		var results = [];
+		for (var i = 0; i < testNodes.length; i++) {
+			var nodeName = testNodes[i];
+			var node = eval(nodeName);
+			try {
+				var iter = document.createNodeIterator(node);
+				results.push(nodeName + ": OK");
+			} catch (e) {
+				results.push(nodeName + ": FAIL - " + e.message);
+			}
+		}
+		results.join("\n");
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+}
+
+func TestWPTNodeIteratorMultipleAdvancement(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML("<!DOCTYPE html><html><head></head><body><div id=\"test\"></div></body></html>")
+	binder.BindDocument(doc)
+
+	// Simulate the WPT test's loop pattern
+	result, err := r.Execute(`
+		var testDiv = document.querySelector("#test");
+		
+		var paras = [];
+		for (var i = 0; i < 6; i++) {
+			paras.push(document.createElement("p"));
+			paras[i].textContent = "Text " + i;
+			testDiv.appendChild(paras[i]);
+		}
+		
+		var foreignDoc = document.implementation.createHTMLDocument("");
+		var foreignPara1 = foreignDoc.createElement("p");
+		foreignPara1.textContent = "Foreign";
+		foreignDoc.body.appendChild(foreignPara1);
+		
+		var comment = document.createComment("test comment");
+		testDiv.appendChild(comment);
+		
+		var doctype = document.doctype;
+		
+		var testNodesShort = [
+			"paras[0]",
+			"paras[0].firstChild",
+			"paras[1].firstChild",
+			"foreignPara1",
+			"foreignPara1.firstChild",
+			"document",
+			"foreignDoc",
+			"comment",
+			"doctype"
+		];
+		
+		var errors = [];
+		
+		// This is the pattern from the WPT test - for each test node, try all test nodes as roots
+		for (var i = 0; i < testNodesShort.length; i++) {
+			var nodeName = testNodesShort[i];
+			var node = eval(nodeName);
+			if (!node || !node.parentNode) {
+				continue;
+			}
+			
+			// Inner loop - try all test nodes as root
+			for (var j = 0; j < testNodesShort.length; j++) {
+				var rootName = testNodesShort[j];
+				var root = eval(rootName);
+				
+				try {
+					// Create iterator and advance it k times
+					for (var k = 0; k < 5; k++) {
+						var iter = document.createNodeIterator(root);
+						for (var l = 0; l < k; l++) {
+							iter.nextNode();
+						}
+					}
+				} catch (e) {
+					errors.push("Error with node=" + nodeName + ", root=" + rootName + ": " + e.message);
+				}
+			}
+		}
+		
+		errors.length > 0 ? errors.join("\\n") : "All passed";
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	
+	resultStr := result.String()
+	if resultStr != "All passed" {
+		t.Errorf("Errors occurred:\n%s", resultStr)
+	}
+}

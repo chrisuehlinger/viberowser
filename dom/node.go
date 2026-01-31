@@ -110,6 +110,7 @@ type documentData struct {
 	url             string             // The document's URL (defaults to "about:blank")
 	characterSet    string             // The document's character encoding (defaults to "UTF-8")
 	selection       *Selection         // The document's Selection object
+	nodeIterators   []*NodeIterator    // Active NodeIterators for pre-removal steps
 }
 
 // docTypeData holds data specific to DocumentType nodes.
@@ -878,6 +879,15 @@ func (n *Node) RemoveChildWithError(child *Node) (*Node, error) {
 	// Capture sibling info before removal for mutation notification
 	prevSib := child.prevSibling
 	nextSib := child.nextSibling
+
+	// Run pre-removal steps for NodeIterators
+	doc := n.ownerDoc
+	if doc == nil && n.nodeType == DocumentNode {
+		doc = (*Document)(n)
+	}
+	if doc != nil {
+		doc.notifyNodeIteratorsOfRemoval(child)
+	}
 
 	n.removeChildInternal(child)
 

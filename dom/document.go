@@ -719,11 +719,65 @@ func (d *Document) adoptNode(node *Node) {
 
 // CreateNodeIterator creates a NodeIterator for traversing the document.
 func (d *Document) CreateNodeIterator(root *Node, whatToShow uint32) *NodeIterator {
-	return &NodeIterator{
+	ni := &NodeIterator{
+		document:                   d,
 		root:                       root,
 		whatToShow:                 whatToShow,
 		referenceNode:              root,
 		pointerBeforeReferenceNode: true,
+	}
+	// Register the iterator with root's node document for pre-removal steps.
+	// Per DOM spec, pre-removal steps are run for iterators whose root's node document
+	// matches the removed node's node document.
+	rootDoc := root.ownerDoc
+	if root.nodeType == DocumentNode {
+		rootDoc = (*Document)(root)
+	}
+	if rootDoc != nil {
+		rootDoc.registerNodeIterator(ni)
+	} else {
+		// Fallback to creating document if root has no owner
+		d.registerNodeIterator(ni)
+	}
+	return ni
+}
+
+// registerNodeIterator adds an iterator to the document's list of active iterators.
+func (d *Document) registerNodeIterator(ni *NodeIterator) {
+	n := (*Node)(d)
+	if n.documentData == nil {
+		return
+	}
+	n.documentData.nodeIterators = append(n.documentData.nodeIterators, ni)
+}
+
+// unregisterNodeIterator removes an iterator from the document's list.
+func (d *Document) unregisterNodeIterator(ni *NodeIterator) {
+	n := (*Node)(d)
+	if n.documentData == nil {
+		return
+	}
+	iterators := n.documentData.nodeIterators
+	for i, iter := range iterators {
+		if iter == ni {
+			// Remove by swapping with last and truncating
+			iterators[i] = iterators[len(iterators)-1]
+			n.documentData.nodeIterators = iterators[:len(iterators)-1]
+			return
+		}
+	}
+}
+
+// notifyNodeIteratorsOfRemoval runs pre-removal steps for all NodeIterators
+// when a node is about to be removed. This implements the DOM spec's
+// "pre-removing steps" for NodeIterator.
+func (d *Document) notifyNodeIteratorsOfRemoval(node *Node) {
+	n := (*Node)(d)
+	if n.documentData == nil {
+		return
+	}
+	for _, ni := range n.documentData.nodeIterators {
+		ni.preRemovingSteps(node)
 	}
 }
 
@@ -740,10 +794,108 @@ func (d *Document) CreateTreeWalker(root *Node, whatToShow uint32) *TreeWalker {
 // NodeIterator provides a way to iterate over nodes in a subtree.
 // Implements the DOM NodeIterator interface.
 type NodeIterator struct {
+	document                   *Document
 	root                       *Node
 	whatToShow                 uint32
 	referenceNode              *Node
 	pointerBeforeReferenceNode bool
+}
+
+// Detach removes this iterator from the document's list of active iterators.
+// This is a no-op in modern DOM (iterators no longer need explicit detachment)
+// but we use it to clean up the registry.
+func (ni *NodeIterator) Detach() {
+	if ni.document != nil {
+		ni.document.unregisterNodeIterator(ni)
+	}
+}
+
+// preRemovingSteps runs the pre-removal steps for this iterator when a node
+// is being removed. Implements the DOM spec's NodeIterator pre-removing steps.
+func (ni *NodeIterator) preRemovingSteps(toBeRemoved *Node) {
+	// "If the node being removed is an inclusive ancestor of root, terminate."
+	// This handles the case where the root itself or an ancestor of root is being removed.
+	if isInclusiveAncestor(toBeRemoved, ni.root) {
+		return
+	}
+	// "If the node being removed is not an inclusive ancestor of referenceNode, terminate."
+	if !isInclusiveAncestor(toBeRemoved, ni.referenceNode) {
+		return
+	}
+
+	// "If the pointerBeforeReferenceNode attribute value is false, set the
+	// referenceNode attribute to the first node preceding the node being
+	// removed, and terminate these steps."
+	if !ni.pointerBeforeReferenceNode {
+		ni.referenceNode = precedingNode(toBeRemoved, ni.root)
+		return
+	}
+
+	// "If there is a node following the last inclusive descendant of the node
+	// being removed, set the referenceNode attribute to the first such node,
+	// and terminate these steps."
+	next := followingNode(lastInclusiveDescendant(toBeRemoved), ni.root)
+	if next != nil {
+		ni.referenceNode = next
+		return
+	}
+
+	// "Set the referenceNode attribute to the first node preceding the node
+	// being removed and set the pointerBeforeReferenceNode attribute to false."
+	ni.referenceNode = precedingNode(toBeRemoved, ni.root)
+	ni.pointerBeforeReferenceNode = false
+}
+
+// isInclusiveAncestor returns true if ancestor is an inclusive ancestor of node.
+func isInclusiveAncestor(ancestor, node *Node) bool {
+	for n := node; n != nil; n = n.parentNode {
+		if n == ancestor {
+			return true
+		}
+	}
+	return false
+}
+
+// lastInclusiveDescendant returns the last inclusive descendant of node.
+func lastInclusiveDescendant(node *Node) *Node {
+	for node.lastChild != nil {
+		node = node.lastChild
+	}
+	return node
+}
+
+// precedingNode returns the first node that precedes node in tree order,
+// constrained to the subtree rooted at root. Returns nil if no such node exists.
+func precedingNode(node, root *Node) *Node {
+	if node == root {
+		return nil
+	}
+	// If node has a previous sibling, return its last inclusive descendant
+	if node.prevSibling != nil {
+		return lastInclusiveDescendant(node.prevSibling)
+	}
+	// Otherwise return the parent (if within root's subtree)
+	parent := node.parentNode
+	if parent == root {
+		return root
+	}
+	return parent
+}
+
+// followingNode returns the first node that follows node in tree order,
+// constrained to the subtree rooted at root. Returns nil if no such node exists.
+func followingNode(node, root *Node) *Node {
+	// Check descendants first (first child)
+	if node.firstChild != nil {
+		return node.firstChild
+	}
+	// Then check following siblings, walking up ancestors
+	for n := node; n != nil && n != root; n = n.parentNode {
+		if n.nextSibling != nil {
+			return n.nextSibling
+		}
+	}
+	return nil
 }
 
 // Root returns the root node of the iterator.
