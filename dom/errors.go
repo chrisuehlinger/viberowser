@@ -53,3 +53,8 @@ func ErrWrongDocument(message string) *DOMError {
 func ErrNamespace(message string) *DOMError {
 	return &DOMError{Name: "NamespaceError", Message: message}
 }
+
+// ErrInUseAttribute creates an InUseAttributeError.
+func ErrInUseAttribute(message string) *DOMError {
+	return &DOMError{Name: "InUseAttributeError", Message: message}
+}

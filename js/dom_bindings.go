@@ -145,6 +145,7 @@ type DOMBinder struct {
 	namedNodeMapMap              map[*goja.Object]*dom.NamedNodeMap
 	nodeListCache                map[*dom.NodeList]*goja.Object
 	domTokenListCache            map[*dom.DOMTokenList]*goja.Object
+	attrCache                    map[*dom.Attr]*goja.Object
 }
 
 // NewDOMBinder creates a new DOM binder for the given runtime.
@@ -159,6 +160,7 @@ func NewDOMBinder(runtime *Runtime) *DOMBinder {
 		htmlElementProtoMap:    make(map[string]*goja.Object),
 		nodeListCache:          make(map[*dom.NodeList]*goja.Object),
 		domTokenListCache:      make(map[*dom.DOMTokenList]*goja.Object),
+		attrCache:              make(map[*dom.Attr]*goja.Object),
 	}
 	b.setupPrototypes()
 	return b
@@ -1912,7 +1914,7 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 			return goja.Null()
 		}
 		ns := ""
-		if !goja.IsNull(call.Arguments[0]) {
+		if !goja.IsNull(call.Arguments[0]) && !goja.IsUndefined(call.Arguments[0]) {
 			ns = call.Arguments[0].String()
 		}
 		localName := call.Arguments[1].String()
@@ -1928,7 +1930,11 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		}
 		name := call.Arguments[0].String()
 		value := call.Arguments[1].String()
-		el.SetAttribute(name, value)
+		if err := el.SetAttributeWithError(name, value); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				b.throwDOMError(vm, domErr)
+			}
+		}
 		return goja.Undefined()
 	})
 
@@ -1942,7 +1948,11 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		}
 		qualifiedName := call.Arguments[1].String()
 		value := call.Arguments[2].String()
-		el.SetAttributeNS(ns, qualifiedName, value)
+		if err := el.SetAttributeNSWithError(ns, qualifiedName, value); err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				b.throwDOMError(vm, domErr)
+			}
+		}
 		return goja.Undefined()
 	})
 
@@ -1959,7 +1969,7 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 			return vm.ToValue(false)
 		}
 		ns := ""
-		if !goja.IsNull(call.Arguments[0]) {
+		if !goja.IsNull(call.Arguments[0]) && !goja.IsUndefined(call.Arguments[0]) {
 			ns = call.Arguments[0].String()
 		}
 		localName := call.Arguments[1].String()
@@ -1993,11 +2003,20 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 			return vm.ToValue(false)
 		}
 		name := call.Arguments[0].String()
+		var result bool
+		var err error
 		if len(call.Arguments) > 1 {
 			force := call.Arguments[1].ToBoolean()
-			return vm.ToValue(el.ToggleAttribute(name, force))
+			result, err = el.ToggleAttributeWithError(name, force)
+		} else {
+			result, err = el.ToggleAttributeWithError(name)
 		}
-		return vm.ToValue(el.ToggleAttribute(name))
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				b.throwDOMError(vm, domErr)
+			}
+		}
+		return vm.ToValue(result)
 	})
 
 	jsEl.Set("hasAttributes", func(call goja.FunctionCall) goja.Value {
@@ -2061,7 +2080,34 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		if goAttr == nil {
 			return goja.Null()
 		}
-		oldAttr := el.SetAttributeNode(goAttr)
+		oldAttr, err := el.SetAttributeNodeWithError(goAttr)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				b.throwDOMError(vm, domErr)
+			}
+		}
+		if oldAttr == nil {
+			return goja.Null()
+		}
+		return b.BindAttr(oldAttr)
+	})
+
+	// setAttributeNodeNS method
+	jsEl.Set("setAttributeNodeNS", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		jsAttr := call.Arguments[0].ToObject(vm)
+		goAttr := b.extractAttr(jsAttr)
+		if goAttr == nil {
+			return goja.Null()
+		}
+		oldAttr, err := el.SetAttributeNodeNSWithError(goAttr)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				b.throwDOMError(vm, domErr)
+			}
+		}
 		if oldAttr == nil {
 			return goja.Null()
 		}
@@ -4695,6 +4741,11 @@ func (b *DOMBinder) BindAttr(attr *dom.Attr) *goja.Object {
 		return nil
 	}
 
+	// Check cache for existing binding
+	if cached, ok := b.attrCache[attr]; ok {
+		return cached
+	}
+
 	vm := b.runtime.vm
 	jsAttr := vm.NewObject()
 
@@ -4838,6 +4889,9 @@ func (b *DOMBinder) BindAttr(attr *dom.Attr) *goja.Object {
 		}
 		return vm.ToValue(result)
 	})
+
+	// Store in cache
+	b.attrCache[attr] = jsAttr
 
 	return jsAttr
 }

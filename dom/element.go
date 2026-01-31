@@ -60,6 +60,21 @@ func (e *Element) Prefix() string {
 	return ""
 }
 
+// isHTMLElementInHTMLDocument returns true if this element is an HTML element
+// in an HTML document. This is used for case-insensitive attribute handling.
+func (e *Element) isHTMLElementInHTMLDocument() bool {
+	// Check if in HTML namespace
+	if e.NamespaceURI() != HTMLNamespace {
+		return false
+	}
+	// Check if owner document is an HTML document
+	doc := e.AsNode().ownerDoc
+	if doc == nil {
+		return false
+	}
+	return doc.IsHTML()
+}
+
 // Id returns the id attribute value.
 func (e *Element) Id() string {
 	return e.GetAttribute("id")
@@ -103,7 +118,12 @@ func (e *Element) Attributes() *NamedNodeMap {
 }
 
 // GetAttribute returns the value of the attribute with the given name.
+// For HTML elements in an HTML document, the name is lowercased before lookup.
 func (e *Element) GetAttribute(name string) string {
+	// For HTML elements in an HTML document, lowercase the name
+	if e.isHTMLElementInHTMLDocument() {
+		name = strings.ToLower(name)
+	}
 	return e.Attributes().GetValue(name)
 }
 
@@ -117,18 +137,98 @@ func (e *Element) GetAttributeNS(namespaceURI, localName string) string {
 }
 
 // SetAttribute sets the value of the attribute with the given name.
+// For HTML elements in an HTML document, the name is lowercased.
 func (e *Element) SetAttribute(name, value string) {
+	e.SetAttributeWithError(name, value)
+}
+
+// SetAttributeWithError sets the value of the attribute with the given name.
+// Returns an error if the name is invalid.
+func (e *Element) SetAttributeWithError(name, value string) error {
+	// Step 1: Validate name using DOM spec's "valid attribute local name" rules
+	if !IsValidAttributeLocalName(name) {
+		return ErrInvalidCharacter("The string contains invalid characters.")
+	}
+
+	// Step 2: For HTML elements in an HTML document, lowercase the name
+	if e.isHTMLElementInHTMLDocument() {
+		name = strings.ToLower(name)
+	}
+
 	e.Attributes().SetValue(name, value)
+	return nil
+}
+
+// IsValidAttributeLocalName checks if a string is a valid attribute local name per DOM spec.
+// A string is valid if its length is at least 1 and it does not contain:
+// - ASCII whitespace (tab, newline, form feed, carriage return, space)
+// - U+0000 NULL
+// - U+002F (/)
+// - U+003D (=)
+// - U+003E (>)
+func IsValidAttributeLocalName(name string) bool {
+	if len(name) == 0 {
+		return false
+	}
+	for _, r := range name {
+		// ASCII whitespace
+		if r == ' ' || r == '\t' || r == '\n' || r == '\f' || r == '\r' {
+			return false
+		}
+		// NULL, /, =, >
+		if r == '\x00' || r == '/' || r == '=' || r == '>' {
+			return false
+		}
+	}
+	return true
 }
 
 // SetAttributeNS sets the value of the attribute with the given namespace.
 func (e *Element) SetAttributeNS(namespaceURI, qualifiedName, value string) {
-	attr := NewAttrNS(namespaceURI, qualifiedName, value)
+	e.SetAttributeNSWithError(namespaceURI, qualifiedName, value)
+}
+
+// SetAttributeNSWithError sets the value of the attribute with the given namespace.
+// Returns an error if the qualified name or namespace is invalid.
+func (e *Element) SetAttributeNSWithError(namespaceURI, qualifiedName, value string) error {
+	// Step 1: Empty qualified name should throw InvalidCharacterError
+	if qualifiedName == "" {
+		return ErrInvalidCharacter("The string contains invalid characters.")
+	}
+
+	// Validate and extract the qualified name using the spec algorithm
+	namespace, prefix, localName, err := ValidateAndExtractQualifiedName(namespaceURI, qualifiedName)
+	if err != nil {
+		return err
+	}
+
+	// Look for an existing attribute with the same namespace and local name
+	existingAttr := e.Attributes().GetNamedItemNS(namespace, localName)
+	if existingAttr != nil {
+		// Just update the value, don't change the prefix
+		existingAttr.value = value
+		return nil
+	}
+
+	// Create new attribute with the validated values
+	attr := &Attr{
+		namespaceURI: namespace,
+		prefix:       prefix,
+		localName:    localName,
+		name:         qualifiedName,
+		value:        value,
+	}
 	e.Attributes().SetAttr(attr)
+	return nil
 }
 
 // HasAttribute returns true if the element has the given attribute.
+// For HTML elements in an HTML document, the name is lowercased before lookup.
 func (e *Element) HasAttribute(name string) bool {
+	// For HTML elements in an HTML document, lowercase the name
+	if e.isHTMLElementInHTMLDocument() {
+		name = strings.ToLower(name)
+	}
 	return e.Attributes().Has(name)
 }
 
@@ -138,7 +238,12 @@ func (e *Element) HasAttributeNS(namespaceURI, localName string) bool {
 }
 
 // RemoveAttribute removes the attribute with the given name.
+// For HTML elements in an HTML document, the name is lowercased before lookup.
 func (e *Element) RemoveAttribute(name string) {
+	// For HTML elements in an HTML document, lowercase the name
+	if e.isHTMLElementInHTMLDocument() {
+		name = strings.ToLower(name)
+	}
 	e.Attributes().RemoveNamedItem(name)
 }
 
@@ -151,28 +256,45 @@ func (e *Element) RemoveAttributeNS(namespaceURI, localName string) {
 // If force is provided, it forces add (true) or remove (false).
 // Returns true if the attribute is present after the operation.
 func (e *Element) ToggleAttribute(name string, force ...bool) bool {
-	has := e.HasAttribute(name)
+	result, _ := e.ToggleAttributeWithError(name, force...)
+	return result
+}
+
+// ToggleAttributeWithError toggles the presence of an attribute.
+// Returns an error if the name is invalid.
+func (e *Element) ToggleAttributeWithError(name string, force ...bool) (bool, error) {
+	// Step 1: Validate name using DOM spec's "valid attribute local name" rules
+	if !IsValidAttributeLocalName(name) {
+		return false, ErrInvalidCharacter("The string contains invalid characters.")
+	}
+
+	// Step 2: For HTML elements in an HTML document, lowercase the name
+	if e.isHTMLElementInHTMLDocument() {
+		name = strings.ToLower(name)
+	}
+
+	has := e.Attributes().Has(name)
 
 	if len(force) > 0 {
 		if force[0] {
 			if !has {
-				e.SetAttribute(name, "")
+				e.Attributes().SetValue(name, "")
 			}
-			return true
+			return true, nil
 		} else {
 			if has {
-				e.RemoveAttribute(name)
+				e.Attributes().RemoveNamedItem(name)
 			}
-			return false
+			return false, nil
 		}
 	}
 
 	if has {
-		e.RemoveAttribute(name)
-		return false
+		e.Attributes().RemoveNamedItem(name)
+		return false, nil
 	}
-	e.SetAttribute(name, "")
-	return true
+	e.Attributes().SetValue(name, "")
+	return true, nil
 }
 
 // GetAttributeNode returns the Attr for the given attribute name.
@@ -187,7 +309,40 @@ func (e *Element) GetAttributeNodeNS(namespaceURI, localName string) *Attr {
 
 // SetAttributeNode sets an attribute node.
 func (e *Element) SetAttributeNode(attr *Attr) *Attr {
-	return e.Attributes().SetAttr(attr)
+	result, _ := e.SetAttributeNodeWithError(attr)
+	return result
+}
+
+// SetAttributeNodeWithError sets an attribute node.
+// Returns an error if the attr is already owned by another element.
+func (e *Element) SetAttributeNodeWithError(attr *Attr) (*Attr, error) {
+	if attr == nil {
+		return nil, nil
+	}
+	// Check if the attribute is already owned by another element
+	if attr.ownerElement != nil && attr.ownerElement != e {
+		return nil, ErrInUseAttribute("The attribute is already in use by another element.")
+	}
+	return e.Attributes().SetAttr(attr), nil
+}
+
+// SetAttributeNodeNS sets an attribute node with namespace support.
+func (e *Element) SetAttributeNodeNS(attr *Attr) *Attr {
+	result, _ := e.SetAttributeNodeNSWithError(attr)
+	return result
+}
+
+// SetAttributeNodeNSWithError sets an attribute node with namespace support.
+// Returns an error if the attr is already owned by another element.
+func (e *Element) SetAttributeNodeNSWithError(attr *Attr) (*Attr, error) {
+	if attr == nil {
+		return nil, nil
+	}
+	// Check if the attribute is already owned by another element
+	if attr.ownerElement != nil && attr.ownerElement != e {
+		return nil, ErrInUseAttribute("The attribute is already in use by another element.")
+	}
+	return e.Attributes().SetAttr(attr), nil
 }
 
 // RemoveAttributeNode removes an attribute node.
