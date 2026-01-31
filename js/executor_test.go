@@ -284,3 +284,112 @@ func TestScriptExecutorWithEvents(t *testing.T) {
 		t.Errorf("Expected '42', got '%s'", el.TextContent())
 	}
 }
+
+func TestScriptExecutorFrames(t *testing.T) {
+	r := NewRuntime()
+	executor := NewScriptExecutor(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body>
+	<iframe src="about:blank"></iframe>
+	<div id="result"></div>
+</body>
+</html>`)
+
+	executor.SetupDocument(doc)
+
+	// Test frames.length
+	result, err := r.Execute(`frames.length`)
+	if err != nil {
+		t.Fatalf("Execute frames.length failed: %v", err)
+	}
+	if result.ToInteger() != 1 {
+		t.Errorf("Expected frames.length == 1, got %v", result.Export())
+	}
+
+	// Test frames[0].document exists
+	result, err = r.Execute(`typeof frames[0].document`)
+	if err != nil {
+		t.Fatalf("Execute typeof frames[0].document failed: %v", err)
+	}
+	if result.String() != "object" {
+		t.Errorf("Expected frames[0].document to be object, got %v", result.String())
+	}
+
+	// Test frames[0].document.createElement works
+	_, err = r.Execute(`
+		var frameDoc = frames[0].document;
+		var el = frameDoc.createElement('div');
+		el.id = 'test';
+		frameDoc.body.appendChild(el);
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Test element.ownerDocument identity
+	result, err = r.Execute(`
+		var frameDoc = frames[0].document;
+		var el = frameDoc.createElement('span');
+		el.ownerDocument === frameDoc;
+	`)
+	if err != nil {
+		t.Fatalf("Execute ownerDocument test failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Expected el.ownerDocument === frameDoc to be true")
+	}
+}
+
+func TestScriptExecutorMultipleIframes(t *testing.T) {
+	r := NewRuntime()
+	executor := NewScriptExecutor(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body>
+	<iframe src="about:blank"></iframe>
+	<iframe src="about:blank"></iframe>
+	<iframe src="about:blank"></iframe>
+</body>
+</html>`)
+
+	executor.SetupDocument(doc)
+
+	// Test frames.length
+	result, err := r.Execute(`frames.length`)
+	if err != nil {
+		t.Fatalf("Execute frames.length failed: %v", err)
+	}
+	if result.ToInteger() != 3 {
+		t.Errorf("Expected frames.length == 3, got %v", result.Export())
+	}
+
+	// Test each frame has its own document
+	result, err = r.Execute(`
+		frames[0].document !== frames[1].document &&
+		frames[1].document !== frames[2].document;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Expected each frame to have a distinct document")
+	}
+
+	// Test frame identity (same frame accessed multiple times should return same object)
+	result, err = r.Execute(`
+		var frame0a = frames[0];
+		var frame0b = frames[0];
+		frame0a === frame0b;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Expected frames[0] to return the same object on repeated access")
+	}
+}

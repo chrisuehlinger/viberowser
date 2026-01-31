@@ -9,9 +9,10 @@ import (
 
 // ScriptExecutor handles executing scripts in an HTML document.
 type ScriptExecutor struct {
-	runtime     *Runtime
-	domBinder   *DOMBinder
-	eventBinder *EventBinder
+	runtime       *Runtime
+	domBinder     *DOMBinder
+	eventBinder   *EventBinder
+	iframeWindows map[*dom.Element]goja.Value // Cache of content windows per iframe element
 }
 
 // NewScriptExecutor creates a new script executor.
@@ -21,9 +22,10 @@ func NewScriptExecutor(runtime *Runtime) *ScriptExecutor {
 	eventBinder.SetupEventConstructors()
 
 	return &ScriptExecutor{
-		runtime:     runtime,
-		domBinder:   domBinder,
-		eventBinder: eventBinder,
+		runtime:       runtime,
+		domBinder:     domBinder,
+		eventBinder:   eventBinder,
+		iframeWindows: make(map[*dom.Element]goja.Value),
 	}
 }
 
@@ -55,11 +57,122 @@ func (se *ScriptExecutor) SetupDocument(doc *dom.Document) {
 		se.eventBinder.BindEventTarget(window)
 	}
 
+	// Set up window.frames property to access iframe content windows
+	se.setupWindowFrames(doc, window)
+
 	// Add global addEventListener/removeEventListener/dispatchEvent
 	// These are needed because in browsers, the global scope IS the window,
 	// but in goja they are separate. Many scripts call addEventListener()
 	// without the window. prefix.
 	se.bindGlobalEventTargetMethods()
+}
+
+// setupWindowFrames sets up the window.frames property to provide access to iframe content windows.
+// In browsers, window.frames is an array-like object where frames[i] returns the contentWindow
+// of the i-th iframe element in document order.
+func (se *ScriptExecutor) setupWindowFrames(doc *dom.Document, window *goja.Object) {
+	if window == nil {
+		return
+	}
+
+	vm := se.runtime.vm
+
+	// Create a frames object that dynamically looks up iframes
+	frames := vm.NewObject()
+
+	// Define length as a getter that counts iframes dynamically
+	frames.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		iframes := doc.GetElementsByTagName("iframe")
+		return vm.ToValue(iframes.Length())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// Create a proxy-like object using defineProperty for numeric indices
+	// We need to make frames[0], frames[1], etc. work dynamically
+	// goja doesn't support Proxy, so we use a dynamic accessor approach
+
+	// Set up the frames object on window
+	window.Set("frames", frames)
+	// Also set it as a global for direct access
+	vm.Set("frames", frames)
+
+	// We need to intercept numeric property access on frames.
+	// Since goja doesn't have Proxy, we'll use a workaround:
+	// Create indexed properties 0-9 that check for iframes dynamically.
+	// This covers most practical use cases.
+	for i := 0; i < 10; i++ {
+		idx := i
+		frames.DefineAccessorProperty(vm.ToValue(idx).String(), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			iframes := doc.GetElementsByTagName("iframe")
+			if idx >= iframes.Length() {
+				return goja.Undefined()
+			}
+			iframe := iframes.Item(idx)
+			if iframe == nil {
+				return goja.Undefined()
+			}
+			// Return the contentWindow for this iframe
+			return se.getIframeContentWindow(iframe, doc)
+		}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	}
+}
+
+// getIframeContentWindow returns a window-like object for an iframe element.
+// This window object has its own document for the iframe's content.
+// The content window is cached per iframe element to ensure identity.
+func (se *ScriptExecutor) getIframeContentWindow(iframe *dom.Element, parentDoc *dom.Document) goja.Value {
+	// Check cache first
+	if cachedWindow, ok := se.iframeWindows[iframe]; ok {
+		return cachedWindow
+	}
+
+	vm := se.runtime.vm
+
+	// Create a window object for this iframe
+	contentWindow := vm.NewObject()
+
+	// Get the iframe's src attribute to determine document content
+	src := iframe.GetAttribute("src")
+	if src == "" {
+		src = "about:blank"
+	}
+
+	// Create a document for the iframe
+	// Create a minimal HTML document structure
+	iframeDoc := dom.NewDocument()
+
+	// Create basic document structure: html > head + body
+	html := iframeDoc.CreateElement("html")
+	head := iframeDoc.CreateElement("head")
+	body := iframeDoc.CreateElement("body")
+	iframeDoc.AsNode().AppendChild(html.AsNode())
+	html.AsNode().AppendChild(head.AsNode())
+	html.AsNode().AppendChild(body.AsNode())
+
+	// Bind the iframe document to JavaScript
+	jsIframeDoc := se.domBinder.BindDocument(iframeDoc)
+
+	// Set up the content window properties
+	contentWindow.Set("document", jsIframeDoc)
+	contentWindow.Set("window", contentWindow)
+	contentWindow.Set("self", contentWindow)
+
+	// Set parent and top references
+	parentWindow := vm.Get("window")
+	contentWindow.Set("parent", parentWindow)
+	contentWindow.Set("top", parentWindow) // Simplified: assume single level of nesting
+
+	// Add frameElement reference back to the iframe
+	contentWindow.Set("frameElement", se.domBinder.BindElement(iframe))
+
+	// Add basic window properties (stub location object)
+	location := vm.NewObject()
+	location.Set("href", src)
+	contentWindow.Set("location", location)
+
+	// Cache the content window for this iframe
+	se.iframeWindows[iframe] = contentWindow
+
+	return contentWindow
 }
 
 // bindGlobalEventTargetMethods adds global addEventListener/removeEventListener/dispatchEvent

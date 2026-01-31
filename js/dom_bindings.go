@@ -334,8 +334,16 @@ func (b *DOMBinder) setupPrototypes() {
 
 // BindDocument creates a JavaScript document object from a DOM document.
 func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
+	// Check cache first to ensure document identity
+	if jsDoc, ok := b.nodeMap[doc.AsNode()]; ok {
+		return jsDoc
+	}
+
 	vm := b.runtime.vm
 	jsDoc := vm.NewObject()
+
+	// Cache the document before setting up properties
+	b.nodeMap[doc.AsNode()] = jsDoc
 
 	// Set prototype for instanceof to work
 	if b.documentProto != nil {
