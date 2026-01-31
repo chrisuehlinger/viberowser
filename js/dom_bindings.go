@@ -223,6 +223,25 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 		return b.BindElement(child)
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 
+	// ParentNode mixin methods
+	jsDoc.Set("append", func(call goja.FunctionCall) goja.Value {
+		nodes := b.convertJSNodesToGo(call.Arguments)
+		doc.Append(nodes...)
+		return goja.Undefined()
+	})
+
+	jsDoc.Set("prepend", func(call goja.FunctionCall) goja.Value {
+		nodes := b.convertJSNodesToGo(call.Arguments)
+		doc.Prepend(nodes...)
+		return goja.Undefined()
+	})
+
+	jsDoc.Set("replaceChildren", func(call goja.FunctionCall) goja.Value {
+		nodes := b.convertJSNodesToGo(call.Arguments)
+		doc.ReplaceChildren(nodes...)
+		return goja.Undefined()
+	})
+
 	// Child node properties (document can have children)
 	b.bindNodeProperties(jsDoc, doc.AsNode())
 
@@ -545,9 +564,46 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		return b.BindElement(sibling)
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 
-	// DOM manipulation methods
+	// DOM manipulation methods - ChildNode mixin
 	jsEl.Set("remove", func(call goja.FunctionCall) goja.Value {
 		el.Remove()
+		return goja.Undefined()
+	})
+
+	jsEl.Set("before", func(call goja.FunctionCall) goja.Value {
+		nodes := b.convertJSNodesToGo(call.Arguments)
+		el.Before(nodes...)
+		return goja.Undefined()
+	})
+
+	jsEl.Set("after", func(call goja.FunctionCall) goja.Value {
+		nodes := b.convertJSNodesToGo(call.Arguments)
+		el.After(nodes...)
+		return goja.Undefined()
+	})
+
+	jsEl.Set("replaceWith", func(call goja.FunctionCall) goja.Value {
+		nodes := b.convertJSNodesToGo(call.Arguments)
+		el.ReplaceWith(nodes...)
+		return goja.Undefined()
+	})
+
+	// ParentNode mixin methods
+	jsEl.Set("append", func(call goja.FunctionCall) goja.Value {
+		nodes := b.convertJSNodesToGo(call.Arguments)
+		el.Append(nodes...)
+		return goja.Undefined()
+	})
+
+	jsEl.Set("prepend", func(call goja.FunctionCall) goja.Value {
+		nodes := b.convertJSNodesToGo(call.Arguments)
+		el.Prepend(nodes...)
+		return goja.Undefined()
+	})
+
+	jsEl.Set("replaceChildren", func(call goja.FunctionCall) goja.Value {
+		nodes := b.convertJSNodesToGo(call.Arguments)
+		el.ReplaceChildren(nodes...)
 		return goja.Undefined()
 	})
 
@@ -608,7 +664,7 @@ func (b *DOMBinder) BindNode(node *dom.Node) *goja.Object {
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
 
-	// For Text nodes, add data property
+	// For Text and Comment nodes (CharacterData), add data property and ChildNode mixin
 	if node.NodeType() == dom.TextNode || node.NodeType() == dom.CommentNode {
 		jsNode.DefineAccessorProperty("data", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 			return vm.ToValue(node.NodeValue())
@@ -622,6 +678,80 @@ func (b *DOMBinder) BindNode(node *dom.Node) *goja.Object {
 		jsNode.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 			return vm.ToValue(len(node.NodeValue()))
 		}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+		// ChildNode mixin methods for CharacterData (Text and Comment nodes)
+		jsNode.Set("before", func(call goja.FunctionCall) goja.Value {
+			parent := node.ParentNode()
+			if parent == nil {
+				return goja.Undefined()
+			}
+			nodes := b.convertJSNodesToGo(call.Arguments)
+			for _, item := range nodes {
+				var n *dom.Node
+				switch v := item.(type) {
+				case *dom.Node:
+					n = v
+				case string:
+					n = node.OwnerDocument().CreateTextNode(v)
+				}
+				if n != nil {
+					parent.InsertBefore(n, node)
+				}
+			}
+			return goja.Undefined()
+		})
+
+		jsNode.Set("after", func(call goja.FunctionCall) goja.Value {
+			parent := node.ParentNode()
+			if parent == nil {
+				return goja.Undefined()
+			}
+			ref := node.NextSibling()
+			nodes := b.convertJSNodesToGo(call.Arguments)
+			for _, item := range nodes {
+				var n *dom.Node
+				switch v := item.(type) {
+				case *dom.Node:
+					n = v
+				case string:
+					n = node.OwnerDocument().CreateTextNode(v)
+				}
+				if n != nil {
+					parent.InsertBefore(n, ref)
+				}
+			}
+			return goja.Undefined()
+		})
+
+		jsNode.Set("replaceWith", func(call goja.FunctionCall) goja.Value {
+			parent := node.ParentNode()
+			if parent == nil {
+				return goja.Undefined()
+			}
+			ref := node.NextSibling()
+			parent.RemoveChild(node)
+			nodes := b.convertJSNodesToGo(call.Arguments)
+			for _, item := range nodes {
+				var n *dom.Node
+				switch v := item.(type) {
+				case *dom.Node:
+					n = v
+				case string:
+					n = node.OwnerDocument().CreateTextNode(v)
+				}
+				if n != nil {
+					parent.InsertBefore(n, ref)
+				}
+			}
+			return goja.Undefined()
+		})
+
+		jsNode.Set("remove", func(call goja.FunctionCall) goja.Value {
+			if node.ParentNode() != nil {
+				node.ParentNode().RemoveChild(node)
+			}
+			return goja.Undefined()
+		})
 	}
 
 	b.bindNodeProperties(jsNode, node)
@@ -695,6 +825,50 @@ func (b *DOMBinder) BindDocumentFragment(frag *dom.DocumentFragment) *goja.Objec
 			}
 		}
 		return b.bindStaticNodeList(results)
+	})
+
+	// ParentNode mixin properties
+	jsFrag.DefineAccessorProperty("children", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindHTMLCollection(frag.Children())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsFrag.DefineAccessorProperty("childElementCount", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(frag.ChildElementCount())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsFrag.DefineAccessorProperty("firstElementChild", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		child := frag.FirstElementChild()
+		if child == nil {
+			return goja.Null()
+		}
+		return b.BindElement(child)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsFrag.DefineAccessorProperty("lastElementChild", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		child := frag.LastElementChild()
+		if child == nil {
+			return goja.Null()
+		}
+		return b.BindElement(child)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// ParentNode mixin methods
+	jsFrag.Set("append", func(call goja.FunctionCall) goja.Value {
+		nodes := b.convertJSNodesToGo(call.Arguments)
+		frag.Append(nodes...)
+		return goja.Undefined()
+	})
+
+	jsFrag.Set("prepend", func(call goja.FunctionCall) goja.Value {
+		nodes := b.convertJSNodesToGo(call.Arguments)
+		frag.Prepend(nodes...)
+		return goja.Undefined()
+	})
+
+	jsFrag.Set("replaceChildren", func(call goja.FunctionCall) goja.Value {
+		nodes := b.convertJSNodesToGo(call.Arguments)
+		frag.ReplaceChildren(nodes...)
+		return goja.Undefined()
 	})
 
 	b.bindNodeProperties(jsFrag, node)
@@ -1263,4 +1437,29 @@ func (b *DOMBinder) createEmptyHTMLCollection() *goja.Object {
 // ClearCache clears the node binding cache.
 func (b *DOMBinder) ClearCache() {
 	b.nodeMap = make(map[*dom.Node]*goja.Object)
+}
+
+// convertJSNodesToGo converts JavaScript arguments to Go interface{} slice for ParentNode/ChildNode methods.
+// These methods accept nodes or strings.
+func (b *DOMBinder) convertJSNodesToGo(args []goja.Value) []interface{} {
+	result := make([]interface{}, 0, len(args))
+	for _, arg := range args {
+		if goja.IsNull(arg) || goja.IsUndefined(arg) {
+			continue
+		}
+		// Check if it's a string
+		if arg.ExportType().Kind().String() == "string" {
+			result = append(result, arg.String())
+			continue
+		}
+		// Try to get it as a node
+		obj := arg.ToObject(b.runtime.vm)
+		if node := b.getGoNode(obj); node != nil {
+			result = append(result, node)
+		} else {
+			// Fallback: convert to string
+			result = append(result, arg.String())
+		}
+	}
+	return result
 }

@@ -146,3 +146,79 @@ func (t *Text) IsElementContentWhitespace() bool {
 	}
 	return true
 }
+
+// Before inserts nodes before this text node.
+func (t *Text) Before(nodes ...interface{}) {
+	parent := t.AsNode().parentNode
+	if parent == nil {
+		return
+	}
+	for _, item := range nodes {
+		var node *Node
+		switch v := item.(type) {
+		case *Node:
+			node = v
+		case *Element:
+			node = v.AsNode()
+		case string:
+			node = t.AsNode().ownerDoc.CreateTextNode(v)
+		}
+		if node != nil {
+			parent.InsertBefore(node, t.AsNode())
+		}
+	}
+}
+
+// After inserts nodes after this text node.
+func (t *Text) After(nodes ...interface{}) {
+	parent := t.AsNode().parentNode
+	if parent == nil {
+		return
+	}
+	ref := t.AsNode().nextSibling
+	for _, item := range nodes {
+		var node *Node
+		switch v := item.(type) {
+		case *Node:
+			node = v
+		case *Element:
+			node = v.AsNode()
+		case string:
+			node = t.AsNode().ownerDoc.CreateTextNode(v)
+		}
+		if node != nil {
+			parent.InsertBefore(node, ref)
+		}
+	}
+}
+
+// ReplaceWith replaces this text node with nodes.
+func (t *Text) ReplaceWith(nodes ...interface{}) {
+	parent := t.AsNode().parentNode
+	if parent == nil {
+		return
+	}
+	ref := t.AsNode().nextSibling
+	parent.RemoveChild(t.AsNode())
+	for _, item := range nodes {
+		var node *Node
+		switch v := item.(type) {
+		case *Node:
+			node = v
+		case *Element:
+			node = v.AsNode()
+		case string:
+			node = t.AsNode().ownerDoc.CreateTextNode(v)
+		}
+		if node != nil {
+			parent.InsertBefore(node, ref)
+		}
+	}
+}
+
+// Remove removes this text node from its parent.
+func (t *Text) Remove() {
+	if t.AsNode().parentNode != nil {
+		t.AsNode().parentNode.RemoveChild(t.AsNode())
+	}
+}

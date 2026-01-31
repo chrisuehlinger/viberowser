@@ -308,6 +308,49 @@ func (d *Document) LastElementChild() *Element {
 	return nil
 }
 
+// Append appends nodes or strings to this document.
+func (d *Document) Append(nodes ...interface{}) {
+	for _, item := range nodes {
+		switch v := item.(type) {
+		case *Node:
+			d.AsNode().AppendChild(v)
+		case *Element:
+			d.AsNode().AppendChild(v.AsNode())
+		case string:
+			d.AsNode().AppendChild(d.CreateTextNode(v))
+		}
+	}
+}
+
+// Prepend prepends nodes or strings to this document.
+func (d *Document) Prepend(nodes ...interface{}) {
+	firstChild := d.AsNode().firstChild
+	for _, item := range nodes {
+		var node *Node
+		switch v := item.(type) {
+		case *Node:
+			node = v
+		case *Element:
+			node = v.AsNode()
+		case string:
+			node = d.CreateTextNode(v)
+		}
+		if node != nil {
+			d.AsNode().InsertBefore(node, firstChild)
+		}
+	}
+}
+
+// ReplaceChildren replaces all children with the given nodes.
+func (d *Document) ReplaceChildren(nodes ...interface{}) {
+	// Remove all children
+	for d.AsNode().firstChild != nil {
+		d.AsNode().RemoveChild(d.AsNode().firstChild)
+	}
+	// Append new children
+	d.Append(nodes...)
+}
+
 // ImportNode imports a node from another document.
 func (d *Document) ImportNode(node *Node, deep bool) *Node {
 	if node == nil {

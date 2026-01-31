@@ -838,6 +838,16 @@ func (e *Element) Remove() {
 	}
 }
 
+// ReplaceChildren replaces all children with the given nodes.
+func (e *Element) ReplaceChildren(nodes ...interface{}) {
+	// Remove all children
+	for e.AsNode().firstChild != nil {
+		e.AsNode().RemoveChild(e.AsNode().firstChild)
+	}
+	// Append new children
+	e.Append(nodes...)
+}
+
 // CloneNode clones this element.
 func (e *Element) CloneNode(deep bool) *Element {
 	clonedNode := e.AsNode().CloneNode(deep)

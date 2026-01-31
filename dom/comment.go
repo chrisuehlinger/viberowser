@@ -94,3 +94,79 @@ func (c *Comment) CloneNode(deep bool) *Comment {
 	clone := c.AsNode().ownerDoc.CreateComment(c.Data())
 	return (*Comment)(clone)
 }
+
+// Before inserts nodes before this comment node.
+func (c *Comment) Before(nodes ...interface{}) {
+	parent := c.AsNode().parentNode
+	if parent == nil {
+		return
+	}
+	for _, item := range nodes {
+		var node *Node
+		switch v := item.(type) {
+		case *Node:
+			node = v
+		case *Element:
+			node = v.AsNode()
+		case string:
+			node = c.AsNode().ownerDoc.CreateTextNode(v)
+		}
+		if node != nil {
+			parent.InsertBefore(node, c.AsNode())
+		}
+	}
+}
+
+// After inserts nodes after this comment node.
+func (c *Comment) After(nodes ...interface{}) {
+	parent := c.AsNode().parentNode
+	if parent == nil {
+		return
+	}
+	ref := c.AsNode().nextSibling
+	for _, item := range nodes {
+		var node *Node
+		switch v := item.(type) {
+		case *Node:
+			node = v
+		case *Element:
+			node = v.AsNode()
+		case string:
+			node = c.AsNode().ownerDoc.CreateTextNode(v)
+		}
+		if node != nil {
+			parent.InsertBefore(node, ref)
+		}
+	}
+}
+
+// ReplaceWith replaces this comment node with nodes.
+func (c *Comment) ReplaceWith(nodes ...interface{}) {
+	parent := c.AsNode().parentNode
+	if parent == nil {
+		return
+	}
+	ref := c.AsNode().nextSibling
+	parent.RemoveChild(c.AsNode())
+	for _, item := range nodes {
+		var node *Node
+		switch v := item.(type) {
+		case *Node:
+			node = v
+		case *Element:
+			node = v.AsNode()
+		case string:
+			node = c.AsNode().ownerDoc.CreateTextNode(v)
+		}
+		if node != nil {
+			parent.InsertBefore(node, ref)
+		}
+	}
+}
+
+// Remove removes this comment node from its parent.
+func (c *Comment) Remove() {
+	if c.AsNode().parentNode != nil {
+		c.AsNode().parentNode.RemoveChild(c.AsNode())
+	}
+}

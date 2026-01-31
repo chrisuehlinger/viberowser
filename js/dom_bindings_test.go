@@ -599,3 +599,331 @@ func TestDOMBinderParentNodeProperties(t *testing.T) {
 		t.Errorf("Expected document.firstElementChild to be HTML, got %v", result.String())
 	}
 }
+
+func TestDOMBinderParentNodeMixinMethods(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body>
+	<div id="parent"><span>Initial</span></div>
+</body>
+</html>`)
+
+	binder.BindDocument(doc)
+
+	// Test element.append()
+	_, err := r.Execute(`
+		var parent = document.getElementById('parent');
+		var newSpan = document.createElement('span');
+		newSpan.textContent = 'Appended';
+		parent.append(newSpan);
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	result, err := r.Execute("document.getElementById('parent').lastElementChild.textContent")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "Appended" {
+		t.Errorf("Expected 'Appended', got %v", result.String())
+	}
+
+	// Test element.append() with string
+	_, err = r.Execute(`
+		var parent = document.getElementById('parent');
+		parent.append(' text');
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	result, err = r.Execute("document.getElementById('parent').textContent")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "InitialAppended text" {
+		t.Errorf("Expected 'InitialAppended text', got %v", result.String())
+	}
+
+	// Test element.prepend()
+	_, err = r.Execute(`
+		var parent = document.getElementById('parent');
+		var firstSpan = document.createElement('span');
+		firstSpan.textContent = 'First';
+		parent.prepend(firstSpan);
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	result, err = r.Execute("document.getElementById('parent').firstElementChild.textContent")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "First" {
+		t.Errorf("Expected 'First', got %v", result.String())
+	}
+
+	// Test element.replaceChildren()
+	_, err = r.Execute(`
+		var parent = document.getElementById('parent');
+		var newP = document.createElement('p');
+		newP.textContent = 'Replaced';
+		parent.replaceChildren(newP);
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	result, err = r.Execute("document.getElementById('parent').childElementCount")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 1 {
+		t.Errorf("Expected 1 child after replaceChildren, got %v", result.ToInteger())
+	}
+
+	result, err = r.Execute("document.getElementById('parent').firstElementChild.tagName")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "P" {
+		t.Errorf("Expected 'P', got %v", result.String())
+	}
+}
+
+func TestDOMBinderChildNodeMixinMethods(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body>
+	<div id="parent">
+		<span id="first">First</span>
+		<span id="middle">Middle</span>
+		<span id="last">Last</span>
+	</div>
+</body>
+</html>`)
+
+	binder.BindDocument(doc)
+
+	// Test element.before()
+	_, err := r.Execute(`
+		var middle = document.getElementById('middle');
+		var newSpan = document.createElement('span');
+		newSpan.id = 'before-middle';
+		newSpan.textContent = 'Before Middle';
+		middle.before(newSpan);
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	result, err := r.Execute("document.getElementById('middle').previousElementSibling.id")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "before-middle" {
+		t.Errorf("Expected 'before-middle', got %v", result.String())
+	}
+
+	// Test element.after()
+	_, err = r.Execute(`
+		var middle = document.getElementById('middle');
+		var newSpan = document.createElement('span');
+		newSpan.id = 'after-middle';
+		newSpan.textContent = 'After Middle';
+		middle.after(newSpan);
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	result, err = r.Execute("document.getElementById('middle').nextElementSibling.id")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "after-middle" {
+		t.Errorf("Expected 'after-middle', got %v", result.String())
+	}
+
+	// Test element.replaceWith()
+	_, err = r.Execute(`
+		var afterMiddle = document.getElementById('after-middle');
+		var replacement = document.createElement('p');
+		replacement.id = 'replacement';
+		replacement.textContent = 'Replacement';
+		afterMiddle.replaceWith(replacement);
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	result, err = r.Execute("document.getElementById('replacement') !== null")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Expected replacement element to exist")
+	}
+
+	result, err = r.Execute("document.getElementById('after-middle')")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "null" {
+		t.Error("Expected after-middle to be removed after replaceWith")
+	}
+
+	// Test element.remove()
+	_, err = r.Execute(`
+		document.getElementById('replacement').remove();
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	result, err = r.Execute("document.getElementById('replacement')")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "null" {
+		t.Error("Expected replacement to be removed after remove()")
+	}
+}
+
+func TestDOMBinderTextNodeChildNodeMixin(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body>
+	<div id="parent"><span id="span1">First</span></div>
+</body>
+</html>`)
+
+	binder.BindDocument(doc)
+
+	// Create a text node and test ChildNode methods
+	_, err := r.Execute(`
+		var parent = document.getElementById('parent');
+		var textNode = document.createTextNode('Hello');
+		parent.appendChild(textNode);
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Test text node before()
+	_, err = r.Execute(`
+		var textNode = document.getElementById('parent').lastChild;
+		var newSpan = document.createElement('span');
+		newSpan.id = 'before-text';
+		textNode.before(newSpan);
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	result, err := r.Execute("document.getElementById('before-text') !== null")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Expected before-text element to exist")
+	}
+
+	// Test text node remove()
+	_, err = r.Execute(`
+		var parent = document.getElementById('parent');
+		var textNode = parent.lastChild;
+		textNode.remove();
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Verify text node was removed
+	result, err = r.Execute("document.getElementById('parent').textContent")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "First" {
+		t.Errorf("Expected 'First' after text node removal, got %v", result.String())
+	}
+}
+
+func TestDOMBinderDocumentFragmentMixinMethods(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc := dom.NewDocument()
+	binder.BindDocument(doc)
+
+	// Test DocumentFragment ParentNode mixin
+	_, err := r.Execute(`
+		var frag = document.createDocumentFragment();
+		var p1 = document.createElement('p');
+		p1.textContent = 'First';
+		var p2 = document.createElement('p');
+		p2.textContent = 'Second';
+		frag.append(p1, p2);
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	result, err := r.Execute("frag.childElementCount")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 2 {
+		t.Errorf("Expected 2 children in fragment, got %v", result.ToInteger())
+	}
+
+	// Test fragment.prepend()
+	_, err = r.Execute(`
+		var p0 = document.createElement('p');
+		p0.textContent = 'Zero';
+		frag.prepend(p0);
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	result, err = r.Execute("frag.firstElementChild.textContent")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "Zero" {
+		t.Errorf("Expected 'Zero', got %v", result.String())
+	}
+
+	// Test fragment.replaceChildren()
+	_, err = r.Execute(`
+		var newP = document.createElement('p');
+		newP.textContent = 'Only';
+		frag.replaceChildren(newP);
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	result, err = r.Execute("frag.childElementCount")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 1 {
+		t.Errorf("Expected 1 child after replaceChildren, got %v", result.ToInteger())
+	}
+}
