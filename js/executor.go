@@ -180,6 +180,59 @@ func NewScriptExecutor(runtime *Runtime) *ScriptExecutor {
 		},
 	)
 
+	// Set up listener error handler to call window.onerror
+	// Per HTML spec, exceptions in event listeners should be reported to the error handler
+	eventBinder.SetListenerErrorHandler(func(err goja.Value) {
+		// Get window.onerror
+		window := runtime.vm.Get("window")
+		if window == nil || goja.IsUndefined(window) {
+			return
+		}
+		windowObj := window.ToObject(runtime.vm)
+		if windowObj == nil {
+			return
+		}
+		onerror := windowObj.Get("onerror")
+		if onerror == nil || goja.IsUndefined(onerror) || goja.IsNull(onerror) {
+			return
+		}
+		callback, ok := goja.AssertFunction(onerror)
+		if !ok {
+			return
+		}
+
+		// Extract error message
+		// Per HTML spec, window.onerror receives: (message, source, lineno, colno, error)
+		// For now, we pass a simplified version
+		message := ""
+		if err != nil && !goja.IsUndefined(err) && !goja.IsNull(err) {
+			errObj := err.ToObject(runtime.vm)
+			if errObj != nil {
+				if msgVal := errObj.Get("message"); msgVal != nil && !goja.IsUndefined(msgVal) {
+					message = msgVal.String()
+				} else {
+					message = err.String()
+				}
+			} else {
+				message = err.String()
+			}
+		}
+
+		// Call window.onerror(message, source, lineno, colno, error)
+		// Per HTML spec, for runtime script errors:
+		// - message is a string describing the error
+		// - source is the URL of the script (empty for inline)
+		// - lineno and colno are the line and column numbers
+		// - error is the Error object
+		callback(windowObj,
+			runtime.vm.ToValue(message), // message
+			runtime.vm.ToValue(""),       // source (filename)
+			runtime.vm.ToValue(0),        // lineno
+			runtime.vm.ToValue(0),        // colno
+			err,                          // error object
+		)
+	})
+
 	// Create mutation observer manager
 	mutationManager := NewMutationObserverManager()
 

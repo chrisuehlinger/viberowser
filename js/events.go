@@ -48,11 +48,16 @@ type listenerOptions struct {
 	passive bool
 }
 
+// ListenerErrorHandler is called when an event listener throws an exception.
+// It receives the error value (as goja.Value) and should report it to window.onerror.
+type ListenerErrorHandler func(err goja.Value)
+
 // EventTarget manages event listeners for a target.
 type EventTarget struct {
-	listeners map[string][]eventListener
-	nextID    int
-	mu        sync.RWMutex
+	listeners    map[string][]eventListener
+	nextID       int
+	mu           sync.RWMutex
+	errorHandler ListenerErrorHandler
 }
 
 // NewEventTarget creates a new EventTarget.
@@ -60,6 +65,13 @@ func NewEventTarget() *EventTarget {
 	return &EventTarget{
 		listeners: make(map[string][]eventListener),
 	}
+}
+
+// SetErrorHandler sets the handler called when a listener throws an exception.
+func (et *EventTarget) SetErrorHandler(handler ListenerErrorHandler) {
+	et.mu.Lock()
+	defer et.mu.Unlock()
+	et.errorHandler = handler
 }
 
 // AddEventListener registers an event listener.
@@ -148,7 +160,24 @@ func (et *EventTarget) DispatchEvent(vm *goja.Runtime, event *goja.Object, phase
 
 		// Call the listener with currentTarget as 'this'
 		// Per DOM spec, the 'this' value for event listeners is the currentTarget
-		l.callback(currentTarget, event)
+		// Goja returns an error if the callback throws an exception. Per HTML spec,
+		// we should report this to the global error handler and continue dispatching.
+		_, err := l.callback(currentTarget, event)
+		if err != nil {
+			// An exception was thrown in the listener
+			// Per HTML spec, we should report this to the global error handler
+			// and continue dispatching to remaining listeners.
+			if et.errorHandler != nil {
+				// Convert the error to a goja.Value
+				// goja errors are typically *goja.Exception
+				if exc, ok := err.(*goja.Exception); ok {
+					et.errorHandler(exc.Value())
+				} else {
+					// For other errors, wrap as string
+					et.errorHandler(vm.ToValue(err.Error()))
+				}
+			}
+		}
 
 		// Check for stopImmediatePropagation
 		if stopImmediate := event.Get("_stopImmediate"); stopImmediate != nil && stopImmediate.ToBoolean() {
@@ -226,6 +255,7 @@ type EventBinder struct {
 	activationHandler           ActivationHandler       // Handler for pre-click activation behavior
 	activationCancelHandler     ActivationCancelHandler // Handler for canceled activation
 	activationCompleteHandler   ActivationCompleteHandler // Handler for successful activation
+	listenerErrorHandler        ListenerErrorHandler    // Handler for exceptions in event listeners
 }
 
 // NewEventBinder creates a new event binder.
@@ -252,6 +282,18 @@ func (eb *EventBinder) SetActivationHandlers(handler ActivationHandler, cancelHa
 	eb.activationCompleteHandler = completeHandler
 }
 
+// SetListenerErrorHandler sets the handler for exceptions thrown by event listeners.
+// This is typically used to call window.onerror.
+func (eb *EventBinder) SetListenerErrorHandler(handler ListenerErrorHandler) {
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+	eb.listenerErrorHandler = handler
+	// Update existing targets
+	for _, target := range eb.targetMap {
+		target.SetErrorHandler(handler)
+	}
+}
+
 // GetOrCreateTarget gets or creates an EventTarget for a JS object.
 func (eb *EventBinder) GetOrCreateTarget(obj *goja.Object) *EventTarget {
 	eb.mu.Lock()
@@ -262,6 +304,10 @@ func (eb *EventBinder) GetOrCreateTarget(obj *goja.Object) *EventTarget {
 	}
 
 	target := NewEventTarget()
+	// Set the error handler if one has been configured
+	if eb.listenerErrorHandler != nil {
+		target.SetErrorHandler(eb.listenerErrorHandler)
+	}
 	eb.targetMap[obj] = target
 	return target
 }
