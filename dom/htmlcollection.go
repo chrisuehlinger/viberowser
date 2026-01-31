@@ -166,7 +166,12 @@ func (hc *HTMLCollection) Item(index int) *Element {
 // NamedItem returns the element with the given id or name attribute.
 // If multiple elements match, returns the first one.
 // Note: The `name` attribute is only checked for elements in the HTML namespace.
+// Per the HTML spec, if the name is empty string, NamedItem returns null.
 func (hc *HTMLCollection) NamedItem(name string) *Element {
+	// Empty string is not a valid name per the HTML spec
+	if name == "" {
+		return nil
+	}
 	elements := hc.collectElements()
 	// First look for id match
 	for _, el := range elements {
