@@ -1827,3 +1827,64 @@ func TestDOMBinderCSSStyleDeclarationFromAttribute(t *testing.T) {
 		t.Errorf("Expected length 2, got %d", result.ToInteger())
 	}
 }
+
+func TestHTMLElementTypeConstructors(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc := dom.NewDocument()
+	binder.BindDocument(doc)
+
+	tests := []struct {
+		code     string
+		expected string
+	}{
+		// Check constructors exist
+		{"typeof HTMLElement", "function"},
+		{"typeof HTMLDivElement", "function"},
+		{"typeof HTMLAnchorElement", "function"},
+		{"typeof HTMLSpanElement", "function"},
+		{"typeof HTMLUnknownElement", "function"},
+		{"typeof HTMLHeadingElement", "function"},
+		{"typeof HTMLParagraphElement", "function"},
+
+		// Check instanceof for various elements
+		{"document.createElement('div') instanceof Element", "true"},
+		{"document.createElement('div') instanceof HTMLElement", "true"},
+		{"document.createElement('div') instanceof HTMLDivElement", "true"},
+		{"document.createElement('div') instanceof Node", "true"},
+
+		{"document.createElement('a') instanceof HTMLAnchorElement", "true"},
+		{"document.createElement('span') instanceof HTMLSpanElement", "true"},
+		{"document.createElement('p') instanceof HTMLParagraphElement", "true"},
+		{"document.createElement('h1') instanceof HTMLHeadingElement", "true"},
+		{"document.createElement('h2') instanceof HTMLHeadingElement", "true"},
+		{"document.createElement('article') instanceof HTMLElement", "true"},
+		{"document.createElement('section') instanceof HTMLElement", "true"},
+
+		// Check that wrong types return false
+		{"document.createElement('div') instanceof HTMLAnchorElement", "false"},
+		{"document.createElement('a') instanceof HTMLDivElement", "false"},
+
+		// Check prototype chain
+		{"HTMLDivElement.prototype instanceof HTMLElement", "true"},
+		{"HTMLElement.prototype instanceof Element", "true"},
+		{"Element.prototype instanceof Node", "true"},
+
+		// Check unknown elements
+		{"document.createElement('custom-element') instanceof HTMLUnknownElement", "true"},
+		{"document.createElement('custom-element') instanceof HTMLElement", "true"},
+		{"document.createElement('custom-element') instanceof Element", "true"},
+	}
+
+	for _, tt := range tests {
+		result, err := r.Execute(tt.code)
+		if err != nil {
+			t.Errorf("%s: error: %v", tt.code, err)
+			continue
+		}
+		if result.String() != tt.expected {
+			t.Errorf("%s: expected %s, got %s", tt.code, tt.expected, result.String())
+		}
+	}
+}

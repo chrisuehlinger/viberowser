@@ -124,6 +124,8 @@ type DOMBinder struct {
 	cdataSectionProto            *goja.Object
 	processingInstructionProto   *goja.Object
 	elementProto                 *goja.Object
+	htmlElementProto             *goja.Object
+	htmlElementProtoMap          map[string]*goja.Object // Maps tag name to specific prototype
 	documentProto                *goja.Object
 	documentFragmentProto        *goja.Object
 	domExceptionProto            *goja.Object
@@ -144,6 +146,7 @@ func NewDOMBinder(runtime *Runtime) *DOMBinder {
 		domImplementationCache: make(map[*dom.DOMImplementation]*goja.Object),
 		styleDeclarationCache:  make(map[*dom.CSSStyleDeclaration]*goja.Object),
 		htmlCollectionMap:      make(map[*goja.Object]*dom.HTMLCollection),
+		htmlElementProtoMap:    make(map[string]*goja.Object),
 	}
 	b.setupPrototypes()
 	return b
@@ -322,6 +325,21 @@ func (b *DOMBinder) setupPrototypes() {
 	b.elementProto.Set("constructor", elementConstructorObj)
 	vm.Set("Element", elementConstructorObj)
 
+	// Create HTMLElement prototype (extends Element)
+	b.htmlElementProto = vm.NewObject()
+	b.htmlElementProto.SetPrototype(b.elementProto)
+	htmlElementConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		panic(vm.NewTypeError("Illegal constructor"))
+	})
+	htmlElementConstructorObj := htmlElementConstructor.ToObject(vm)
+	htmlElementConstructorObj.Set("prototype", b.htmlElementProto)
+	b.htmlElementProto.Set("constructor", htmlElementConstructorObj)
+	vm.Set("HTMLElement", htmlElementConstructorObj)
+
+	// Set up specific HTML element type constructors
+	// Each extends HTMLElement and maps to specific tag names
+	b.setupHTMLElementPrototypes()
+
 	// Create Document prototype (extends Node)
 	b.documentProto = vm.NewObject()
 	b.documentProto.SetPrototype(b.nodeProto)
@@ -427,6 +445,221 @@ func (b *DOMBinder) setupPrototypes() {
 	nodeListConstructorObj.Set("prototype", b.nodeListProto)
 	b.nodeListProto.Set("constructor", nodeListConstructorObj)
 	vm.Set("NodeList", nodeListConstructorObj)
+}
+
+// htmlElementTypeMap maps lowercase HTML tag names to their constructor names.
+// This follows the HTML specification for element interfaces.
+var htmlElementTypeMap = map[string]string{
+	// Sections
+	"article": "HTMLElement",
+	"aside":   "HTMLElement",
+	"footer":  "HTMLElement",
+	"header":  "HTMLElement",
+	"nav":     "HTMLElement",
+	"section": "HTMLElement",
+	"main":    "HTMLElement",
+	"hgroup":  "HTMLElement",
+
+	// Headings
+	"h1": "HTMLHeadingElement",
+	"h2": "HTMLHeadingElement",
+	"h3": "HTMLHeadingElement",
+	"h4": "HTMLHeadingElement",
+	"h5": "HTMLHeadingElement",
+	"h6": "HTMLHeadingElement",
+
+	// Content grouping
+	"p":          "HTMLParagraphElement",
+	"hr":         "HTMLHRElement",
+	"pre":        "HTMLPreElement",
+	"blockquote": "HTMLQuoteElement",
+	"ol":         "HTMLOListElement",
+	"ul":         "HTMLUListElement",
+	"menu":       "HTMLMenuElement",
+	"li":         "HTMLLIElement",
+	"dl":         "HTMLDListElement",
+	"dt":         "HTMLElement",
+	"dd":         "HTMLElement",
+	"figure":     "HTMLElement",
+	"figcaption": "HTMLElement",
+	"div":        "HTMLDivElement",
+
+	// Text-level semantics
+	"a":      "HTMLAnchorElement",
+	"em":     "HTMLElement",
+	"strong": "HTMLElement",
+	"small":  "HTMLElement",
+	"s":      "HTMLElement",
+	"cite":   "HTMLElement",
+	"q":      "HTMLQuoteElement",
+	"dfn":    "HTMLElement",
+	"abbr":   "HTMLElement",
+	"ruby":   "HTMLElement",
+	"rt":     "HTMLElement",
+	"rp":     "HTMLElement",
+	"data":   "HTMLDataElement",
+	"time":   "HTMLTimeElement",
+	"code":   "HTMLElement",
+	"var":    "HTMLElement",
+	"samp":   "HTMLElement",
+	"kbd":    "HTMLElement",
+	"sub":    "HTMLElement",
+	"sup":    "HTMLElement",
+	"i":      "HTMLElement",
+	"b":      "HTMLElement",
+	"u":      "HTMLElement",
+	"mark":   "HTMLElement",
+	"bdi":    "HTMLElement",
+	"bdo":    "HTMLElement",
+	"span":   "HTMLSpanElement",
+	"br":     "HTMLBRElement",
+	"wbr":    "HTMLElement",
+
+	// Edits
+	"ins": "HTMLModElement",
+	"del": "HTMLModElement",
+
+	// Embedded content
+	"picture": "HTMLPictureElement",
+	"source":  "HTMLSourceElement",
+	"img":     "HTMLImageElement",
+	"iframe":  "HTMLIFrameElement",
+	"embed":   "HTMLEmbedElement",
+	"object":  "HTMLObjectElement",
+	"param":   "HTMLParamElement",
+	"video":   "HTMLVideoElement",
+	"audio":   "HTMLAudioElement",
+	"track":   "HTMLTrackElement",
+	"map":     "HTMLMapElement",
+	"area":    "HTMLAreaElement",
+
+	// Tabular data
+	"table":    "HTMLTableElement",
+	"caption":  "HTMLTableCaptionElement",
+	"colgroup": "HTMLTableColElement",
+	"col":      "HTMLTableColElement",
+	"tbody":    "HTMLTableSectionElement",
+	"thead":    "HTMLTableSectionElement",
+	"tfoot":    "HTMLTableSectionElement",
+	"tr":       "HTMLTableRowElement",
+	"td":       "HTMLTableCellElement",
+	"th":       "HTMLTableCellElement",
+
+	// Forms
+	"form":     "HTMLFormElement",
+	"label":    "HTMLLabelElement",
+	"input":    "HTMLInputElement",
+	"button":   "HTMLButtonElement",
+	"select":   "HTMLSelectElement",
+	"datalist": "HTMLDataListElement",
+	"optgroup": "HTMLOptGroupElement",
+	"option":   "HTMLOptionElement",
+	"textarea": "HTMLTextAreaElement",
+	"output":   "HTMLOutputElement",
+	"progress": "HTMLProgressElement",
+	"meter":    "HTMLMeterElement",
+	"fieldset": "HTMLFieldSetElement",
+	"legend":   "HTMLLegendElement",
+
+	// Interactive elements
+	"details": "HTMLDetailsElement",
+	"summary": "HTMLElement",
+	"dialog":  "HTMLDialogElement",
+
+	// Scripting
+	"script":   "HTMLScriptElement",
+	"noscript": "HTMLElement",
+	"template": "HTMLTemplateElement",
+	"slot":     "HTMLSlotElement",
+	"canvas":   "HTMLCanvasElement",
+
+	// Document metadata
+	"head":  "HTMLHeadElement",
+	"title": "HTMLTitleElement",
+	"base":  "HTMLBaseElement",
+	"link":  "HTMLLinkElement",
+	"meta":  "HTMLMetaElement",
+	"style": "HTMLStyleElement",
+
+	// Root elements
+	"html": "HTMLHtmlElement",
+	"body": "HTMLBodyElement",
+
+	// Deprecated but still used
+	"font":   "HTMLFontElement",
+	"center": "HTMLElement",
+
+	// Unknown elements use HTMLUnknownElement
+}
+
+// setupHTMLElementPrototypes creates prototypes for specific HTML element types.
+// Each type extends HTMLElement and is mapped to specific tag names.
+func (b *DOMBinder) setupHTMLElementPrototypes() {
+	vm := b.runtime.vm
+
+	// Collect unique constructor names
+	constructorNames := make(map[string]bool)
+	for _, constructorName := range htmlElementTypeMap {
+		if constructorName != "HTMLElement" {
+			constructorNames[constructorName] = true
+		}
+	}
+
+	// Create prototype for each unique constructor type
+	for constructorName := range constructorNames {
+		proto := vm.NewObject()
+		proto.SetPrototype(b.htmlElementProto)
+
+		constructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+			panic(vm.NewTypeError("Illegal constructor"))
+		})
+		constructorObj := constructor.ToObject(vm)
+		constructorObj.Set("prototype", proto)
+		proto.Set("constructor", constructorObj)
+		vm.Set(constructorName, constructorObj)
+
+		// Store prototype for later lookup
+		b.htmlElementProtoMap[constructorName] = proto
+	}
+
+	// Create HTMLUnknownElement for unknown tags
+	unknownProto := vm.NewObject()
+	unknownProto.SetPrototype(b.htmlElementProto)
+	unknownConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		panic(vm.NewTypeError("Illegal constructor"))
+	})
+	unknownConstructorObj := unknownConstructor.ToObject(vm)
+	unknownConstructorObj.Set("prototype", unknownProto)
+	unknownProto.Set("constructor", unknownConstructorObj)
+	vm.Set("HTMLUnknownElement", unknownConstructorObj)
+	b.htmlElementProtoMap["HTMLUnknownElement"] = unknownProto
+}
+
+// getHTMLElementPrototype returns the appropriate prototype for a given tag name.
+func (b *DOMBinder) getHTMLElementPrototype(tagName string) *goja.Object {
+	lowerTag := strings.ToLower(tagName)
+
+	// Look up the constructor name for this tag
+	constructorName, ok := htmlElementTypeMap[lowerTag]
+	if !ok {
+		// Unknown HTML element - use HTMLUnknownElement
+		if proto, ok := b.htmlElementProtoMap["HTMLUnknownElement"]; ok {
+			return proto
+		}
+		return b.htmlElementProto
+	}
+
+	// If it's just HTMLElement, return the htmlElementProto directly
+	if constructorName == "HTMLElement" {
+		return b.htmlElementProto
+	}
+
+	// Return the specific element prototype
+	if proto, ok := b.htmlElementProtoMap[constructorName]; ok {
+		return proto
+	}
+
+	return b.htmlElementProto
 }
 
 // BindDocument creates a JavaScript document object from a DOM document.
@@ -1154,7 +1387,13 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 	jsEl := vm.NewObject()
 
 	// Set prototype for instanceof to work
-	if b.elementProto != nil {
+	// Use specific HTML element prototype for HTML elements
+	ns := el.NamespaceURI()
+	if ns == "" || ns == dom.HTMLNamespace {
+		// HTML element - use specific HTML element prototype
+		jsEl.SetPrototype(b.getHTMLElementPrototype(el.LocalName()))
+	} else if b.elementProto != nil {
+		// Non-HTML element (like SVG) - use generic Element prototype
 		jsEl.SetPrototype(b.elementProto)
 	}
 
