@@ -863,6 +863,17 @@ func (e *Element) CloneNode(deep bool) *Element {
 	return (*Element)(clonedNode)
 }
 
+// Style returns the CSSStyleDeclaration for this element's inline styles.
+func (e *Element) Style() *CSSStyleDeclaration {
+	if e.AsNode().elementData == nil {
+		e.AsNode().elementData = &elementData{}
+	}
+	if e.AsNode().elementData.styleDeclaration == nil {
+		e.AsNode().elementData.styleDeclaration = NewCSSStyleDeclaration(e)
+	}
+	return e.AsNode().elementData.styleDeclaration
+}
+
 // lookupAtom looks up an atom for the given tag name.
 func lookupAtom(tagName string) atom.Atom {
 	return atom.Lookup([]byte(tagName))

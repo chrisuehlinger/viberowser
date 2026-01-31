@@ -30,14 +30,15 @@ type Node struct {
 
 // elementData holds data specific to Element nodes.
 type elementData struct {
-	localName   string
-	namespaceURI string
-	prefix      string
-	tagName     string
-	attributes  *NamedNodeMap
-	classList   *DOMTokenList
-	id          string
-	className   string
+	localName        string
+	namespaceURI     string
+	prefix           string
+	tagName          string
+	attributes       *NamedNodeMap
+	classList        *DOMTokenList
+	styleDeclaration *CSSStyleDeclaration
+	id               string
+	className        string
 }
 
 // documentData holds data specific to Document nodes.

@@ -1501,3 +1501,329 @@ func TestTextBeforeNullUndefined(t *testing.T) {
 		t.Errorf("Expected %q, got %q", expected, result.String())
 	}
 }
+
+func TestDOMBinderCSSStyleDeclaration(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body><div id="test"></div></body>
+</html>`)
+
+	binder.BindDocument(doc)
+
+	// Test style is an object
+	result, err := r.Execute("typeof document.getElementById('test').style")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "object" {
+		t.Errorf("Expected style to be object, got %s", result.String())
+	}
+
+	// Test initial cssText is empty
+	result, err = r.Execute("document.getElementById('test').style.cssText")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "" {
+		t.Errorf("Expected empty cssText, got %s", result.String())
+	}
+
+	// Test initial length is 0
+	result, err = r.Execute("document.getElementById('test').style.length")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 0 {
+		t.Errorf("Expected length 0, got %d", result.ToInteger())
+	}
+
+	// Test setProperty
+	_, err = r.Execute("document.getElementById('test').style.setProperty('color', 'red')")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Test getPropertyValue
+	result, err = r.Execute("document.getElementById('test').style.getPropertyValue('color')")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "red" {
+		t.Errorf("Expected 'red', got %s", result.String())
+	}
+
+	// Test length is now 1
+	result, err = r.Execute("document.getElementById('test').style.length")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 1 {
+		t.Errorf("Expected length 1, got %d", result.ToInteger())
+	}
+
+	// Test item(0)
+	result, err = r.Execute("document.getElementById('test').style.item(0)")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "color" {
+		t.Errorf("Expected 'color', got %s", result.String())
+	}
+
+	// Test cssText
+	result, err = r.Execute("document.getElementById('test').style.cssText")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "color: red" {
+		t.Errorf("Expected 'color: red', got %s", result.String())
+	}
+}
+
+func TestDOMBinderCSSStyleDeclarationCamelCase(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body><div id="test"></div></body>
+</html>`)
+
+	binder.BindDocument(doc)
+
+	// Test setting via camelCase property
+	_, err := r.Execute("document.getElementById('test').style.backgroundColor = 'blue'")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Test getting via camelCase property
+	result, err := r.Execute("document.getElementById('test').style.backgroundColor")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "blue" {
+		t.Errorf("Expected 'blue', got %s", result.String())
+	}
+
+	// Test that it's stored as kebab-case
+	result, err = r.Execute("document.getElementById('test').style.getPropertyValue('background-color')")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "blue" {
+		t.Errorf("Expected 'blue', got %s", result.String())
+	}
+
+	// Test cssText uses kebab-case
+	result, err = r.Execute("document.getElementById('test').style.cssText")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "background-color: blue" {
+		t.Errorf("Expected 'background-color: blue', got %s", result.String())
+	}
+}
+
+func TestDOMBinderCSSStyleDeclarationRemove(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body><div id="test"></div></body>
+</html>`)
+
+	binder.BindDocument(doc)
+
+	// Set multiple properties
+	_, err := r.Execute(`
+		var el = document.getElementById('test');
+		el.style.setProperty('color', 'red');
+		el.style.setProperty('width', '100px');
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Test removeProperty
+	result, err := r.Execute("document.getElementById('test').style.removeProperty('color')")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "red" {
+		t.Errorf("Expected old value 'red', got %s", result.String())
+	}
+
+	// Verify it's removed
+	result, err = r.Execute("document.getElementById('test').style.getPropertyValue('color')")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "" {
+		t.Errorf("Expected empty string, got %s", result.String())
+	}
+
+	// Verify length is now 1
+	result, err = r.Execute("document.getElementById('test').style.length")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 1 {
+		t.Errorf("Expected length 1, got %d", result.ToInteger())
+	}
+}
+
+func TestDOMBinderCSSStyleDeclarationPriority(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body><div id="test"></div></body>
+</html>`)
+
+	binder.BindDocument(doc)
+
+	// Set property with important
+	_, err := r.Execute("document.getElementById('test').style.setProperty('color', 'red', 'important')")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Test getPropertyPriority
+	result, err := r.Execute("document.getElementById('test').style.getPropertyPriority('color')")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "important" {
+		t.Errorf("Expected 'important', got %s", result.String())
+	}
+
+	// Test cssText includes !important
+	result, err = r.Execute("document.getElementById('test').style.cssText")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "color: red !important" {
+		t.Errorf("Expected 'color: red !important', got %s", result.String())
+	}
+}
+
+func TestDOMBinderCSSStyleDeclarationSetCSSText(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body><div id="test"></div></body>
+</html>`)
+
+	binder.BindDocument(doc)
+
+	// Set cssText directly
+	_, err := r.Execute("document.getElementById('test').style.cssText = 'color: green; font-size: 14px'")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Verify properties
+	result, err := r.Execute("document.getElementById('test').style.getPropertyValue('color')")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "green" {
+		t.Errorf("Expected 'green', got %s", result.String())
+	}
+
+	result, err = r.Execute("document.getElementById('test').style.getPropertyValue('font-size')")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "14px" {
+		t.Errorf("Expected '14px', got %s", result.String())
+	}
+
+	// Verify length
+	result, err = r.Execute("document.getElementById('test').style.length")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 2 {
+		t.Errorf("Expected length 2, got %d", result.ToInteger())
+	}
+}
+
+func TestDOMBinderCSSStyleDeclarationSyncToAttribute(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body><div id="test"></div></body>
+</html>`)
+
+	binder.BindDocument(doc)
+
+	// Set style via JS
+	_, err := r.Execute("document.getElementById('test').style.color = 'purple'")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Verify style attribute is set
+	result, err := r.Execute("document.getElementById('test').getAttribute('style')")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "color: purple" {
+		t.Errorf("Expected 'color: purple', got %s", result.String())
+	}
+}
+
+func TestDOMBinderCSSStyleDeclarationFromAttribute(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body><div id="test" style="margin: 10px; padding: 5px"></div></body>
+</html>`)
+
+	binder.BindDocument(doc)
+
+	// Verify style properties are parsed from attribute
+	result, err := r.Execute("document.getElementById('test').style.getPropertyValue('margin')")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "10px" {
+		t.Errorf("Expected '10px', got %s", result.String())
+	}
+
+	result, err = r.Execute("document.getElementById('test').style.getPropertyValue('padding')")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "5px" {
+		t.Errorf("Expected '5px', got %s", result.String())
+	}
+
+	result, err = r.Execute("document.getElementById('test').style.length")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.ToInteger() != 2 {
+		t.Errorf("Expected length 2, got %d", result.ToInteger())
+	}
+}

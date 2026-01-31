@@ -125,7 +125,9 @@ type DOMBinder struct {
 	domImplementationProto       *goja.Object
 	htmlCollectionProto          *goja.Object
 	nodeListProto                *goja.Object
+	cssStyleDeclarationProto     *goja.Object
 	domImplementationCache       map[*dom.DOMImplementation]*goja.Object
+	styleDeclarationCache        map[*dom.CSSStyleDeclaration]*goja.Object
 }
 
 // NewDOMBinder creates a new DOM binder for the given runtime.
@@ -134,6 +136,7 @@ func NewDOMBinder(runtime *Runtime) *DOMBinder {
 		runtime:                runtime,
 		nodeMap:                make(map[*dom.Node]*goja.Object),
 		domImplementationCache: make(map[*dom.DOMImplementation]*goja.Object),
+		styleDeclarationCache:  make(map[*dom.CSSStyleDeclaration]*goja.Object),
 	}
 	b.setupPrototypes()
 	return b
@@ -1151,6 +1154,10 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 
 	jsEl.DefineAccessorProperty("classList", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		return b.BindDOMTokenList(el.ClassList())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsEl.DefineAccessorProperty("style", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindCSSStyleDeclaration(el.Style())
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	jsEl.DefineAccessorProperty("innerHTML", vm.ToValue(func(call goja.FunctionCall) goja.Value {
@@ -3194,4 +3201,209 @@ func (b *DOMBinder) convertJSNodesToGo(args []goja.Value) []interface{} {
 		}
 	}
 	return result
+}
+
+// BindCSSStyleDeclaration creates a JavaScript CSSStyleDeclaration object.
+func (b *DOMBinder) BindCSSStyleDeclaration(sd *dom.CSSStyleDeclaration) *goja.Object {
+	if sd == nil {
+		return nil
+	}
+
+	// Check cache
+	if jsObj, ok := b.styleDeclarationCache[sd]; ok {
+		return jsObj
+	}
+
+	vm := b.runtime.vm
+	jsSD := vm.NewObject()
+
+	// Set prototype if we have one
+	if b.cssStyleDeclarationProto != nil {
+		jsSD.SetPrototype(b.cssStyleDeclarationProto)
+	}
+
+	// Store reference to the Go object
+	jsSD.Set("_goStyleDeclaration", sd)
+
+	// cssText property (getter and setter)
+	jsSD.DefineAccessorProperty("cssText", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(sd.CSSText())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			sd.SetCSSText(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// length property (getter only)
+	jsSD.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(sd.Length())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// parentRule property (always null for inline styles)
+	jsSD.DefineAccessorProperty("parentRule", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return goja.Null()
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// item(index) method
+	jsSD.Set("item", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return vm.ToValue("")
+		}
+		index := int(call.Arguments[0].ToInteger())
+		return vm.ToValue(sd.Item(index))
+	})
+
+	// getPropertyValue(property) method
+	jsSD.Set("getPropertyValue", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return vm.ToValue("")
+		}
+		property := call.Arguments[0].String()
+		return vm.ToValue(sd.GetPropertyValue(property))
+	})
+
+	// getPropertyPriority(property) method
+	jsSD.Set("getPropertyPriority", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return vm.ToValue("")
+		}
+		property := call.Arguments[0].String()
+		return vm.ToValue(sd.GetPropertyPriority(property))
+	})
+
+	// setProperty(property, value, priority) method
+	jsSD.Set("setProperty", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			return goja.Undefined()
+		}
+		property := call.Arguments[0].String()
+		value := call.Arguments[1].String()
+		priority := ""
+		if len(call.Arguments) > 2 {
+			priority = call.Arguments[2].String()
+		}
+		sd.SetProperty(property, value, priority)
+		return goja.Undefined()
+	})
+
+	// removeProperty(property) method
+	jsSD.Set("removeProperty", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return vm.ToValue("")
+		}
+		property := call.Arguments[0].String()
+		return vm.ToValue(sd.RemoveProperty(property))
+	})
+
+	// Set up a Proxy to handle camelCase property access (e.g., element.style.backgroundColor)
+	// For goja, we use the dynamic approach with __get and __set
+	b.setupStylePropertyProxy(jsSD, sd)
+
+	// Cache the object
+	b.styleDeclarationCache[sd] = jsSD
+
+	return jsSD
+}
+
+// setupStylePropertyProxy sets up dynamic property access for CSS properties on a style object.
+// This allows accessing properties like element.style.backgroundColor or element.style["background-color"].
+func (b *DOMBinder) setupStylePropertyProxy(jsSD *goja.Object, sd *dom.CSSStyleDeclaration) {
+	vm := b.runtime.vm
+
+	// Common CSS properties to expose as camelCase (a subset)
+	cssProperties := []string{
+		"alignContent", "alignItems", "alignSelf", "animation", "animationDelay",
+		"animationDirection", "animationDuration", "animationFillMode", "animationIterationCount",
+		"animationName", "animationPlayState", "animationTimingFunction",
+		"background", "backgroundAttachment", "backgroundClip", "backgroundColor",
+		"backgroundImage", "backgroundOrigin", "backgroundPosition", "backgroundRepeat",
+		"backgroundSize", "border", "borderBottom", "borderBottomColor", "borderBottomLeftRadius",
+		"borderBottomRightRadius", "borderBottomStyle", "borderBottomWidth", "borderCollapse",
+		"borderColor", "borderImage", "borderLeft", "borderLeftColor", "borderLeftStyle",
+		"borderLeftWidth", "borderRadius", "borderRight", "borderRightColor", "borderRightStyle",
+		"borderRightWidth", "borderSpacing", "borderStyle", "borderTop", "borderTopColor",
+		"borderTopLeftRadius", "borderTopRightRadius", "borderTopStyle", "borderTopWidth",
+		"borderWidth", "bottom", "boxShadow", "boxSizing", "captionSide", "clear",
+		"clip", "color", "columnCount", "columnFill", "columnGap", "columnRule",
+		"columnRuleColor", "columnRuleStyle", "columnRuleWidth", "columns", "columnSpan",
+		"columnWidth", "content", "counterIncrement", "counterReset", "cursor", "direction",
+		"display", "emptyCells", "flex", "flexBasis", "flexDirection", "flexFlow",
+		"flexGrow", "flexShrink", "flexWrap", "float", "font", "fontFamily",
+		"fontSize", "fontSizeAdjust", "fontStretch", "fontStyle", "fontVariant",
+		"fontWeight", "gap", "grid", "gridArea", "gridAutoColumns", "gridAutoFlow",
+		"gridAutoRows", "gridColumn", "gridColumnEnd", "gridColumnStart", "gridGap",
+		"gridRow", "gridRowEnd", "gridRowStart", "gridTemplate", "gridTemplateAreas",
+		"gridTemplateColumns", "gridTemplateRows", "height", "justifyContent", "left",
+		"letterSpacing", "lineHeight", "listStyle", "listStyleImage", "listStylePosition",
+		"listStyleType", "margin", "marginBottom", "marginLeft", "marginRight", "marginTop",
+		"maxHeight", "maxWidth", "minHeight", "minWidth", "objectFit", "objectPosition",
+		"opacity", "order", "orphans", "outline", "outlineColor", "outlineOffset",
+		"outlineStyle", "outlineWidth", "overflow", "overflowX", "overflowY", "padding",
+		"paddingBottom", "paddingLeft", "paddingRight", "paddingTop", "pageBreakAfter",
+		"pageBreakBefore", "pageBreakInside", "perspective", "perspectiveOrigin",
+		"placeContent", "placeItems", "placeSelf", "pointerEvents", "position", "quotes",
+		"resize", "right", "rowGap", "tableLayout", "textAlign", "textAlignLast",
+		"textDecoration", "textDecorationColor", "textDecorationLine", "textDecorationStyle",
+		"textIndent", "textOverflow", "textShadow", "textTransform", "top", "transform",
+		"transformOrigin", "transformStyle", "transition", "transitionDelay",
+		"transitionDuration", "transitionProperty", "transitionTimingFunction",
+		"unicodeBidi", "userSelect", "verticalAlign", "visibility", "whiteSpace",
+		"widows", "width", "wordBreak", "wordSpacing", "wordWrap", "zIndex",
+		// Vendor-prefixed properties
+		"WebkitAnimation", "WebkitTransform", "WebkitTransition", "MozAnimation",
+		"MozTransform", "MozTransition", "msAnimation", "msTransform", "msTransition",
+	}
+
+	// Set up getter/setter for each CSS property
+	for _, propName := range cssProperties {
+		prop := propName // Capture for closure
+		jsSD.DefineAccessorProperty(prop, vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			// Convert camelCase to kebab-case for lookup
+			kebabName := camelToKebab(prop)
+			return vm.ToValue(sd.GetPropertyValue(kebabName))
+		}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			if len(call.Arguments) > 0 {
+				kebabName := camelToKebab(prop)
+				value := call.Arguments[0].String()
+				if value == "" {
+					sd.RemoveProperty(kebabName)
+				} else {
+					sd.SetProperty(kebabName, value)
+				}
+			}
+			return goja.Undefined()
+		}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+	}
+}
+
+// camelToKebab converts camelCase to kebab-case.
+// Examples: "backgroundColor" -> "background-color", "WebkitTransform" -> "-webkit-transform"
+func camelToKebab(s string) string {
+	if s == "" {
+		return ""
+	}
+
+	var result []byte
+	for i, r := range s {
+		if r >= 'A' && r <= 'Z' {
+			if i > 0 {
+				result = append(result, '-')
+			}
+			result = append(result, byte(r-'A'+'a'))
+		} else {
+			result = append(result, byte(r))
+		}
+	}
+
+	// Handle vendor prefixes (Webkit, Moz, ms, O -> -webkit, -moz, -ms, -o)
+	str := string(result)
+	prefixes := []string{"webkit-", "moz-", "ms-", "o-"}
+	for _, prefix := range prefixes {
+		if len(str) > len(prefix) && str[:len(prefix)] == prefix {
+			return "-" + str
+		}
+	}
+
+	return str
 }
