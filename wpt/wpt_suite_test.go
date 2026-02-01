@@ -107,7 +107,7 @@ func DOMNodesPassingTests() []string {
 		"DOMImplementation-createHTMLDocument-with-saved-implementation.html",
 		"DOMImplementation-hasFeature.html",
 
-		// Document tests (16 tests)
+		// Document tests (17 tests)
 		"Document-adoptNode.html",
 		"Document-constructor.html",
 		"Document-createAttribute.html",
@@ -125,6 +125,7 @@ func DOMNodesPassingTests() []string {
 		"Document-getElementsByTagName.html",
 		"Document-getElementsByTagNameNS.html",
 		"Document-implementation.html",
+		"Document-importNode.html",
 
 		// DocumentFragment tests (3 tests)
 		"DocumentFragment-constructor.html",

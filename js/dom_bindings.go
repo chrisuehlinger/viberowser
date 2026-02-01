@@ -1987,6 +1987,14 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 			return goja.Null()
 		}
 		nodeObj := call.Arguments[0].ToObject(vm)
+
+		// Check if it's an Attr node first (uses _goAttr, not _goNode)
+		if goAttr := b.getGoAttr(nodeObj); goAttr != nil {
+			// Clone the Attr preserving namespace information
+			clonedAttr := dom.NewAttrNS(goAttr.NamespaceURI(), goAttr.Name(), goAttr.Value())
+			return b.BindAttr(clonedAttr)
+		}
+
 		goNode := b.getGoNode(nodeObj)
 		if goNode == nil {
 			return goja.Null()
@@ -2614,6 +2622,14 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 			return goja.Null()
 		}
 		nodeObj := call.Arguments[0].ToObject(vm)
+
+		// Check if it's an Attr node first (uses _goAttr, not _goNode)
+		if goAttr := b.getGoAttr(nodeObj); goAttr != nil {
+			// Clone the Attr preserving namespace information
+			clonedAttr := dom.NewAttrNS(goAttr.NamespaceURI(), goAttr.Name(), goAttr.Value())
+			return b.BindAttr(clonedAttr)
+		}
+
 		goNode := b.getGoNode(nodeObj)
 		if goNode == nil {
 			return goja.Null()

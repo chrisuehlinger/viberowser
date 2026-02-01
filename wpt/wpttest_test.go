@@ -735,6 +735,45 @@ func TestWPTDocumentConstructor(t *testing.T) {
 	t.Logf("Summary: %d passed, %d failed", passed, failed)
 }
 
+// TestWPTDocumentImportNode tests the Document.importNode WPT test
+func TestWPTDocumentImportNode(t *testing.T) {
+	wptPath := "/workspaces/wpt"
+
+	// Check if WPT exists
+	if _, err := os.Stat(wptPath); os.IsNotExist(err) {
+		t.Skip("WPT not available")
+	}
+
+	runner := NewRunner(wptPath)
+	runner.Timeout = 10 * time.Second
+
+	result := runner.RunTestFile("/dom/nodes/Document-importNode.html")
+
+	t.Logf("HarnessStatus: %s", result.HarnessStatus)
+	t.Logf("Error: %s", result.Error)
+	t.Logf("Duration: %v", result.Duration)
+	t.Logf("Tests: %d", len(result.Tests))
+
+	passed := 0
+	failed := 0
+	for _, test := range result.Tests {
+		statusStr := "PASS"
+		if test.Status != StatusPass {
+			statusStr = "FAIL"
+			failed++
+		} else {
+			passed++
+		}
+		t.Logf("  [%s] %s: %s", statusStr, test.Name, test.Message)
+	}
+
+	t.Logf("Summary: %d passed, %d failed", passed, failed)
+
+	if failed > 0 {
+		t.Errorf("Some Document.importNode tests failed")
+	}
+}
+
 // TestIframeContentDocumentURL tests that iframe.contentDocument.URL is set correctly
 func TestIframeContentDocumentURL(t *testing.T) {
 	wptPath := "/workspaces/wpt"
