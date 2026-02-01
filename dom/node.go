@@ -71,6 +71,9 @@ type elementData struct {
 	attributes       *NamedNodeMap
 	classList        *DOMTokenList
 	relList          *DOMTokenList
+	sandbox          *DOMTokenList // For HTMLIFrameElement
+	sizes            *DOMTokenList // For HTMLLinkElement
+	htmlFor          *DOMTokenList // For HTMLOutputElement
 	styleDeclaration *CSSStyleDeclaration
 	id               string
 	className        string

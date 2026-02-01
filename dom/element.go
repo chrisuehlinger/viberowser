@@ -133,6 +133,42 @@ func (e *Element) RelList() *DOMTokenList {
 	return e.AsNode().elementData.relList
 }
 
+// Sandbox returns a DOMTokenList for the sandbox attribute.
+// This is used for HTMLIFrameElement.
+func (e *Element) Sandbox() *DOMTokenList {
+	if e.AsNode().elementData == nil {
+		e.AsNode().elementData = &elementData{}
+	}
+	if e.AsNode().elementData.sandbox == nil {
+		e.AsNode().elementData.sandbox = newDOMTokenList(e, "sandbox")
+	}
+	return e.AsNode().elementData.sandbox
+}
+
+// Sizes returns a DOMTokenList for the sizes attribute.
+// This is used for HTMLLinkElement.
+func (e *Element) Sizes() *DOMTokenList {
+	if e.AsNode().elementData == nil {
+		e.AsNode().elementData = &elementData{}
+	}
+	if e.AsNode().elementData.sizes == nil {
+		e.AsNode().elementData.sizes = newDOMTokenList(e, "sizes")
+	}
+	return e.AsNode().elementData.sizes
+}
+
+// HtmlFor returns a DOMTokenList for the "for" attribute.
+// This is used for HTMLOutputElement.
+func (e *Element) HtmlFor() *DOMTokenList {
+	if e.AsNode().elementData == nil {
+		e.AsNode().elementData = &elementData{}
+	}
+	if e.AsNode().elementData.htmlFor == nil {
+		e.AsNode().elementData.htmlFor = newDOMTokenList(e, "for")
+	}
+	return e.AsNode().elementData.htmlFor
+}
+
 // Attributes returns the NamedNodeMap of attributes.
 func (e *Element) Attributes() *NamedNodeMap {
 	if e.AsNode().elementData == nil {

@@ -4024,6 +4024,11 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		b.bindInputProperties(jsEl, el)
 	}
 
+	// Add output-specific properties (htmlFor)
+	if el.LocalName() == "output" && ns == dom.HTMLNamespace {
+		b.bindOutputProperties(jsEl, el)
+	}
+
 	// Bind common node properties and methods
 	b.bindNodeProperties(jsEl, node)
 
@@ -4082,6 +4087,17 @@ func (b *DOMBinder) bindIframeProperties(jsEl *goja.Object, el *dom.Element) {
 		}
 		return contentDocument
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// sandbox property - DOMTokenList for the sandbox attribute
+	jsEl.DefineAccessorProperty("sandbox", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindDOMTokenList(el.Sandbox())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Per spec, assigning to sandbox sets the sandbox attribute value
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("sandbox", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
 }
 
 // bindTemplateProperties adds HTMLTemplateElement-specific properties.
@@ -4157,8 +4173,21 @@ func (b *DOMBinder) bindAreaProperties(jsEl *goja.Object, el *dom.Element) {
 
 // bindLinkProperties adds HTMLLinkElement-specific properties.
 func (b *DOMBinder) bindLinkProperties(jsEl *goja.Object, el *dom.Element) {
+	vm := b.runtime.vm
+
 	// relList property - DOMTokenList for the rel attribute
 	b.bindRelList(jsEl, el)
+
+	// sizes property - DOMTokenList for the sizes attribute
+	jsEl.DefineAccessorProperty("sizes", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindDOMTokenList(el.Sizes())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Per spec, assigning to sizes sets the sizes attribute value
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("sizes", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
 }
 
 // bindRelList adds the relList property to an element.
@@ -4171,6 +4200,23 @@ func (b *DOMBinder) bindRelList(jsEl *goja.Object, el *dom.Element) {
 		// Per spec, assigning to relList sets the rel attribute value
 		if len(call.Arguments) > 0 {
 			el.SetAttribute("rel", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+}
+
+// bindOutputProperties adds HTMLOutputElement-specific properties.
+// Per HTML spec: https://html.spec.whatwg.org/multipage/form-elements.html#the-output-element
+func (b *DOMBinder) bindOutputProperties(jsEl *goja.Object, el *dom.Element) {
+	vm := b.runtime.vm
+
+	// htmlFor property - DOMTokenList for the "for" attribute
+	jsEl.DefineAccessorProperty("htmlFor", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindDOMTokenList(el.HtmlFor())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Per spec, assigning to htmlFor sets the "for" attribute value
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("for", call.Arguments[0].String())
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
