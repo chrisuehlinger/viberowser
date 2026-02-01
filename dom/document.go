@@ -1057,6 +1057,26 @@ func ParseHTML(htmlContent string) (*Document, error) {
 const SVGNamespace = "http://www.w3.org/2000/svg"
 const MathMLNamespace = "http://www.w3.org/1998/Math/MathML"
 
+// Other common namespace URIs
+const XLinkNamespace = "http://www.w3.org/1999/xlink"
+const XMLNamespace = "http://www.w3.org/XML/1998/namespace"
+const XMLNSNamespace = "http://www.w3.org/2000/xmlns/"
+
+// convertAttrNamespace converts short namespace prefixes from golang.org/x/net/html
+// to their full URI forms as required by the DOM spec.
+func convertAttrNamespace(ns string) string {
+	switch ns {
+	case "xmlns":
+		return XMLNSNamespace
+	case "xlink":
+		return XLinkNamespace
+	case "xml":
+		return XMLNamespace
+	default:
+		return ns
+	}
+}
+
 // convertHTMLTree converts an html.Node tree to our DOM tree.
 func convertHTMLTree(src *html.Node, parent *Node, doc *Document) {
 	for c := src.FirstChild; c != nil; c = c.NextSibling {
@@ -1081,7 +1101,14 @@ func convertHTMLTree(src *html.Node, parent *Node, doc *Document) {
 			el := doc.CreateElementNS(namespace, c.Data)
 			for _, attr := range c.Attr {
 				if attr.Namespace != "" {
-					el.SetAttributeNS(attr.Namespace, attr.Key, attr.Val)
+					// Convert short namespace prefixes to full URIs
+					attrNS := convertAttrNamespace(attr.Namespace)
+					// Reconstruct qualified name: golang.org/x/net/html gives us
+					// the local name in Key and the namespace prefix in Namespace
+					// For example: xmlns:xlink has Namespace="xmlns", Key="xlink"
+					// We need to pass "xmlns:xlink" as the qualified name
+					qualifiedName := attr.Namespace + ":" + attr.Key
+					el.SetAttributeNS(attrNS, qualifiedName, attr.Val)
 				} else {
 					el.SetAttribute(attr.Key, attr.Val)
 				}

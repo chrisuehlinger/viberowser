@@ -1132,15 +1132,11 @@ func (n *Node) shallowClone() *Node {
 				id:           n.elementData.id,
 				className:    n.elementData.className,
 			}
-			// Clone attributes
-			clone.elementData.attributes = newNamedNodeMap((*Element)(clone))
+			// Clone attributes using NamedNodeMap.Clone which preserves namespace info
 			if n.elementData.attributes != nil {
-				for i := 0; i < n.elementData.attributes.Length(); i++ {
-					attr := n.elementData.attributes.Item(i)
-					if attr != nil {
-						clone.elementData.attributes.SetNamedItem(attr.CloneNode(false))
-					}
-				}
+				clone.elementData.attributes = n.elementData.attributes.Clone((*Element)(clone))
+			} else {
+				clone.elementData.attributes = newNamedNodeMap((*Element)(clone))
 			}
 		}
 	case TextNode, CDATASectionNode:

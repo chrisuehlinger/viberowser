@@ -164,7 +164,42 @@ func matchTypeSelector(ts *TypeSelector, el *dom.Element) bool {
 }
 
 func matchAttributeSelector(attr *AttributeMatcher, el *dom.Element) bool {
-	if !el.HasAttribute(attr.Name) {
+	// Handle namespace selectors
+	// attr.Namespace can be:
+	//   "" - no namespace specified, match by qualified name
+	//   "*" - any namespace (or no namespace), match by local name
+	//   other - specific namespace prefix (not implemented for matching)
+
+	var matchedAttrValue string
+	var found bool
+
+	if attr.Namespace == "*" {
+		// Match any attribute with the given local name in any namespace
+		attrs := el.Attributes()
+		for i := 0; i < attrs.Length(); i++ {
+			a := attrs.Item(i)
+			if strings.EqualFold(a.LocalName(), attr.Name) {
+				matchedAttrValue = a.Value()
+				found = true
+				break
+			}
+		}
+	} else if attr.Namespace == "" {
+		// No namespace specified - match by qualified name (normal case)
+		if el.HasAttribute(attr.Name) {
+			matchedAttrValue = el.GetAttribute(attr.Name)
+			found = true
+		}
+	} else {
+		// Specific namespace - would need to map prefix to URI
+		// For now, fall back to qualified name match
+		if el.HasAttribute(attr.Name) {
+			matchedAttrValue = el.GetAttribute(attr.Name)
+			found = true
+		}
+	}
+
+	if !found {
 		return false
 	}
 
@@ -172,7 +207,7 @@ func matchAttributeSelector(attr *AttributeMatcher, el *dom.Element) bool {
 		return true
 	}
 
-	attrValue := el.GetAttribute(attr.Name)
+	attrValue := matchedAttrValue
 	matchValue := attr.Value
 
 	if attr.CaseInsensitive {
