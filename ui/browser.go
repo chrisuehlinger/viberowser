@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/chrisuehlinger/viberowser/css"
 	"github.com/chrisuehlinger/viberowser/dom"
+	"github.com/chrisuehlinger/viberowser/js"
 	vibelayout "github.com/chrisuehlinger/viberowser/layout"
 	"github.com/chrisuehlinger/viberowser/network"
 	"github.com/chrisuehlinger/viberowser/render"
@@ -65,6 +67,11 @@ type BrowserTab struct {
 	layoutRoot  *vibelayout.LayoutBox
 	canvas      *render.Canvas
 	canvasImage *canvas.Image
+
+	// JavaScript execution
+	jsRuntime  *js.Runtime
+	jsExecutor *js.ScriptExecutor
+	eventLoop  *time.Ticker
 
 	// Content container
 	content *fyne.Container
@@ -246,6 +253,13 @@ func (b *BrowserUI) closeActiveTab() {
 			if b.tabs[0].cancelFunc != nil {
 				b.tabs[0].cancelFunc()
 			}
+			// Stop event loop
+			if b.tabs[0].eventLoop != nil {
+				b.tabs[0].eventLoop.Stop()
+				b.tabs[0].eventLoop = nil
+			}
+			b.tabs[0].jsRuntime = nil
+			b.tabs[0].jsExecutor = nil
 			b.tabs[0].URL = ""
 			b.tabs[0].Title = "New Tab"
 			b.tabs[0].history = make([]string, 0)
@@ -263,6 +277,11 @@ func (b *BrowserUI) closeActiveTab() {
 	// Cancel any ongoing loading
 	if b.tabs[b.activeTab].cancelFunc != nil {
 		b.tabs[b.activeTab].cancelFunc()
+	}
+
+	// Stop event loop
+	if b.tabs[b.activeTab].eventLoop != nil {
+		b.tabs[b.activeTab].eventLoop.Stop()
 	}
 
 	// Remove from tab bar
@@ -397,10 +416,13 @@ func (b *BrowserUI) navigate(urlStr string) {
 	go b.loadPage(tab, urlStr, ctx)
 }
 
-// loadPage loads and renders a page.
+// loadPage loads and renders a page with JavaScript execution.
 func (b *BrowserUI) loadPage(tab *BrowserTab, urlStr string, ctx context.Context) {
 	// Show loading indicator
 	b.showLoading(tab)
+
+	// Stop any existing event loop
+	b.stopEventLoop(tab)
 
 	// Fetch the page
 	resp := b.loader.LoadDocument(ctx, urlStr)
@@ -434,7 +456,10 @@ func (b *BrowserUI) loadPage(tab *BrowserTab, urlStr string, ctx context.Context
 		b.mu.Unlock()
 	}
 
-	// Load external stylesheets
+	// Set base URL for resource loading
+	b.loader.SetBaseURL(urlStr)
+
+	// Load external resources (stylesheets and scripts)
 	docLoader := network.NewDocumentLoader(b.loader)
 	loadedDoc := docLoader.LoadDocumentWithResources(ctx, doc, urlStr)
 
@@ -463,18 +488,65 @@ func (b *BrowserUI) loadPage(tab *BrowserTab, urlStr string, ctx context.Context
 		}
 	}
 
-	// Get the document element (html) or body
-	rootElement := doc.DocumentElement()
-	if rootElement == nil {
-		b.showError(tab, "No document element found")
-		return
-	}
-
 	// Check for cancellation
 	select {
 	case <-ctx.Done():
 		return
 	default:
+	}
+
+	// Initialize JavaScript execution
+	runtime := js.NewRuntime()
+	executor := js.NewScriptExecutor(runtime)
+
+	// Set up iframe content loader
+	executor.SetIframeContentLoader(func(src string) (*dom.Document, string) {
+		return b.loadIframeContent(ctx, src, urlStr)
+	})
+
+	// Bind the document to JavaScript
+	executor.SetupDocument(doc)
+
+	// Set up style resolver for getComputedStyle
+	executor.SetStyleResolver(styleResolver)
+
+	// Store in tab for event loop management
+	b.mu.Lock()
+	tab.jsRuntime = runtime
+	tab.jsExecutor = executor
+	b.mu.Unlock()
+
+	// Execute all scripts in document order
+	for _, script := range loadedDoc.GetOrderedSyncScripts() {
+		// Check for cancellation
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		if script.Inline {
+			// Execute inline script
+			if err := executor.ExecuteExternalScript(script.Content, "inline"); err != nil {
+				// Log error but continue (browsers don't stop on script errors)
+				fmt.Printf("Script error: %v\n", err)
+			}
+		} else {
+			// Execute external script
+			if err := executor.ExecuteExternalScript(script.Content, script.URL); err != nil {
+				fmt.Printf("Script error in %s: %v\n", script.URL, err)
+			}
+		}
+	}
+
+	// Dispatch DOMContentLoaded event
+	executor.DispatchDOMContentLoaded()
+
+	// Get the document element (html) or body
+	rootElement := doc.DocumentElement()
+	if rootElement == nil {
+		b.showError(tab, "No document element found")
+		return
 	}
 
 	// Build layout tree
@@ -505,10 +577,103 @@ func (b *BrowserUI) loadPage(tab *BrowserTab, urlStr string, ctx context.Context
 		b.displayImage(tab, img)
 	}
 
+	// Dispatch load event
+	executor.DispatchLoadEvent()
+
+	// Start event loop for handling timers and callbacks
+	b.startEventLoop(tab, ctx)
+
 	b.mu.Lock()
 	tab.Loading = false
 	b.updateNavigationButtons()
 	b.mu.Unlock()
+}
+
+// loadIframeContent loads content for an iframe src URL.
+func (b *BrowserUI) loadIframeContent(ctx context.Context, src, baseURL string) (*dom.Document, string) {
+	if src == "" || src == "about:blank" {
+		return nil, src
+	}
+
+	// Resolve the URL relative to baseURL
+	parsedBase, err := url.Parse(baseURL)
+	if err != nil {
+		return nil, ""
+	}
+
+	var fullURL string
+	if strings.HasPrefix(src, "/") || strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
+		parsedSrc, err := parsedBase.Parse(src)
+		if err != nil {
+			return nil, ""
+		}
+		fullURL = parsedSrc.String()
+	} else {
+		parsedSrc, err := parsedBase.Parse(src)
+		if err != nil {
+			return nil, ""
+		}
+		fullURL = parsedSrc.String()
+	}
+
+	// Load the content
+	resp := b.loader.LoadDocument(ctx, fullURL)
+	if !resp.IsSuccess() {
+		return nil, ""
+	}
+
+	// Parse as HTML
+	doc, err := dom.ParseHTML(string(resp.Content))
+	if err != nil {
+		return nil, ""
+	}
+
+	return doc, fullURL
+}
+
+// startEventLoop starts the JavaScript event loop for a tab.
+func (b *BrowserUI) startEventLoop(tab *BrowserTab, ctx context.Context) {
+	// Create ticker for event loop (16ms ≈ 60fps)
+	ticker := time.NewTicker(16 * time.Millisecond)
+
+	b.mu.Lock()
+	tab.eventLoop = ticker
+	b.mu.Unlock()
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				ticker.Stop()
+				return
+			case <-ticker.C:
+				b.mu.Lock()
+				runtime := tab.jsRuntime
+				executor := tab.jsExecutor
+				b.mu.Unlock()
+
+				if runtime != nil && executor != nil {
+					// Process timers (setTimeout, setInterval)
+					runtime.ProcessTimers()
+					// Process any pending events
+					executor.RunEventLoopOnce()
+				}
+			}
+		}
+	}()
+}
+
+// stopEventLoop stops the JavaScript event loop for a tab.
+func (b *BrowserUI) stopEventLoop(tab *BrowserTab) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if tab.eventLoop != nil {
+		tab.eventLoop.Stop()
+		tab.eventLoop = nil
+	}
+	tab.jsRuntime = nil
+	tab.jsExecutor = nil
 }
 
 // showLoading displays a loading indicator in the tab.
