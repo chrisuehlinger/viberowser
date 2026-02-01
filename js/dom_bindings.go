@@ -935,6 +935,8 @@ func (b *DOMBinder) setupPrototypes() {
 	}), nil, goja.FLAG_TRUE, goja.FLAG_FALSE)
 
 	// Add item method to prototype
+	// Per the DOM spec, item() takes an "unsigned long" index which uses ToUint32 conversion.
+	// This means values >= 2^32 wrap around (e.g., 4294967296 becomes 0).
 	b.htmlCollectionProto.Set("item", func(call goja.FunctionCall) goja.Value {
 		col := getCollection(call.This.ToObject(vm))
 		if col == nil {
@@ -943,7 +945,9 @@ func (b *DOMBinder) setupPrototypes() {
 		if len(call.Arguments) < 1 {
 			return goja.Null()
 		}
-		index := int(call.Arguments[0].ToInteger())
+		// ToUint32 conversion: convert to int64, then mask to 32 bits
+		intVal := call.Arguments[0].ToInteger()
+		index := int(uint32(intVal))
 		el := col.Item(index)
 		if el == nil {
 			return goja.Null()
@@ -8552,19 +8556,57 @@ func (b *DOMBinder) BindHTMLCollection(collection *dom.HTMLCollection) *goja.Obj
 	b.htmlCollectionMap[jsCol] = collection
 
 	// Store expando properties (user-set properties that are not DOM properties)
-	expandos := make(map[string]goja.Value)
+	// The value is a struct to track property descriptor attributes
+	type expandoValue struct {
+		value        goja.Value
+		writable     bool
+		enumerable   bool
+		configurable bool
+	}
+	expandos := make(map[string]expandoValue)
 
-	// Helper to check if a string is a valid array index
+	// Helper to check if a string is a valid array index.
+	// Per the ECMAScript spec, a valid array index is a non-negative integer
+	// less than 2^32 - 1 (4294967295). The string representation must be the
+	// canonical form (no leading zeros except for "0" itself).
 	isArrayIndex := func(s string) bool {
 		if len(s) == 0 {
 			return false
 		}
+		// Check for leading zero (invalid except for "0" itself)
+		if len(s) > 1 && s[0] == '0' {
+			return false
+		}
+		// Check all characters are digits
 		for _, c := range s {
 			if c < '0' || c > '9' {
 				return false
 			}
 		}
+		// Parse the number and check it's a valid array index (< 2^32 - 1)
+		// We need to use uint64 to avoid overflow
+		var n uint64
+		for _, c := range s {
+			digit := uint64(c - '0')
+			// Check for overflow before multiplying
+			if n > (1<<32-2)/10 {
+				return false // Would overflow
+			}
+			n = n*10 + digit
+			if n > 1<<32-2 { // 4294967294 is the max array index
+				return false
+			}
+		}
 		return true
+	}
+
+	// Helper to parse array index - only call after isArrayIndex returns true
+	parseArrayIndex := func(s string) int {
+		var n int
+		for _, c := range s {
+			n = n*10 + int(c-'0')
+		}
+		return n
 	}
 
 	// Create a proxy for live access to the collection
@@ -8572,16 +8614,13 @@ func (b *DOMBinder) BindHTMLCollection(collection *dom.HTMLCollection) *goja.Obj
 		// Get property - intercept numeric indices and named properties
 		Get: func(target *goja.Object, property string, receiver goja.Value) goja.Value {
 			// Check for expandos first
-			if val, ok := expandos[property]; ok {
-				return val
+			if exp, ok := expandos[property]; ok {
+				return exp.value
 			}
 
 			// Check numeric index
 			if isArrayIndex(property) {
-				idx := 0
-				for _, c := range property {
-					idx = idx*10 + int(c-'0')
-				}
+				idx := parseArrayIndex(property)
 				el := collection.Item(idx)
 				if el == nil {
 					return goja.Undefined()
@@ -8600,7 +8639,22 @@ func (b *DOMBinder) BindHTMLCollection(collection *dom.HTMLCollection) *goja.Obj
 		},
 
 		// GetIdx for numeric indices
+		// Note: goja calls this for integers. We need to handle:
+		// - Negative indices: treat as named properties (e.g., "-1" as id)
+		// - Values >= 2^32-1: treat as named properties (not valid array indices)
 		GetIdx: func(target *goja.Object, idx int, receiver goja.Value) goja.Value {
+			// Check if idx is a valid array index (0 to 2^32-2)
+			// Negative indices or values >= 2^32-1 are named properties
+			const maxArrayIndex = 1<<32 - 2 // 4294967294
+			if idx < 0 || int64(idx) > maxArrayIndex {
+				name := fmt.Sprintf("%d", idx)
+				el := collection.NamedItem(name)
+				if el != nil {
+					return b.BindElement(el)
+				}
+				// Fall through to target for prototype methods
+				return target.Get(name)
+			}
 			el := collection.Item(idx)
 			if el == nil {
 				return goja.Undefined()
@@ -8611,17 +8665,8 @@ func (b *DOMBinder) BindHTMLCollection(collection *dom.HTMLCollection) *goja.Obj
 		// Set property - handle expando vs named property shadowing
 		// Returning false will cause strict mode to throw TypeError
 		Set: func(target *goja.Object, property string, value goja.Value, receiver goja.Value) bool {
-			// Numeric indices are read-only
+			// Numeric indices are read-only - always reject for any index
 			if isArrayIndex(property) {
-				idx := 0
-				for _, c := range property {
-					idx = idx*10 + int(c-'0')
-				}
-				// If index exists, reject the set (strict mode will throw)
-				if idx < collection.Length() {
-					return false
-				}
-				// Non-existing indices also reject
 				return false
 			}
 
@@ -8632,13 +8677,26 @@ func (b *DOMBinder) BindHTMLCollection(collection *dom.HTMLCollection) *goja.Obj
 				return false
 			}
 
-			// No DOM property - store as expando
-			expandos[property] = value
+			// No DOM property - store as expando (default writable, enumerable, configurable)
+			expandos[property] = expandoValue{value: value, writable: true, enumerable: true, configurable: true}
 			return true
 		},
 
-		// SetIdx for numeric indices - read-only, always reject
+		// SetIdx for numeric indices
+		// Note: Values outside valid array index range are treated as named properties.
 		SetIdx: func(target *goja.Object, idx int, value goja.Value, receiver goja.Value) bool {
+			const maxArrayIndex = 1<<32 - 2
+			if idx < 0 || int64(idx) > maxArrayIndex {
+				// Non-array-index values are named properties
+				name := fmt.Sprintf("%d", idx)
+				el := collection.NamedItem(name)
+				if el != nil {
+					return false // Named property exists, reject
+				}
+				expandos[name] = expandoValue{value: value, writable: true, enumerable: true, configurable: true}
+				return true
+			}
+			// Valid array indices are read-only
 			return false
 		},
 
@@ -8648,18 +8706,24 @@ func (b *DOMBinder) BindHTMLCollection(collection *dom.HTMLCollection) *goja.Obj
 				return true
 			}
 			if isArrayIndex(property) {
-				idx := 0
-				for _, c := range property {
-					idx = idx*10 + int(c-'0')
-				}
+				idx := parseArrayIndex(property)
 				return idx < collection.Length()
 			}
 			return collection.NamedItem(property) != nil || target.Get(property) != nil
 		},
 
 		// HasIdx for numeric indices
+		// Note: Values outside valid array index range are treated as named properties.
 		HasIdx: func(target *goja.Object, idx int) bool {
-			return idx >= 0 && idx < collection.Length()
+			const maxArrayIndex = 1<<32 - 2
+			if idx < 0 || int64(idx) > maxArrayIndex {
+				name := fmt.Sprintf("%d", idx)
+				if _, ok := expandos[name]; ok {
+					return true
+				}
+				return collection.NamedItem(name) != nil
+			}
+			return idx < collection.Length()
 		},
 
 		// OwnKeys - return all indexed and named properties
@@ -8683,21 +8747,30 @@ func (b *DOMBinder) BindHTMLCollection(collection *dom.HTMLCollection) *goja.Obj
 		// GetOwnPropertyDescriptor
 		GetOwnPropertyDescriptor: func(target *goja.Object, prop string) goja.PropertyDescriptor {
 			// Check expandos
-			if val, ok := expandos[prop]; ok {
+			if exp, ok := expandos[prop]; ok {
+				writable := goja.FLAG_FALSE
+				if exp.writable {
+					writable = goja.FLAG_TRUE
+				}
+				enumerable := goja.FLAG_FALSE
+				if exp.enumerable {
+					enumerable = goja.FLAG_TRUE
+				}
+				configurable := goja.FLAG_FALSE
+				if exp.configurable {
+					configurable = goja.FLAG_TRUE
+				}
 				return goja.PropertyDescriptor{
-					Value:        val,
-					Writable:     goja.FLAG_TRUE,
-					Enumerable:   goja.FLAG_TRUE,
-					Configurable: goja.FLAG_TRUE,
+					Value:        exp.value,
+					Writable:     writable,
+					Enumerable:   enumerable,
+					Configurable: configurable,
 				}
 			}
 
 			// Check numeric index
 			if isArrayIndex(prop) {
-				idx := 0
-				for _, c := range prop {
-					idx = idx*10 + int(c-'0')
-				}
+				idx := parseArrayIndex(prop)
 				if idx < collection.Length() {
 					el := collection.Item(idx)
 					return goja.PropertyDescriptor{
@@ -8725,8 +8798,45 @@ func (b *DOMBinder) BindHTMLCollection(collection *dom.HTMLCollection) *goja.Obj
 		},
 
 		// GetOwnPropertyDescriptorIdx for numeric indices
+		// Note: Values outside valid array index range are treated as named properties.
 		GetOwnPropertyDescriptorIdx: func(target *goja.Object, idx int) goja.PropertyDescriptor {
-			if idx >= 0 && idx < collection.Length() {
+			const maxArrayIndex = 1<<32 - 2
+			if idx < 0 || int64(idx) > maxArrayIndex {
+				name := fmt.Sprintf("%d", idx)
+				// Check expandos first
+				if exp, ok := expandos[name]; ok {
+					writable := goja.FLAG_FALSE
+					if exp.writable {
+						writable = goja.FLAG_TRUE
+					}
+					enumerable := goja.FLAG_FALSE
+					if exp.enumerable {
+						enumerable = goja.FLAG_TRUE
+					}
+					configurable := goja.FLAG_FALSE
+					if exp.configurable {
+						configurable = goja.FLAG_TRUE
+					}
+					return goja.PropertyDescriptor{
+						Value:        exp.value,
+						Writable:     writable,
+						Enumerable:   enumerable,
+						Configurable: configurable,
+					}
+				}
+				// Check named property
+				el := collection.NamedItem(name)
+				if el != nil {
+					return goja.PropertyDescriptor{
+						Value:        b.BindElement(el),
+						Writable:     goja.FLAG_FALSE,
+						Enumerable:   goja.FLAG_FALSE,
+						Configurable: goja.FLAG_TRUE,
+					}
+				}
+				return goja.PropertyDescriptor{}
+			}
+			if idx < collection.Length() {
 				el := collection.Item(idx)
 				return goja.PropertyDescriptor{
 					Value:        b.BindElement(el),
@@ -8740,40 +8850,112 @@ func (b *DOMBinder) BindHTMLCollection(collection *dom.HTMLCollection) *goja.Obj
 
 		// Delete property
 		DeleteProperty: func(target *goja.Object, property string) bool {
-			// Can delete expandos
-			if _, ok := expandos[property]; ok {
-				delete(expandos, property)
+			// Check if it's an expando
+			if exp, ok := expandos[property]; ok {
+				// Can only delete configurable expandos
+				if exp.configurable {
+					delete(expandos, property)
+					return true
+				}
+				return false // Non-configurable, strict mode will throw
+			}
+
+			// DOM properties (indices and named items) cannot be deleted
+			// Return false to throw TypeError in strict mode
+			if isArrayIndex(property) {
+				idx := parseArrayIndex(property)
+				if idx < collection.Length() {
+					return false // Index exists, can't delete
+				}
+				// Index doesn't exist, deletion is vacuously successful
 				return true
 			}
 
-			// Can't delete DOM properties in loose mode - return true but don't delete
-			if isArrayIndex(property) || collection.NamedItem(property) != nil {
-				return true
+			if collection.NamedItem(property) != nil {
+				return false // Named item exists, can't delete
 			}
 
+			// Property doesn't exist, deletion is vacuously successful
 			return true
+		},
+
+		// DeletePropertyIdx for numeric indices
+		// Note: Values outside valid array index range are treated as named properties.
+		DeletePropertyIdx: func(target *goja.Object, idx int) bool {
+			const maxArrayIndex = 1<<32 - 2
+			if idx < 0 || int64(idx) > maxArrayIndex {
+				name := fmt.Sprintf("%d", idx)
+				// Check expandos first
+				if exp, ok := expandos[name]; ok {
+					if exp.configurable {
+						delete(expandos, name)
+						return true
+					}
+					return false // Non-configurable
+				}
+				// Check named property
+				if collection.NamedItem(name) != nil {
+					return false // Can't delete named property
+				}
+				return true // Doesn't exist
+			}
+			if idx < collection.Length() {
+				return false // Index exists, can't delete
+			}
+			return true // Index doesn't exist, vacuously successful
 		},
 
 		// DefineProperty - prevent defining properties that shadow DOM properties
 		DefineProperty: func(target *goja.Object, property string, desc goja.PropertyDescriptor) bool {
-			// Can't define properties that shadow DOM properties
+			// Can't define properties at any numeric index
 			if isArrayIndex(property) {
-				idx := 0
-				for _, c := range property {
-					idx = idx*10 + int(c-'0')
-				}
-				if idx < collection.Length() {
-					return false // Strict mode will throw
-				}
+				return false // Always reject, strict mode will throw
 			}
 
+			// Can't define properties that shadow existing named DOM properties
 			if collection.NamedItem(property) != nil {
 				return false // Strict mode will throw
 			}
 
-			// Store as expando
-			expandos[property] = desc.Value
+			// Store as expando with all descriptor flags
+			// Default to false for attributes not specified (as per Object.defineProperty behavior)
+			writable := desc.Writable == goja.FLAG_TRUE
+			enumerable := desc.Enumerable == goja.FLAG_TRUE
+			configurable := desc.Configurable == goja.FLAG_TRUE
+			expandos[property] = expandoValue{value: desc.Value, writable: writable, enumerable: enumerable, configurable: configurable}
+
+			// For non-configurable properties, we must also define on the target object
+			// to satisfy goja's proxy invariant checks
+			if !configurable {
+				target.DefineDataProperty(property, desc.Value, desc.Writable, desc.Enumerable, desc.Configurable)
+			}
 			return true
+		},
+
+		// DefinePropertyIdx for numeric indices
+		// Note: Values outside valid array index range are treated as named properties.
+		DefinePropertyIdx: func(target *goja.Object, idx int, desc goja.PropertyDescriptor) bool {
+			const maxArrayIndex = 1<<32 - 2
+			if idx < 0 || int64(idx) > maxArrayIndex {
+				name := fmt.Sprintf("%d", idx)
+				// Can't define properties that shadow existing named DOM properties
+				if collection.NamedItem(name) != nil {
+					return false
+				}
+				// Store as expando with all descriptor flags
+				writable := desc.Writable == goja.FLAG_TRUE
+				enumerable := desc.Enumerable == goja.FLAG_TRUE
+				configurable := desc.Configurable == goja.FLAG_TRUE
+				expandos[name] = expandoValue{value: desc.Value, writable: writable, enumerable: enumerable, configurable: configurable}
+
+				// For non-configurable properties, define on target for proxy invariants
+				if !configurable {
+					target.DefineDataProperty(name, desc.Value, desc.Writable, desc.Enumerable, desc.Configurable)
+				}
+				return true
+			}
+			// Valid array indices always reject
+			return false
 		},
 	})
 

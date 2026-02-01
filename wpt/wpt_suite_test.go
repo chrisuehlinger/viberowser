@@ -8,6 +8,7 @@
 //   - TestWPT_DOMTraversal: Runs all passing DOM traversal tests from /dom/traversal/
 //   - TestWPT_DOMRanges: Runs all passing DOM range tests from /dom/ranges/
 //   - TestWPT_DOMEvents: Runs all passing DOM event tests from /dom/events/
+//   - TestWPT_DOMCollections: Runs all passing DOM collections tests from /dom/collections/
 //
 // To discover all WPT tests and see current pass/fail status:
 //
@@ -269,6 +270,20 @@ func DOMRangesPassingTests() []string {
 	}
 }
 
+// DOMCollectionsPassingTests returns the list of DOM collections tests that are expected to pass.
+// This list is based on actual passing tests as of 2026-02-01.
+func DOMCollectionsPassingTests() []string {
+	return []string{
+		"HTMLCollection-delete.html",
+		"HTMLCollection-empty-name.html",
+		"HTMLCollection-iterator.html",
+		"HTMLCollection-own-props.html",
+		"HTMLCollection-supported-property-indices.html",
+		"HTMLCollection-supported-property-names.html",
+		"namednodemap-supported-property-names.html",
+	}
+}
+
 // DOMEventsPassingTests returns the list of DOM event tests that are expected to pass.
 // This list is based on actual passing tests as of 2026-02-01.
 func DOMEventsPassingTests() []string {
@@ -378,6 +393,27 @@ func TestWPT_DOMEvents(t *testing.T) {
 
 	for _, testFile := range tests {
 		testPath := "/dom/events/" + testFile
+		t.Run(testFile, func(t *testing.T) {
+			runWPTTest(t, runner, testPath)
+		})
+	}
+}
+
+// TestWPT_DOMCollections runs all passing DOM collections tests.
+func TestWPT_DOMCollections(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping WPT tests in short mode")
+	}
+
+	wptPath := getWPTPath(t)
+	runner := NewRunner(wptPath)
+	runner.Timeout = 30 * time.Second
+
+	tests := DOMCollectionsPassingTests()
+	t.Logf("Running %d DOM collections tests", len(tests))
+
+	for _, testFile := range tests {
+		testPath := "/dom/collections/" + testFile
 		t.Run(testFile, func(t *testing.T) {
 			runWPTTest(t, runner, testPath)
 		})
