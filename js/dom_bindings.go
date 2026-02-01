@@ -334,6 +334,8 @@ type DOMBinder struct {
 	attrCache                    map[*dom.Attr]*goja.Object
 	rangeProto                   *goja.Object
 	rangeCache                   map[*dom.Range]*goja.Object
+	staticRangeProto             *goja.Object
+	staticRangeCache             map[*dom.StaticRange]*goja.Object
 	treeWalkerProto              *goja.Object
 	nodeIteratorProto            *goja.Object
 	shadowRootProto              *goja.Object
@@ -359,6 +361,7 @@ func NewDOMBinder(runtime *Runtime) *DOMBinder {
 		domTokenListCache:      make(map[*dom.DOMTokenList]*goja.Object),
 		attrCache:              make(map[*dom.Attr]*goja.Object),
 		rangeCache:             make(map[*dom.Range]*goja.Object),
+		staticRangeCache:       make(map[*dom.StaticRange]*goja.Object),
 		shadowRootCache:        make(map[*dom.ShadowRoot]*goja.Object),
 		selectionCache:         make(map[*dom.Selection]*goja.Object),
 		eventHandlers:          make(map[*goja.Object]map[string]goja.Value),
@@ -712,6 +715,82 @@ func (b *DOMBinder) setupPrototypes() {
 	b.rangeProto.Set("END_TO_START", dom.EndToStart)
 
 	vm.Set("Range", rangeConstructorObj)
+
+	// Create StaticRange prototype and constructor
+	b.staticRangeProto = vm.NewObject()
+	staticRangeConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		// StaticRange requires an init dictionary
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to construct 'StaticRange': 1 argument required, but only 0 present."))
+		}
+
+		initArg := call.Arguments[0]
+		if goja.IsNull(initArg) || goja.IsUndefined(initArg) {
+			panic(vm.NewTypeError("Failed to construct 'StaticRange': parameter 1 is not of type 'StaticRangeInit'."))
+		}
+
+		initObj := initArg.ToObject(vm)
+
+		// Helper function to get a node from a property, checking for Attr nodes
+		getContainerNode := func(val goja.Value, propName string) *dom.Node {
+			if goja.IsNull(val) || goja.IsUndefined(val) {
+				panic(vm.NewTypeError("Failed to construct 'StaticRange': Failed to read the '" + propName + "' property from 'StaticRangeInit': Required member is undefined."))
+			}
+			containerObj := val.ToObject(vm)
+
+			// Check if it's an Attr node - these should throw InvalidNodeTypeError
+			if attr := b.getGoAttr(containerObj); attr != nil {
+				panic(b.createDOMException("InvalidNodeTypeError", propName+" cannot be an Attr node"))
+			}
+
+			node := b.getGoNode(containerObj)
+			if node == nil {
+				panic(vm.NewTypeError("Failed to construct 'StaticRange': parameter 1's '" + propName + "' member is not of type 'Node'."))
+			}
+			return node
+		}
+
+		// Get required properties
+		startContainerVal := initObj.Get("startContainer")
+		startContainer := getContainerNode(startContainerVal, "startContainer")
+
+		startOffsetVal := initObj.Get("startOffset")
+		if goja.IsNull(startOffsetVal) || goja.IsUndefined(startOffsetVal) {
+			panic(vm.NewTypeError("Failed to construct 'StaticRange': Failed to read the 'startOffset' property from 'StaticRangeInit': Required member is undefined."))
+		}
+		startOffset := int(startOffsetVal.ToInteger())
+
+		endContainerVal := initObj.Get("endContainer")
+		endContainer := getContainerNode(endContainerVal, "endContainer")
+
+		endOffsetVal := initObj.Get("endOffset")
+		if goja.IsNull(endOffsetVal) || goja.IsUndefined(endOffsetVal) {
+			panic(vm.NewTypeError("Failed to construct 'StaticRange': Failed to read the 'endOffset' property from 'StaticRangeInit': Required member is undefined."))
+		}
+		endOffset := int(endOffsetVal.ToInteger())
+
+		// Create the StaticRange
+		init := dom.StaticRangeInit{
+			StartContainer: startContainer,
+			StartOffset:    startOffset,
+			EndContainer:   endContainer,
+			EndOffset:      endOffset,
+		}
+
+		sr, err := dom.NewStaticRange(init)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				panic(b.createDOMException(domErr.Name, domErr.Message))
+			}
+			panic(vm.NewTypeError(err.Error()))
+		}
+
+		return b.BindStaticRange(sr)
+	})
+	staticRangeConstructorObj := staticRangeConstructor.ToObject(vm)
+	staticRangeConstructorObj.Set("prototype", b.staticRangeProto)
+	b.staticRangeProto.Set("constructor", staticRangeConstructorObj)
+	vm.Set("StaticRange", staticRangeConstructorObj)
 
 	// Create Selection prototype
 	b.selectionProto = vm.NewObject()
@@ -6444,6 +6523,62 @@ func (b *DOMBinder) BindRange(r *dom.Range) *goja.Object {
 	b.rangeCache[r] = jsRange
 
 	return jsRange
+}
+
+// BindStaticRange creates a JavaScript object from a DOM StaticRange.
+func (b *DOMBinder) BindStaticRange(sr *dom.StaticRange) *goja.Object {
+	if sr == nil {
+		return nil
+	}
+
+	// Check cache
+	if jsObj, ok := b.staticRangeCache[sr]; ok {
+		return jsObj
+	}
+
+	vm := b.runtime.vm
+	jsStaticRange := vm.NewObject()
+
+	// Set prototype for instanceof to work
+	if b.staticRangeProto != nil {
+		jsStaticRange.SetPrototype(b.staticRangeProto)
+	}
+
+	jsStaticRange.Set("_goStaticRange", sr)
+
+	// Accessor properties - StaticRange only has readonly properties
+	jsStaticRange.DefineAccessorProperty("startContainer", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		container := sr.StartContainer()
+		if container == nil {
+			return goja.Null()
+		}
+		return b.BindNode(container)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsStaticRange.DefineAccessorProperty("startOffset", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(sr.StartOffset())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsStaticRange.DefineAccessorProperty("endContainer", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		container := sr.EndContainer()
+		if container == nil {
+			return goja.Null()
+		}
+		return b.BindNode(container)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsStaticRange.DefineAccessorProperty("endOffset", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(sr.EndOffset())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsStaticRange.DefineAccessorProperty("collapsed", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(sr.Collapsed())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// Cache the binding
+	b.staticRangeCache[sr] = jsStaticRange
+
+	return jsStaticRange
 }
 
 // BindSelection creates a JavaScript object from a DOM Selection.

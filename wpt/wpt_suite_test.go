@@ -283,6 +283,7 @@ func DOMRangesPassingTests() []string {
 		"Range-extractContents.html",
 		"Range-selectNode.html",
 		"Range-stringifier.html",
+		"StaticRange-constructor.html",
 	}
 }
 
