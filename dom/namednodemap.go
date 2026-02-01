@@ -89,9 +89,9 @@ func (nm *NamedNodeMap) setAttr(attr *Attr) *Attr {
 			oldValue := existing.value
 			nm.attrs[i] = attr
 			existing.ownerElement = nil
-			// Notify about attribute change
+			// Notify about attribute change (use localName per DOM spec)
 			if nm.ownerElement != nil {
-				notifyAttributeMutation(nm.ownerElement.AsNode(), attr.name, attr.namespaceURI, oldValue)
+				notifyAttributeMutation(nm.ownerElement.AsNode(), attr.localName, attr.namespaceURI, oldValue)
 			}
 			return existing
 		}
@@ -99,9 +99,9 @@ func (nm *NamedNodeMap) setAttr(attr *Attr) *Attr {
 
 	// Add new attribute
 	nm.attrs = append(nm.attrs, attr)
-	// Notify about new attribute (old value is empty for new attributes)
+	// Notify about new attribute (old value is empty for new attributes, use localName per DOM spec)
 	if nm.ownerElement != nil {
-		notifyAttributeMutation(nm.ownerElement.AsNode(), attr.name, attr.namespaceURI, "")
+		notifyAttributeMutation(nm.ownerElement.AsNode(), attr.localName, attr.namespaceURI, "")
 	}
 	return nil
 }
@@ -118,9 +118,9 @@ func (nm *NamedNodeMap) RemoveNamedItem(name string) *Attr {
 		if attr.name == name {
 			oldValue := attr.value
 			nm.attrs = append(nm.attrs[:i], nm.attrs[i+1:]...)
-			// Notify about attribute removal before clearing owner
+			// Notify about attribute removal before clearing owner (use localName per DOM spec)
 			if nm.ownerElement != nil {
-				notifyAttributeMutation(nm.ownerElement.AsNode(), name, attr.namespaceURI, oldValue)
+				notifyAttributeMutation(nm.ownerElement.AsNode(), attr.localName, attr.namespaceURI, oldValue)
 			}
 			attr.ownerElement = nil
 			return attr
@@ -135,9 +135,9 @@ func (nm *NamedNodeMap) RemoveNamedItemNS(namespaceURI, localName string) *Attr 
 		if attr.namespaceURI == namespaceURI && attr.localName == localName {
 			oldValue := attr.value
 			nm.attrs = append(nm.attrs[:i], nm.attrs[i+1:]...)
-			// Notify about attribute removal before clearing owner
+			// Notify about attribute removal before clearing owner (use localName per DOM spec)
 			if nm.ownerElement != nil {
-				notifyAttributeMutation(nm.ownerElement.AsNode(), attr.name, namespaceURI, oldValue)
+				notifyAttributeMutation(nm.ownerElement.AsNode(), attr.localName, namespaceURI, oldValue)
 			}
 			attr.ownerElement = nil
 			return attr
@@ -162,9 +162,9 @@ func (nm *NamedNodeMap) SetValue(name, value string) {
 	if attr != nil {
 		oldValue := attr.value
 		attr.value = value
-		// Notify about attribute change
+		// Notify about attribute change (use localName per DOM spec)
 		if nm.ownerElement != nil {
-			notifyAttributeMutation(nm.ownerElement.AsNode(), name, attr.namespaceURI, oldValue)
+			notifyAttributeMutation(nm.ownerElement.AsNode(), attr.localName, attr.namespaceURI, oldValue)
 		}
 	} else {
 		nm.setAttr(NewAttr(name, value))
