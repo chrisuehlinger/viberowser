@@ -6,6 +6,8 @@
 // The tests are organized into suites:
 //   - TestWPT_DOMNodes: Runs all passing DOM node tests from /dom/nodes/
 //   - TestWPT_DOMTraversal: Runs all passing DOM traversal tests from /dom/traversal/
+//   - TestWPT_DOMRanges: Runs all passing DOM range tests from /dom/ranges/
+//   - TestWPT_DOMEvents: Runs all passing DOM event tests from /dom/events/
 //
 // To discover all WPT tests and see current pass/fail status:
 //
@@ -249,6 +251,55 @@ func DOMTraversalPassingTests() []string {
 	}
 }
 
+// DOMRangesPassingTests returns the list of DOM range tests that are expected to pass.
+// This list is based on actual passing tests as of 2026-02-01.
+func DOMRangesPassingTests() []string {
+	return []string{
+		"Range-attributes.html",
+		"Range-cloneContents.html",
+		"Range-cloneRange.html",
+		"Range-collapse.html",
+		"Range-commonAncestorContainer-2.html",
+		"Range-commonAncestorContainer.html",
+		"Range-comparePoint-2.html",
+		"Range-constructor.html",
+		"Range-detach.html",
+		"Range-selectNode.html",
+		"Range-stringifier.html",
+	}
+}
+
+// DOMEventsPassingTests returns the list of DOM event tests that are expected to pass.
+// This list is based on actual passing tests as of 2026-02-01.
+func DOMEventsPassingTests() []string {
+	return []string{
+		"CustomEvent.html",
+		"Event-cancelBubble.html",
+		"Event-constants.html",
+		"Event-defaultPrevented-after-dispatch.html",
+		"Event-defaultPrevented.html",
+		"Event-dispatch-bubble-canceled.html",
+		"Event-dispatch-bubbles-false.html",
+		"Event-dispatch-bubbles-true.html",
+		"Event-dispatch-click.tentative.html",
+		"Event-dispatch-detached-click.html",
+		"Event-dispatch-multiple-cancelBubble.html",
+		"Event-dispatch-multiple-stopPropagation.html",
+		"Event-dispatch-omitted-capture.html",
+		"Event-dispatch-order-at-target.html",
+		"Event-dispatch-order.html",
+		"Event-dispatch-other-document.html",
+		"Event-dispatch-propagation-stopped.html",
+		"Event-dispatch-reenter.html",
+		"Event-dispatch-target-moved.html",
+		"Event-dispatch-target-removed.html",
+		"Event-initEvent.html",
+		"Event-propagation.html",
+		"Event-returnValue.html",
+		"Event-stopImmediatePropagation.html",
+	}
+}
+
 // TestWPT_DOMNodes runs all passing DOM node tests.
 func TestWPT_DOMNodes(t *testing.T) {
 	if testing.Short() {
@@ -291,6 +342,48 @@ func TestWPT_DOMTraversal(t *testing.T) {
 	}
 }
 
+// TestWPT_DOMRanges runs all passing DOM range tests.
+func TestWPT_DOMRanges(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping WPT tests in short mode")
+	}
+
+	wptPath := getWPTPath(t)
+	runner := NewRunner(wptPath)
+	runner.Timeout = 30 * time.Second
+
+	tests := DOMRangesPassingTests()
+	t.Logf("Running %d DOM range tests", len(tests))
+
+	for _, testFile := range tests {
+		testPath := "/dom/ranges/" + testFile
+		t.Run(testFile, func(t *testing.T) {
+			runWPTTest(t, runner, testPath)
+		})
+	}
+}
+
+// TestWPT_DOMEvents runs all passing DOM event tests.
+func TestWPT_DOMEvents(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping WPT tests in short mode")
+	}
+
+	wptPath := getWPTPath(t)
+	runner := NewRunner(wptPath)
+	runner.Timeout = 30 * time.Second
+
+	tests := DOMEventsPassingTests()
+	t.Logf("Running %d DOM event tests", len(tests))
+
+	for _, testFile := range tests {
+		testPath := "/dom/events/" + testFile
+		t.Run(testFile, func(t *testing.T) {
+			runWPTTest(t, runner, testPath)
+		})
+	}
+}
+
 // TestWPT_DiscoverAll discovers and reports on all WPT tests in dom/nodes and dom/traversal.
 // This is primarily for discovery - it logs pass/fail without failing the test.
 func TestWPT_DiscoverAll(t *testing.T) {
@@ -310,6 +403,8 @@ func TestWPT_DiscoverAll(t *testing.T) {
 	dirs := []string{
 		"/dom/nodes",
 		"/dom/traversal",
+		"/dom/ranges",
+		"/dom/events",
 	}
 
 	for _, dir := range dirs {
