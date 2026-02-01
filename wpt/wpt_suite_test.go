@@ -166,8 +166,9 @@ func DOMNodesPassingTests() []string {
 		"Element-siblingElement-null.html",
 		"Element-tagName.html",
 
-		// MutationObserver tests (6 tests)
+		// MutationObserver tests (7 tests)
 		"MutationObserver-attributes.html",
+		"MutationObserver-characterData.html",
 		"MutationObserver-childList.html",
 		"MutationObserver-inner-outer.html",
 		"MutationObserver-sanity.html",

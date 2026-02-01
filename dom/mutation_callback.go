@@ -116,6 +116,15 @@ func notifyCharacterDataMutation(
 	target *Node,
 	oldValue string,
 ) {
+	NotifyCharacterDataMutation(target, oldValue)
+}
+
+// NotifyCharacterDataMutation notifies all registered callbacks about a character data mutation.
+// This is exported for use by JavaScript bindings that need to trigger MutationObserver notifications.
+func NotifyCharacterDataMutation(
+	target *Node,
+	oldValue string,
+) {
 	if target == nil || target.ownerDoc == nil {
 		return
 	}

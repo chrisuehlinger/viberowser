@@ -5313,6 +5313,7 @@ func (b *DOMBinder) bindCharacterDataMethods(jsNode *goja.Object, node *dom.Node
 		appendUnits := gojaValueToUTF16(call.Arguments[0])
 		// Get current data as UTF-16 code units
 		currentUnits := stringToUTF16(node.NodeValue())
+		oldValue := utf16ToString(currentUnits)
 
 		// Notify ReplaceData mutation: appendData is equivalent to insertData(length, data)
 		offset := len(currentUnits)
@@ -5322,6 +5323,9 @@ func (b *DOMBinder) bindCharacterDataMethods(jsNode *goja.Object, node *dom.Node
 		newUnits := append(currentUnits, appendUnits...)
 		// Store as WTF-8 without triggering another notification
 		node.SetNodeValueRaw(utf16ToString(newUnits))
+
+		// Notify MutationObserver
+		dom.NotifyCharacterDataMutation(node, oldValue)
 		return goja.Undefined()
 	})
 
@@ -5335,6 +5339,7 @@ func (b *DOMBinder) bindCharacterDataMethods(jsNode *goja.Object, node *dom.Node
 		insertUnits := gojaValueToUTF16(call.Arguments[1])
 
 		currentUnits := stringToUTF16(node.NodeValue())
+		oldValue := utf16ToString(currentUnits)
 		length := uint32(len(currentUnits))
 
 		// Check offset bounds
@@ -5353,6 +5358,9 @@ func (b *DOMBinder) bindCharacterDataMethods(jsNode *goja.Object, node *dom.Node
 
 		// Set value without triggering another notification
 		node.SetNodeValueRaw(utf16ToString(newUnits))
+
+		// Notify MutationObserver
+		dom.NotifyCharacterDataMutation(node, oldValue)
 		return goja.Undefined()
 	})
 
@@ -5366,6 +5374,7 @@ func (b *DOMBinder) bindCharacterDataMethods(jsNode *goja.Object, node *dom.Node
 		count := toUint32(call.Arguments[1])
 
 		currentUnits := stringToUTF16(node.NodeValue())
+		oldValue := utf16ToString(currentUnits)
 		length := uint32(len(currentUnits))
 
 		// Check offset bounds
@@ -5392,6 +5401,9 @@ func (b *DOMBinder) bindCharacterDataMethods(jsNode *goja.Object, node *dom.Node
 
 		// Set value without triggering another notification
 		node.SetNodeValueRaw(utf16ToString(newUnits))
+
+		// Notify MutationObserver
+		dom.NotifyCharacterDataMutation(node, oldValue)
 		return goja.Undefined()
 	})
 
@@ -5406,6 +5418,7 @@ func (b *DOMBinder) bindCharacterDataMethods(jsNode *goja.Object, node *dom.Node
 		replaceUnits := gojaValueToUTF16(call.Arguments[2])
 
 		currentUnits := stringToUTF16(node.NodeValue())
+		oldValue := utf16ToString(currentUnits)
 		length := uint32(len(currentUnits))
 
 		// Check offset bounds
@@ -5433,6 +5446,9 @@ func (b *DOMBinder) bindCharacterDataMethods(jsNode *goja.Object, node *dom.Node
 
 		// Set value without triggering another notification
 		node.SetNodeValueRaw(utf16ToString(newUnits))
+
+		// Notify MutationObserver
+		dom.NotifyCharacterDataMutation(node, oldValue)
 		return goja.Undefined()
 	})
 }
