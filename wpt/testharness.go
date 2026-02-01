@@ -22,10 +22,11 @@ type TestHarnessStatus struct {
 
 // Status constants for individual tests
 const (
-	TestStatusPass    = 0
-	TestStatusFail    = 1
-	TestStatusTimeout = 2
-	TestStatusNotRun  = 3
+	TestStatusPass              = 0
+	TestStatusFail              = 1
+	TestStatusTimeout           = 2
+	TestStatusNotRun            = 3
+	TestStatusPreconditionFailed = 4
 )
 
 // Harness status constants
@@ -275,6 +276,8 @@ func StatusString(status int) string {
 		return "TIMEOUT"
 	case TestStatusNotRun:
 		return "NOTRUN"
+	case TestStatusPreconditionFailed:
+		return "PRECONDITION_FAILED"
 	default:
 		return "UNKNOWN"
 	}

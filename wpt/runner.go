@@ -495,6 +495,9 @@ func convertTestStatus(status int) TestStatus {
 		return StatusTimeout
 	case TestStatusNotRun:
 		return StatusSkip
+	case TestStatusPreconditionFailed:
+		// PRECONDITION_FAILED means optional feature not available - treat as skip
+		return StatusSkip
 	default:
 		return StatusError
 	}

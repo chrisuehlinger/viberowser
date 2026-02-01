@@ -59,9 +59,13 @@ func runWPTTest(t *testing.T, runner *Runner, testPath string) {
 	// Track results
 	passed := 0
 	failed := 0
+	skipped := 0
 	for _, test := range result.Tests {
 		if test.Status == StatusPass {
 			passed++
+		} else if test.Status == StatusSkip {
+			// PRECONDITION_FAILED or NOTRUN - not a failure, just skipped
+			skipped++
 		} else {
 			failed++
 			t.Errorf("[FAIL] %s: %s", test.Name, test.Message)
@@ -71,8 +75,13 @@ func runWPTTest(t *testing.T, runner *Runner, testPath string) {
 	if len(result.Tests) == 0 {
 		t.Errorf("No test results - harness may not have run properly")
 	} else {
-		t.Logf("Results: %d passed, %d failed (%.1f%%)", passed, failed,
-			float64(passed)/float64(passed+failed)*100)
+		total := passed + failed
+		if total > 0 {
+			t.Logf("Results: %d passed, %d failed, %d skipped (%.1f%% pass rate)",
+				passed, failed, skipped, float64(passed)/float64(total)*100)
+		} else {
+			t.Logf("Results: %d skipped", skipped)
+		}
 	}
 }
 
@@ -107,7 +116,7 @@ func DOMNodesPassingTests() []string {
 		"DOMImplementation-createHTMLDocument-with-saved-implementation.html",
 		"DOMImplementation-hasFeature.html",
 
-		// Document tests (17 tests)
+		// Document tests (18 tests)
 		"Document-adoptNode.html",
 		"Document-constructor.html",
 		"Document-createAttribute.html",
@@ -116,6 +125,7 @@ func DOMNodesPassingTests() []string {
 		"Document-createElement.html",
 		"Document-createElement-namespace.html",
 		"Document-createElementNS.html",
+		"Document-createEvent.https.html",
 		"Document-createProcessingInstruction.html",
 		"Document-createTextNode.html",
 		"Document-createTreeWalker.html",
