@@ -379,6 +379,9 @@ func (se *ScriptExecutor) SetupDocument(doc *dom.Document) {
 	window := se.runtime.vm.Get("window").ToObject(se.runtime.vm)
 	if window != nil {
 		se.eventBinder.BindEventTarget(window)
+		// Bind event handler IDL attributes (onload, onerror, etc.) to window
+		// Per HTML spec, Window has both GlobalEventHandlers and WindowEventHandlers
+		se.domBinder.BindWindowEventHandlers(window)
 	}
 
 	// Set up window.frames property to access iframe content windows

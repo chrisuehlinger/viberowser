@@ -46,10 +46,11 @@ type eventListener struct {
 
 // listenerOptions represents addEventListener options.
 type listenerOptions struct {
-	capture bool
-	once    bool
-	passive bool
-	signal  *goja.Object // AbortSignal to watch for abort
+	capture            bool
+	once               bool
+	passive            bool
+	signal             *goja.Object // AbortSignal to watch for abort
+	isOnErrorHandler   bool         // True if this is window.onerror handler (special calling convention)
 }
 
 // ListenerErrorHandler is called when an event listener throws an exception.
@@ -214,7 +215,40 @@ func (et *EventTarget) DispatchEvent(vm *goja.Runtime, event *goja.Object, phase
 		} else {
 			// Call the function listener with currentTarget as 'this'
 			// Per DOM spec, the 'this' value for function listeners is the currentTarget
-			_, err = l.callback(currentTarget, event)
+			if l.options.isOnErrorHandler && eventType == "error" {
+				// Per HTML spec, OnErrorEventHandler has a special calling convention:
+				// (message, filename, lineno, colno, error) instead of (event)
+				message := ""
+				filename := ""
+				var lineno, colno int64 = 0, 0
+				var errorVal goja.Value = goja.Undefined()
+
+				if msgVal := event.Get("message"); msgVal != nil && !goja.IsUndefined(msgVal) {
+					message = msgVal.String()
+				}
+				if fnVal := event.Get("filename"); fnVal != nil && !goja.IsUndefined(fnVal) {
+					filename = fnVal.String()
+				}
+				if lnVal := event.Get("lineno"); lnVal != nil && !goja.IsUndefined(lnVal) {
+					lineno = lnVal.ToInteger()
+				}
+				if cnVal := event.Get("colno"); cnVal != nil && !goja.IsUndefined(cnVal) {
+					colno = cnVal.ToInteger()
+				}
+				if errVal := event.Get("error"); errVal != nil {
+					errorVal = errVal
+				}
+
+				_, err = l.callback(currentTarget,
+					vm.ToValue(message),
+					vm.ToValue(filename),
+					vm.ToValue(lineno),
+					vm.ToValue(colno),
+					errorVal,
+				)
+			} else {
+				_, err = l.callback(currentTarget, event)
+			}
 		}
 
 		if err != nil {

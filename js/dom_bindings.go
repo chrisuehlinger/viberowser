@@ -10375,6 +10375,13 @@ var eventHandlerAttributes = []string{
 	"onpopstate", "onrejectionhandled", "onstorage", "onunhandledrejection", "onunload",
 }
 
+// BindWindowEventHandlers adds event handler IDL attributes to the window object.
+// This is the public entry point used by ScriptExecutor to set up window.onload, window.onerror, etc.
+// Per HTML spec, Window has both GlobalEventHandlers and WindowEventHandlers mixins.
+func (b *DOMBinder) BindWindowEventHandlers(window *goja.Object) {
+	b.bindEventHandlerAttributes(window)
+}
+
 // bindEventHandlerAttributes adds event handler IDL attributes (onclick, onload, etc.) to a JS object.
 // This implements the HTML spec's event handler content attributes and IDL attributes.
 func (b *DOMBinder) bindEventHandlerAttributes(jsObj *goja.Object) {
@@ -10443,7 +10450,13 @@ func (b *DOMBinder) bindEventHandlerAttributes(jsObj *goja.Object) {
 				// Add as event listener (these are always functions, not objects)
 				if b.eventBinder != nil {
 					target := b.eventBinder.GetOrCreateTarget(jsObj)
-					target.AddEventListener(eventTypeCopy, callable, newHandler, false, nil, listenerOptions{})
+					// Per HTML spec, onerror has a special calling convention:
+					// OnErrorEventHandler receives (message, filename, lineno, colno, error)
+					// instead of just (event)
+					opts := listenerOptions{
+						isOnErrorHandler: eventTypeCopy == "error",
+					}
+					target.AddEventListener(eventTypeCopy, callable, newHandler, false, nil, opts)
 				}
 
 				return goja.Undefined()
