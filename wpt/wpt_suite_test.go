@@ -342,9 +342,11 @@ func DOMEventsPassingTests() []string {
 		"EventListener-handleEvent.html",
 		"EventTarget-dispatchEvent.html",
 		"EventTarget-dispatchEvent-returnvalue.html",
+		"EventTarget-this-of-listener.html",
 		"Event-type.html",
 		"Event-type-empty.html",
 		"event-src-element-nullable.html",
+		"label-default-action.html",
 		"remove-all-listeners.html",
 	}
 }
@@ -469,6 +471,39 @@ func TestWPT_DOMLists(t *testing.T) {
 
 	for _, testFile := range tests {
 		testPath := "/dom/lists/" + testFile
+		t.Run(testFile, func(t *testing.T) {
+			runWPTTest(t, runner, testPath)
+		})
+	}
+}
+
+// DOMTopLevelPassingTests returns the list of top-level DOM tests that are expected to pass.
+// These are tests in /dom/ (not in subdirectories like /dom/nodes).
+// This list is based on actual passing tests as of 2026-02-01.
+func DOMTopLevelPassingTests() []string {
+	return []string{
+		"eventPathRemoved.html",
+		"historical.html",
+		"historical-mutation-events.html",
+		"svg-insert-crash.html",
+	}
+}
+
+// TestWPT_DOMTopLevel runs all passing top-level DOM tests.
+func TestWPT_DOMTopLevel(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping WPT tests in short mode")
+	}
+
+	wptPath := getWPTPath(t)
+	runner := NewRunner(wptPath)
+	runner.Timeout = 30 * time.Second
+
+	tests := DOMTopLevelPassingTests()
+	t.Logf("Running %d top-level DOM tests", len(tests))
+
+	for _, testFile := range tests {
+		testPath := "/dom/" + testFile
 		t.Run(testFile, func(t *testing.T) {
 			runWPTTest(t, runner, testPath)
 		})
