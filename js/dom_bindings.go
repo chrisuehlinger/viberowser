@@ -600,6 +600,8 @@ func (b *DOMBinder) setupPrototypes() {
 	})
 	htmlElementConstructorObj := htmlElementConstructor.ToObject(vm)
 	htmlElementConstructorObj.Set("prototype", b.htmlElementProto)
+	// Set constructor.name property using DefineDataProperty to override goja's default
+	htmlElementConstructorObj.DefineDataProperty("name", vm.ToValue("HTMLElement"), goja.FLAG_FALSE, goja.FLAG_FALSE, goja.FLAG_TRUE)
 	b.htmlElementProto.Set("constructor", htmlElementConstructorObj)
 	vm.Set("HTMLElement", htmlElementConstructorObj)
 
@@ -1602,6 +1604,7 @@ func (b *DOMBinder) setupHTMLElementPrototypes() {
 
 	// Create prototype for each unique constructor type
 	for constructorName := range constructorNames {
+		name := constructorName // capture for closure
 		proto := vm.NewObject()
 		proto.SetPrototype(b.htmlElementProto)
 
@@ -1610,11 +1613,13 @@ func (b *DOMBinder) setupHTMLElementPrototypes() {
 		})
 		constructorObj := constructor.ToObject(vm)
 		constructorObj.Set("prototype", proto)
+		// Set constructor.name property using DefineDataProperty to override goja's default
+		constructorObj.DefineDataProperty("name", vm.ToValue(name), goja.FLAG_FALSE, goja.FLAG_FALSE, goja.FLAG_TRUE)
 		proto.Set("constructor", constructorObj)
-		vm.Set(constructorName, constructorObj)
+		vm.Set(name, constructorObj)
 
 		// Store prototype for later lookup
-		b.htmlElementProtoMap[constructorName] = proto
+		b.htmlElementProtoMap[name] = proto
 	}
 
 	// Create HTMLUnknownElement for unknown tags
@@ -1625,6 +1630,8 @@ func (b *DOMBinder) setupHTMLElementPrototypes() {
 	})
 	unknownConstructorObj := unknownConstructor.ToObject(vm)
 	unknownConstructorObj.Set("prototype", unknownProto)
+	// Set constructor.name property using DefineDataProperty to override goja's default
+	unknownConstructorObj.DefineDataProperty("name", vm.ToValue("HTMLUnknownElement"), goja.FLAG_FALSE, goja.FLAG_FALSE, goja.FLAG_TRUE)
 	unknownProto.Set("constructor", unknownConstructorObj)
 	vm.Set("HTMLUnknownElement", unknownConstructorObj)
 	b.htmlElementProtoMap["HTMLUnknownElement"] = unknownProto
@@ -4024,6 +4031,12 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		b.bindInputProperties(jsEl, el)
 	}
 
+	// Add form control properties (disabled, name, form) for button, select, textarea
+	localName := el.LocalName()
+	if ns == dom.HTMLNamespace && (localName == "button" || localName == "select" || localName == "textarea") {
+		b.bindFormControlProperties(jsEl, el)
+	}
+
 	// Add output-specific properties (htmlFor)
 	if el.LocalName() == "output" && ns == dom.HTMLNamespace {
 		b.bindOutputProperties(jsEl, el)
@@ -4203,6 +4216,55 @@ func (b *DOMBinder) bindRelList(jsEl *goja.Object, el *dom.Element) {
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+}
+
+// bindFormControlProperties adds properties common to form control elements (button, select, textarea).
+// Per HTML spec: https://html.spec.whatwg.org/multipage/form-elements.html
+func (b *DOMBinder) bindFormControlProperties(jsEl *goja.Object, el *dom.Element) {
+	vm := b.runtime.vm
+
+	// disabled property - whether the form control is disabled
+	jsEl.DefineAccessorProperty("disabled", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.Disabled())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetDisabled(call.Arguments[0].ToBoolean())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// name property - the name of the form control
+	jsEl.DefineAccessorProperty("name", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.GetAttribute("name"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("name", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// type property for button - returns the type attribute (submit, reset, button)
+	if el.LocalName() == "button" {
+		jsEl.DefineAccessorProperty("type", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			t := el.GetAttribute("type")
+			// Default is "submit" per spec
+			if t == "" {
+				return vm.ToValue("submit")
+			}
+			// Normalize to lowercase and validate
+			t = strings.ToLower(t)
+			if t == "submit" || t == "reset" || t == "button" {
+				return vm.ToValue(t)
+			}
+			// Invalid type defaults to "submit"
+			return vm.ToValue("submit")
+		}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			if len(call.Arguments) > 0 {
+				el.SetAttribute("type", call.Arguments[0].String())
+			}
+			return goja.Undefined()
+		}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+	}
 }
 
 // bindOutputProperties adds HTMLOutputElement-specific properties.
