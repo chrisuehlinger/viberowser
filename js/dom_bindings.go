@@ -8311,9 +8311,10 @@ func (b *DOMBinder) createNodeListProxy(nodeList *dom.NodeList) *goja.Object {
 	}
 
 	// Define length as a getter (live property)
+	// Per spec: length is non-enumerable, but we make it configurable to satisfy proxy invariants
 	target.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		return vm.ToValue(nodeList.Length())
-	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	}), nil, goja.FLAG_TRUE, goja.FLAG_FALSE)
 
 	// item() method
 	target.Set("item", func(call goja.FunctionCall) goja.Value {
@@ -8400,6 +8401,7 @@ func (b *DOMBinder) createNodeListProxy(nodeList *dom.NodeList) *goja.Object {
 
 	// has trap - for "in" operator
 	proxyHandler.Set("has", func(call goja.FunctionCall) goja.Value {
+		targetObj := call.Arguments[0].ToObject(vm)
 		prop := call.Arguments[1]
 		propStr := prop.String()
 
@@ -8409,8 +8411,20 @@ func (b *DOMBinder) createNodeListProxy(nodeList *dom.NodeList) *goja.Object {
 			return vm.ToValue(index >= 0 && index < nodeList.Length())
 		}
 
-		// Check if target has the property
-		return vm.ToValue(target.Get(propStr) != nil)
+		// For Symbols and other properties, use Reflect.has to check target properly
+		// This handles Symbol.iterator and other symbol properties
+		reflect := vm.Get("Reflect").ToObject(vm)
+		reflectHas, _ := goja.AssertFunction(reflect.Get("has"))
+		if reflectHas != nil {
+			result, err := reflectHas(goja.Undefined(), targetObj, prop)
+			if err == nil {
+				return result
+			}
+		}
+
+		// Fallback to direct target check
+		val := targetObj.Get(propStr)
+		return vm.ToValue(val != nil && !goja.IsUndefined(val))
 	})
 
 	// ownKeys trap - for Object.getOwnPropertyNames
@@ -8426,6 +8440,7 @@ func (b *DOMBinder) createNodeListProxy(nodeList *dom.NodeList) *goja.Object {
 
 	// getOwnPropertyDescriptor trap
 	proxyHandler.Set("getOwnPropertyDescriptor", func(call goja.FunctionCall) goja.Value {
+		targetObj := call.Arguments[0].ToObject(vm)
 		prop := call.Arguments[1]
 		propStr := prop.String()
 
@@ -8444,13 +8459,17 @@ func (b *DOMBinder) createNodeListProxy(nodeList *dom.NodeList) *goja.Object {
 				desc.Set("configurable", true)
 				return desc
 			}
-		} else if propStr == "length" {
-			desc := vm.NewObject()
-			desc.Set("value", nodeList.Length())
-			desc.Set("writable", false)
-			desc.Set("enumerable", false)
-			desc.Set("configurable", false)
-			return desc
+		}
+
+		// For other properties (length, Symbol.iterator, methods, etc.), use Reflect.getOwnPropertyDescriptor
+		// This ensures consistency with the target's actual descriptors
+		reflect := vm.Get("Reflect").ToObject(vm)
+		reflectGetOwnPropDesc, _ := goja.AssertFunction(reflect.Get("getOwnPropertyDescriptor"))
+		if reflectGetOwnPropDesc != nil {
+			result, err := reflectGetOwnPropDesc(goja.Undefined(), targetObj, prop)
+			if err == nil {
+				return result
+			}
 		}
 
 		return goja.Undefined()
