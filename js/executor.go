@@ -68,6 +68,55 @@ func NewScriptExecutor(runtime *Runtime) *ScriptExecutor {
 		return domBinder.BindNode(parentNode)
 	})
 
+	// Set the shadow root checker so window.event is handled correctly for shadow DOM.
+	// Per HTML spec, window.event should be undefined when listeners inside shadow trees are invoked.
+	eventBinder.SetShadowRootChecker(func(obj *goja.Object) bool {
+		if obj == nil {
+			return false
+		}
+		// Get the Go node from the JS object
+		goNode := domBinder.getGoNode(obj)
+		if goNode == nil {
+			return false
+		}
+		// Check if the node's root is a ShadowRoot
+		root := goNode.GetRootNode()
+		return root != nil && root.IsShadowRoot()
+	})
+
+	// Set the shadow host resolver for composed events to cross shadow boundaries.
+	// This returns the shadow host element when given a shadow root.
+	eventBinder.SetShadowHostResolver(func(obj *goja.Object) *goja.Object {
+		if obj == nil {
+			return nil
+		}
+		// Check if this object has _goShadowRoot (meaning it's a ShadowRoot binding)
+		if v := obj.Get("_goShadowRoot"); v != nil && !goja.IsUndefined(v) && !goja.IsNull(v) {
+			if sr, ok := v.Export().(*dom.ShadowRoot); ok && sr != nil {
+				host := sr.Host()
+				if host != nil {
+					return domBinder.BindElement(host)
+				}
+			}
+		}
+		// Also check if the node's root is a ShadowRoot (the node is inside a shadow tree)
+		// In this case, we need to get the shadow root first, then the host
+		goNode := domBinder.getGoNode(obj)
+		if goNode != nil {
+			root := goNode.GetRootNode()
+			if root != nil && root.IsShadowRoot() {
+				sr := root.GetShadowRoot()
+				if sr != nil {
+					host := sr.Host()
+					if host != nil {
+						return domBinder.BindElement(host)
+					}
+				}
+			}
+		}
+		return nil
+	})
+
 	// Set activation handlers for click events on checkbox/radio inputs
 	// Per HTML spec, activation behavior runs BEFORE onclick fires
 	eventBinder.SetActivationHandlers(

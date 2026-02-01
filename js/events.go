@@ -408,6 +408,15 @@ func (et *EventTarget) HasEventListeners(eventType string) bool {
 // Given a JS object, it returns the parent JS object (or nil if no parent).
 type NodeResolver func(obj *goja.Object) *goja.Object
 
+// ShadowRootChecker is a function type that checks if a JS object is inside a shadow tree.
+// Returns true if the object's root node is a ShadowRoot.
+type ShadowRootChecker func(obj *goja.Object) bool
+
+// ShadowHostResolver is a function type that returns the shadow host for a shadow root.
+// Given a JS object representing a shadow root, returns the host element JS object.
+// Returns nil if the object is not a shadow root.
+type ShadowHostResolver func(obj *goja.Object) *goja.Object
+
 // ActivationResult holds the result of a pre-activation step.
 type ActivationResult struct {
 	Element          *goja.Object // The element with activation behavior
@@ -437,6 +446,8 @@ type EventBinder struct {
 	mu                          sync.RWMutex
 	eventProtos                 map[string]*goja.Object // Map of event interface names to their prototypes
 	nodeResolver                NodeResolver            // Function to resolve parent nodes for event propagation
+	shadowRootChecker           ShadowRootChecker       // Function to check if a node is inside a shadow tree
+	shadowHostResolver          ShadowHostResolver      // Function to get shadow host from shadow root
 	activationHandler           ActivationHandler       // Handler for pre-click activation behavior
 	activationCancelHandler     ActivationCancelHandler // Handler for canceled activation
 	activationCompleteHandler   ActivationCompleteHandler // Handler for successful activation
@@ -455,6 +466,19 @@ func NewEventBinder(runtime *Runtime) *EventBinder {
 // SetNodeResolver sets the function used to resolve parent nodes for event propagation.
 func (eb *EventBinder) SetNodeResolver(resolver NodeResolver) {
 	eb.nodeResolver = resolver
+}
+
+// SetShadowRootChecker sets the function used to check if a node is inside a shadow tree.
+// This is used to determine whether window.event should be set during event dispatch.
+// Per HTML spec, window.event should be undefined when listeners inside shadow trees are invoked.
+func (eb *EventBinder) SetShadowRootChecker(checker ShadowRootChecker) {
+	eb.shadowRootChecker = checker
+}
+
+// SetShadowHostResolver sets the function used to get the shadow host from a shadow root.
+// This is used for composed events to propagate across shadow boundaries.
+func (eb *EventBinder) SetShadowHostResolver(resolver ShadowHostResolver) {
+	eb.shadowHostResolver = resolver
 }
 
 // SetActivationHandlers sets the handlers for activation behavior.
@@ -631,36 +655,68 @@ func (eb *EventBinder) BindEventTarget(obj *goja.Object) {
 		// Set target
 		event.Set("target", obj)
 
-		// Per HTML spec: Set window.event to the current event during dispatch.
-		// Save the previous value to support nested event dispatch.
+		// Per HTML spec: Save the previous window.event value to support nested event dispatch.
+		// We will set window.event appropriately before each listener invocation based on
+		// whether the currentTarget is inside a shadow tree.
 		window := vm.Get("window")
 		var previousWindowEvent goja.Value
+		var windowObj *goja.Object
 		if window != nil && !goja.IsUndefined(window) {
-			windowObj := window.ToObject(vm)
+			windowObj = window.ToObject(vm)
 			if windowObj != nil {
 				previousWindowEvent = windowObj.Get("event")
-				windowObj.Set("event", event)
 			}
 		}
 
 		// Defer restoration of window.event
 		defer func() {
-			if window != nil && !goja.IsUndefined(window) {
-				windowObj := window.ToObject(vm)
-				if windowObj != nil {
-					windowObj.Set("event", previousWindowEvent)
-				}
+			if windowObj != nil {
+				windowObj.Set("event", previousWindowEvent)
 			}
 		}()
 
+		// Helper to set window.event based on currentTarget.
+		// Per HTML spec, window.event should be undefined when listeners inside shadow trees are invoked.
+		setWindowEvent := func(currentTarget *goja.Object) {
+			if windowObj == nil {
+				return
+			}
+			// Check if currentTarget is inside a shadow tree
+			if eb.shadowRootChecker != nil && eb.shadowRootChecker(currentTarget) {
+				// Inside shadow tree - window.event should be undefined
+				windowObj.Set("event", goja.Undefined())
+			} else {
+				// Outside shadow tree - window.event should be the event
+				windowObj.Set("event", event)
+			}
+		}
+
+		// Check if the event is composed (crosses shadow boundaries)
+		composed := false
+		if composedVal := event.Get("composed"); composedVal != nil {
+			composed = composedVal.ToBoolean()
+		}
+
 		// Build event path from target up to root
 		// The path is ordered from the target to the root (for bubbling)
+		// For composed events, the path crosses shadow boundaries via the shadow host.
 		eventPath := []*goja.Object{obj}
 		if eb.nodeResolver != nil {
 			current := obj
 			for {
 				parent := eb.nodeResolver(current)
 				if parent == nil {
+					// If no parent and event is composed, check if we're at a shadow root
+					// and need to continue to the shadow host
+					if composed && eb.shadowHostResolver != nil {
+						host := eb.shadowHostResolver(current)
+						if host != nil {
+							// Continue from the shadow host
+							eventPath = append(eventPath, host)
+							current = host
+							continue
+						}
+					}
 					break
 				}
 				eventPath = append(eventPath, parent)
@@ -718,6 +774,7 @@ func (eb *EventBinder) BindEventTarget(obj *goja.Object) {
 			currentTarget := eventPath[i]
 			event.Set("currentTarget", currentTarget)
 			event.Set("eventPhase", int(EventPhaseCapturing))
+			setWindowEvent(currentTarget)
 			target := eb.GetOrCreateTarget(currentTarget)
 			target.DispatchEvent(vm, event, EventPhaseCapturing)
 		}
@@ -726,6 +783,7 @@ func (eb *EventBinder) BindEventTarget(obj *goja.Object) {
 		if !shouldStopPropagation() {
 			event.Set("currentTarget", obj)
 			event.Set("eventPhase", int(EventPhaseAtTarget))
+			setWindowEvent(obj)
 			target := eb.GetOrCreateTarget(obj)
 			target.DispatchEvent(vm, event, EventPhaseAtTarget)
 		}
@@ -739,6 +797,7 @@ func (eb *EventBinder) BindEventTarget(obj *goja.Object) {
 				currentTarget := eventPath[i]
 				event.Set("currentTarget", currentTarget)
 				event.Set("eventPhase", int(EventPhaseBubbling))
+				setWindowEvent(currentTarget)
 				target := eb.GetOrCreateTarget(currentTarget)
 				target.DispatchEvent(vm, event, EventPhaseBubbling)
 			}
