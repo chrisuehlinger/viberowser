@@ -369,7 +369,8 @@ func (r *Range) DeleteContents() error {
 	if r.startContainer == r.endContainer {
 		if r.startContainer.nodeType == TextNode {
 			text := r.startContainer.NodeValue()
-			newText := text[:r.startOffset] + text[r.endOffset:]
+			// Use UTF-16 aware slicing since offsets are in UTF-16 code units
+			newText := UTF16SliceTo(text, r.startOffset) + UTF16SliceFrom(text, r.endOffset)
 			r.startContainer.SetNodeValue(newText)
 			r.endOffset = r.startOffset
 			return nil
@@ -393,10 +394,11 @@ func (r *Range) ExtractContents() (*DocumentFragment, error) {
 	if r.startContainer == r.endContainer && r.startContainer.nodeType == TextNode {
 		clone := r.startContainer.CloneNode(false)
 		text := r.startContainer.NodeValue()
-		clone.SetNodeValue(text[r.startOffset:r.endOffset])
+		// Use UTF-16 aware slicing since offsets are in UTF-16 code units
+		clone.SetNodeValue(UTF16Substring(text, r.startOffset, r.endOffset))
 
 		// Remove the extracted text from original
-		r.startContainer.SetNodeValue(text[:r.startOffset] + text[r.endOffset:])
+		r.startContainer.SetNodeValue(UTF16SliceTo(text, r.startOffset) + UTF16SliceFrom(text, r.endOffset))
 
 		(*Node)(frag).AppendChild(clone)
 		r.endOffset = r.startOffset
@@ -414,17 +416,19 @@ func (r *Range) ExtractContents() (*DocumentFragment, error) {
 	if r.startContainer.nodeType == TextNode && r.startOffset > 0 {
 		text := r.startContainer.NodeValue()
 		firstPartiallyContained = r.startContainer.CloneNode(false)
-		firstPartiallyContained.SetNodeValue(text[r.startOffset:])
-		r.startContainer.SetNodeValue(text[:r.startOffset])
+		// Use UTF-16 aware slicing
+		firstPartiallyContained.SetNodeValue(UTF16SliceFrom(text, r.startOffset))
+		r.startContainer.SetNodeValue(UTF16SliceTo(text, r.startOffset))
 	}
 
 	// If end container is text and partially selected, split it
 	var lastPartiallyContained *Node
-	if r.endContainer.nodeType == TextNode && r.endOffset < len(r.endContainer.NodeValue()) {
+	if r.endContainer.nodeType == TextNode && r.endOffset < UTF16Length(r.endContainer.NodeValue()) {
 		text := r.endContainer.NodeValue()
 		lastPartiallyContained = r.endContainer.CloneNode(false)
-		lastPartiallyContained.SetNodeValue(text[:r.endOffset])
-		r.endContainer.SetNodeValue(text[r.endOffset:])
+		// Use UTF-16 aware slicing
+		lastPartiallyContained.SetNodeValue(UTF16SliceTo(text, r.endOffset))
+		r.endContainer.SetNodeValue(UTF16SliceFrom(text, r.endOffset))
 	}
 
 	// Find contained children
@@ -465,7 +469,8 @@ func (r *Range) CloneContents() (*DocumentFragment, error) {
 	if r.startContainer == r.endContainer && r.startContainer.nodeType == TextNode {
 		clone := r.startContainer.CloneNode(false)
 		text := r.startContainer.NodeValue()
-		clone.SetNodeValue(text[r.startOffset:r.endOffset])
+		// Use UTF-16 aware slicing
+		clone.SetNodeValue(UTF16Substring(text, r.startOffset, r.endOffset))
 		(*Node)(frag).AppendChild(clone)
 		return frag, nil
 	}
@@ -486,7 +491,8 @@ func (r *Range) CloneContents() (*DocumentFragment, error) {
 	// Handle partial text nodes
 	if r.startContainer.nodeType == TextNode && r.startOffset > 0 {
 		text := r.startContainer.NodeValue()
-		textNode := r.ownerDocument.CreateTextNode(text[r.startOffset:])
+		// Use UTF-16 aware slicing
+		textNode := r.ownerDocument.CreateTextNode(UTF16SliceFrom(text, r.startOffset))
 		// Insert at beginning
 		if (*Node)(frag).firstChild != nil {
 			(*Node)(frag).InsertBefore(textNode, (*Node)(frag).firstChild)
@@ -495,9 +501,10 @@ func (r *Range) CloneContents() (*DocumentFragment, error) {
 		}
 	}
 
-	if r.endContainer.nodeType == TextNode && r.endOffset < len(r.endContainer.NodeValue()) {
+	if r.endContainer.nodeType == TextNode && r.endOffset < UTF16Length(r.endContainer.NodeValue()) {
 		text := r.endContainer.NodeValue()
-		textNode := r.ownerDocument.CreateTextNode(text[:r.endOffset])
+		// Use UTF-16 aware slicing
+		textNode := r.ownerDocument.CreateTextNode(UTF16SliceTo(text, r.endOffset))
 		(*Node)(frag).AppendChild(textNode)
 	}
 
@@ -518,10 +525,12 @@ func (r *Range) InsertNode(node *Node) error {
 		}
 
 		// Split the text node if needed
-		if r.startOffset > 0 && r.startOffset < len(r.startContainer.NodeValue()) {
+		textLen := UTF16Length(r.startContainer.NodeValue())
+		if r.startOffset > 0 && r.startOffset < textLen {
 			text := r.startContainer.NodeValue()
-			r.startContainer.SetNodeValue(text[:r.startOffset])
-			newText := r.ownerDocument.CreateTextNode(text[r.startOffset:])
+			// Use UTF-16 aware slicing
+			r.startContainer.SetNodeValue(UTF16SliceTo(text, r.startOffset))
+			newText := r.ownerDocument.CreateTextNode(UTF16SliceFrom(text, r.startOffset))
 			parent.InsertBefore(newText, r.startContainer.nextSibling)
 		}
 
@@ -613,7 +622,8 @@ func (r *Range) ToString() string {
 	// If range is within a single text node
 	if r.startContainer == r.endContainer && r.startContainer.nodeType == TextNode {
 		text := r.startContainer.NodeValue()
-		return text[r.startOffset:r.endOffset]
+		// Use UTF-16 aware slicing since offsets are in UTF-16 code units
+		return UTF16Substring(text, r.startOffset, r.endOffset)
 	}
 
 	// Build string by traversing all text nodes in document order within the range
@@ -625,12 +635,12 @@ func (r *Range) ToString() string {
 		return ""
 	}
 
-
 	// Traverse all nodes in document order within the range
 	r.traverseTextNodes(commonAncestor, func(textNode *Node) bool {
 		text := textNode.NodeValue()
 
 		// Determine what portion of this text node is in the range
+		// Offsets are in UTF-16 code units
 		var startIdx, endIdx int
 
 		if textNode == r.startContainer {
@@ -642,11 +652,12 @@ func (r *Range) ToString() string {
 		if textNode == r.endContainer {
 			endIdx = r.endOffset
 		} else {
-			endIdx = len(text)
+			endIdx = UTF16Length(text)
 		}
 
 		if startIdx < endIdx {
-			result += text[startIdx:endIdx]
+			// Use UTF-16 aware slicing
+			result += UTF16Substring(text, startIdx, endIdx)
 		}
 
 		return true // continue traversal
@@ -883,12 +894,13 @@ func (r *Range) IntersectsNode(node *Node) bool {
 // Helper functions
 
 // nodeLength returns the length of a node for range purposes.
-// For text/comment/processing instruction nodes, it's the data length.
+// For text/comment/processing instruction nodes, it's the data length in UTF-16 code units.
 // For other nodes, it's the number of child nodes.
+// Per DOM spec, Range offsets are measured in UTF-16 code units for character data nodes.
 func nodeLength(node *Node) int {
 	switch node.nodeType {
 	case TextNode, CommentNode, ProcessingInstructionNode, CDATASectionNode:
-		return len(node.NodeValue())
+		return UTF16Length(node.NodeValue())
 	default:
 		count := 0
 		for child := node.firstChild; child != nil; child = child.nextSibling {

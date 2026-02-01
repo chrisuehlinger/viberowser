@@ -134,29 +134,53 @@ func (t *Text) replaceDataInternal(offset, count int, data string) {
 	t.AsNode().nodeValue = &newValue
 }
 
-// SplitText splits this text node at the given offset.
+// SplitText splits this text node at the given offset (in UTF-16 code units).
 // Returns the new text node containing the text after the offset.
+// Per DOM spec, this also updates any live Range objects that reference this node.
+//
+// The order of operations per DOM spec (https://dom.spec.whatwg.org/#dom-text-splittext):
+// 1. Create new node with data after offset
+// 2. If parent exists, insert new node
+// 3. Update live ranges (move boundaries to new node) - BEFORE truncating
+// 4. Replace data (truncate old node) - AFTER updating ranges
 func (t *Text) SplitText(offset int) *Text {
 	data := t.Data()
-	if offset < 0 || offset > len(data) {
+	dataLength := UTF16Length(data)
+	if offset < 0 || offset > dataLength {
 		return nil
 	}
 
-	// Create new text node with the text after offset
-	newData := data[offset:]
+	// Get the count of UTF-16 code units to extract
+	count := dataLength - offset
+
+	// Extract the new data using UTF-16 offset
+	newData := UTF16SliceFrom(data, offset)
 	newNode := t.AsNode().ownerDoc.CreateTextNode(newData)
 	newText := (*Text)(newNode)
 
-	// Truncate this node
-	t.SetData(data[:offset])
-
-	// Insert new node after this one
 	parent := t.AsNode().parentNode
 	if parent != nil {
+		// Step 7a: Insert new node into parent before node's next sibling
 		parent.InsertBefore(newNode, t.AsNode().nextSibling)
+
+		// Steps 7b-7e: Move range boundary points from old node to new node
+		// This MUST happen BEFORE the replace data step
+		NotifySplitText(t.AsNode(), offset, newNode)
 	}
 
+	// Step 8: Replace data with node node, offset offset, count count, and data ""
+	// This truncates the old node and notifies callbacks about the data change
+	notifyReplaceData(t.AsNode(), offset, count, "")
+
+	// Truncate this node using UTF-16 offset (the data change)
+	t.AsNode().nodeValue = stringPtr(UTF16SliceTo(data, offset))
+
 	return newText
+}
+
+// stringPtr returns a pointer to a string (helper function)
+func stringPtr(s string) *string {
+	return &s
 }
 
 // CloneNode clones this text node.

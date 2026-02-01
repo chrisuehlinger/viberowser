@@ -4456,6 +4456,11 @@ func (b *DOMBinder) BindTextNode(node *dom.Node, proto *goja.Object) *goja.Objec
 
 	// Text-specific methods
 	// splitText(offset) - splits the Text node at offset and returns the remainder
+	// Per DOM spec (https://dom.spec.whatwg.org/#dom-text-splittext):
+	// 1. Create new node with data after offset
+	// 2. If parent exists, insert new node
+	// 3. Update live ranges (move boundaries to new node) - BEFORE truncating
+	// 4. Replace data (truncate old node) - AFTER updating ranges
 	jsNode.Set("splitText", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
 			panic(vm.NewTypeError("Failed to execute 'splitText' on 'Text': 1 argument required"))
@@ -4477,25 +4482,19 @@ func (b *DOMBinder) BindTextNode(node *dom.Node, proto *goja.Object) *goja.Objec
 		newData := utf16Substring(data, int(offset), int(count))
 
 		// Create a new Text node with the extracted data
+		// IMPORTANT: Use the text node's owner document, not the binder's main document
+		// This ensures correct behavior for nodes in foreign documents
 		var newTextNode *dom.Node
-		if b.document != nil {
+		ownerDoc := node.OwnerDocument()
+		if ownerDoc != nil {
+			newTextNode = ownerDoc.CreateTextNode(newData)
+		} else if b.document != nil {
 			newTextNode = b.document.CreateTextNode(newData)
 		} else {
 			newTextNode = dom.NewTextNode(newData)
 		}
 
-		// Per spec order:
-		// 1. Call "replace data" to truncate the old node (offset, count, "")
-		// 2. Insert the new node (if parent is not null)
-		// 3. Move range boundary points from old to new node
-
-		// Step 1: Notify replace data mutation before truncating
-		dom.NotifyReplaceData(node, int(offset), int(count), "")
-
-		// Truncate the current node's data at offset without triggering another notification
-		node.SetNodeValueRaw(utf16Substring(data, 0, int(offset)))
-
-		// Step 2 & 3: If this node has a parent, insert the new node and update ranges
+		// Step 7a: If this node has a parent, insert the new node
 		if parent := node.ParentNode(); parent != nil {
 			nextSibling := node.NextSibling()
 			if nextSibling != nil {
@@ -4504,10 +4503,17 @@ func (b *DOMBinder) BindTextNode(node *dom.Node, proto *goja.Object) *goja.Objec
 				parent.AppendChild(newTextNode)
 			}
 
-			// Step 3: Move range boundary points from old node to new node
-			// This must happen after the insertion
+			// Steps 7b-7e: Move range boundary points from old node to new node
+			// This MUST happen BEFORE the replace data step
 			dom.NotifySplitText(node, int(offset), newTextNode)
 		}
+
+		// Step 8: Replace data with node node, offset offset, count count, and data ""
+		// This truncates the old node and notifies callbacks about the data change
+		dom.NotifyReplaceData(node, int(offset), int(count), "")
+
+		// Truncate the current node's data at offset without triggering another notification
+		node.SetNodeValueRaw(utf16Substring(data, 0, int(offset)))
 
 		return b.BindTextNode(newTextNode, nil)
 	})

@@ -3085,3 +3085,148 @@ func TestWPTNodeIteratorMultipleAdvancement(t *testing.T) {
 		t.Errorf("Errors occurred:\n%s", resultStr)
 	}
 }
+
+func TestRangeSplitTextMutation(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body><div id="test"></div></body>
+</html>`)
+
+	binder.BindDocument(doc)
+
+	// Test that range updates when text is split
+	result, err := r.Execute(`
+		var div = document.getElementById('test');
+		div.textContent = 'Ijklmnop';
+		
+		var textNode = div.firstChild;
+		var result = {
+			initialLength: textNode.length,
+			initialData: textNode.data
+		};
+		
+		var range = document.createRange();
+		range.setStart(textNode, 1);
+		range.setEnd(textNode, 3);
+		
+		result.rangeStartBefore = range.startOffset;
+		result.rangeEndBefore = range.endOffset;
+		result.endContainerBefore = range.endContainer.data;
+		
+		var newNode = textNode.splitText(1);
+		
+		result.oldNodeData = textNode.data;
+		result.newNodeData = newNode.data;
+		result.rangeStartAfter = range.startOffset;
+		result.rangeEndAfter = range.endOffset;
+		result.endContainerAfter = range.endContainer.data;
+		result.endIsNewNode = range.endContainer === newNode;
+		result.endIsOldNode = range.endContainer === textNode;
+		
+		result;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	obj := result.ToObject(r.vm)
+	
+	t.Logf("Initial length: %v", obj.Get("initialLength"))
+	t.Logf("Initial data: %v", obj.Get("initialData"))
+	t.Logf("Range before: start=%v, end=%v", obj.Get("rangeStartBefore"), obj.Get("rangeEndBefore"))
+	t.Logf("End container before: %v", obj.Get("endContainerBefore"))
+	t.Logf("Old node data: %v", obj.Get("oldNodeData"))
+	t.Logf("New node data: %v", obj.Get("newNodeData"))
+	t.Logf("Range after: start=%v, end=%v", obj.Get("rangeStartAfter"), obj.Get("rangeEndAfter"))
+	t.Logf("End container after: %v", obj.Get("endContainerAfter"))
+	t.Logf("End is new node: %v", obj.Get("endIsNewNode"))
+	t.Logf("End is old node: %v", obj.Get("endIsOldNode"))
+
+	// After split at offset 1:
+	// - Old text becomes "I" (1 char)
+	// - New text becomes "jklmnop" (7 chars)
+	// - Range end offset was 3 which is > split offset 1
+	// - So end should move to new node with offset 3-1=2
+	
+	if obj.Get("oldNodeData").String() != "I" {
+		t.Errorf("Expected old node to have 'I', got '%s'", obj.Get("oldNodeData").String())
+	}
+	if obj.Get("newNodeData").String() != "jklmnop" {
+		t.Errorf("Expected new node to have 'jklmnop', got '%s'", obj.Get("newNodeData").String())
+	}
+	if !obj.Get("endIsNewNode").ToBoolean() {
+		t.Errorf("Expected end container to be new node, but endIsNewNode=%v, endIsOldNode=%v",
+			obj.Get("endIsNewNode").ToBoolean(), obj.Get("endIsOldNode").ToBoolean())
+	}
+	if obj.Get("rangeEndAfter").ToInteger() != 2 {
+		t.Errorf("Expected end offset to be 2, got %d", obj.Get("rangeEndAfter").ToInteger())
+	}
+}
+
+func TestRangeSplitTextMutationForeignDoc(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body></body>
+</html>`)
+
+	binder.BindDocument(doc)
+
+	// Test that range updates in a foreign document
+	result, err := r.Execute(`
+		// Create a foreign document
+		var foreignDoc = document.implementation.createHTMLDocument("");
+		var foreignTextNode = foreignDoc.createTextNode('Ijklmnop');
+		foreignDoc.body.appendChild(foreignTextNode);
+		
+		var result = {
+			foreignDocExists: foreignDoc !== null,
+			foreignTextNodeParent: foreignTextNode.parentNode !== null
+		};
+		
+		// Create range in the foreign document
+		var range = foreignDoc.createRange();
+		range.setStart(foreignTextNode, 1);
+		range.setEnd(foreignTextNode, 3);
+		
+		result.rangeCreated = range !== null;
+		result.endOffsetBefore = range.endOffset;
+		
+		// Now split the text
+		var newNode = foreignTextNode.splitText(1);
+		
+		result.oldNodeData = foreignTextNode.data;
+		result.newNodeData = newNode.data;
+		result.endOffsetAfter = range.endOffset;
+		result.endContainerAfter = range.endContainer.data;
+		result.endIsNewNode = range.endContainer === newNode;
+		
+		result;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	obj := result.ToObject(r.vm)
+	
+	t.Logf("Foreign doc exists: %v", obj.Get("foreignDocExists"))
+	t.Logf("Foreign text node has parent: %v", obj.Get("foreignTextNodeParent"))
+	t.Logf("Range created: %v", obj.Get("rangeCreated"))
+	t.Logf("End offset before: %v", obj.Get("endOffsetBefore"))
+	t.Logf("Old node data: %v", obj.Get("oldNodeData"))
+	t.Logf("New node data: %v", obj.Get("newNodeData"))
+	t.Logf("End offset after: %v", obj.Get("endOffsetAfter"))
+	t.Logf("End container after: %v", obj.Get("endContainerAfter"))
+	t.Logf("End is new node: %v", obj.Get("endIsNewNode"))
+	
+	if !obj.Get("endIsNewNode").ToBoolean() {
+		t.Error("Expected end container to be the new node")
+	}
+}
