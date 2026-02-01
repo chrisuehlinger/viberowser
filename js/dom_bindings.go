@@ -1640,7 +1640,13 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 	b.nodeMap[doc.AsNode()] = jsDoc
 
 	// Set prototype for instanceof to work
-	if b.documentProto != nil {
+	// XML documents (contentType "application/xml", "application/xhtml+xml", etc.) use XMLDocument prototype
+	// HTML documents use Document prototype
+	contentType := doc.ContentType()
+	isXMLDocument := !doc.IsHTML() && contentType != ""
+	if isXMLDocument && b.xmlDocumentProto != nil {
+		jsDoc.SetPrototype(b.xmlDocumentProto)
+	} else if b.documentProto != nil {
 		jsDoc.SetPrototype(b.documentProto)
 	}
 
