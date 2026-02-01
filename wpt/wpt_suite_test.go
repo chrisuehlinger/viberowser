@@ -354,6 +354,7 @@ func DOMEventsPassingTests() []string {
 		"Event-propagation.html",
 		"Event-returnValue.html",
 		"Event-stopImmediatePropagation.html",
+		"Event-stopPropagation-cancel-bubbling.html",
 		"EventListener-handleEvent.html",
 		"EventTarget-dispatchEvent.html",
 		"EventTarget-dispatchEvent-returnvalue.html",

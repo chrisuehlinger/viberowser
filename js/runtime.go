@@ -467,6 +467,10 @@ func (r *Runtime) setupWindow() {
 	// window.devicePixelRatio
 	window.Set("devicePixelRatio", 1.0)
 
+	// window.event - legacy property set to current event during dispatch
+	// Per HTML spec, window.event is initially undefined
+	window.Set("event", goja.Undefined())
+
 	// window.alert, window.confirm, window.prompt (stubs)
 	window.Set("alert", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) > 0 {

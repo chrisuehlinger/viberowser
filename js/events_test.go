@@ -1086,3 +1086,84 @@ func TestAbortSignalRemoveEventListenerStillWorks(t *testing.T) {
 		t.Error("removeEventListener should still work with signal option")
 	}
 }
+
+// TestWindowEventLegacy tests that window.event is set during event dispatch
+func TestWindowEventLegacy(t *testing.T) {
+	r := NewRuntime()
+	executor := NewScriptExecutor(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html><html><body></body></html>`)
+	executor.SetupDocument(doc)
+
+	// Test 1: window.event exists and is initially undefined
+	result, err := r.Execute(`
+		'event' in window && window.event === undefined;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("window.event should exist and be undefined initially")
+	}
+
+	// Test 2: window.event is set during dispatch
+	result, err = r.Execute(`
+		var eventDuringDispatch = null;
+		var target = document.createElement('div');
+		var clickEvent = new Event('click');
+		target.addEventListener('click', function(e) {
+			eventDuringDispatch = window.event;
+		});
+		target.dispatchEvent(clickEvent);
+		eventDuringDispatch === clickEvent;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("window.event should be set to the current event during dispatch")
+	}
+
+	// Test 3: window.event is undefined after dispatch
+	result, err = r.Execute(`
+		window.event === undefined;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("window.event should be undefined after dispatch")
+	}
+
+	// Test 4: Nested events restore window.event correctly
+	result, err = r.Execute(`
+		var target1 = document.createElement('div');
+		var target2 = document.createElement('div');
+		var outerEventDuringOuter = null;
+		var outerEventAfterInner = null;
+		var innerEventDuringInner = null;
+
+		target2.addEventListener('inner', function(e) {
+			innerEventDuringInner = window.event;
+		});
+
+		target1.addEventListener('outer', function(e) {
+			outerEventDuringOuter = window.event;
+			target2.dispatchEvent(new Event('inner'));
+			outerEventAfterInner = window.event;
+		});
+
+		var outerEvent = new Event('outer');
+		target1.dispatchEvent(outerEvent);
+
+		outerEventDuringOuter === outerEvent &&
+		innerEventDuringInner.type === 'inner' &&
+		outerEventAfterInner === outerEvent;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("window.event should be correctly restored after nested dispatch")
+	}
+}

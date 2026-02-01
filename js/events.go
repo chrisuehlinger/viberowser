@@ -120,6 +120,8 @@ func (et *EventTarget) RemoveEventListener(eventType string, value goja.Value, c
 // DispatchEvent dispatches an event to all registered listeners.
 // At the AT_TARGET phase, both capturing and non-capturing listeners are called
 // in the order they were added, with capturing listeners first according to DOM spec.
+// Per DOM spec (and Chromium/Firefox bug fixes), stopPropagation() in a capture listener
+// at AT_TARGET should prevent bubble listeners on the same target from running.
 func (et *EventTarget) DispatchEvent(vm *goja.Runtime, event *goja.Object, phase EventPhase) bool {
 	et.mu.RLock()
 	eventType := event.Get("type").String()
@@ -129,16 +131,19 @@ func (et *EventTarget) DispatchEvent(vm *goja.Runtime, event *goja.Object, phase
 	copy(listeners, et.listeners[eventType])
 	et.mu.RUnlock()
 
-	// At the target phase, per DOM spec, we need to call all listeners
-	// regardless of capture flag, but capturing listeners should be called first
-	// if they were registered before non-capturing ones of the same type.
-	// Actually, the spec says at target phase, both are called in registration order.
+	// Helper to check stopPropagation flag
+	shouldStopPropagation := func() bool {
+		stopProp := event.Get("_stopPropagation")
+		return stopProp != nil && stopProp.ToBoolean()
+	}
+
+	// At the target phase, per DOM spec:
+	// 1. Capturing listeners are invoked first
+	// 2. Then stopPropagation is checked
+	// 3. If not stopped, bubbling listeners are invoked
+	// This matches the spec clarification in https://github.com/whatwg/dom/issues/916
 	if phase == EventPhaseAtTarget {
-		// At target: call capturing listeners first, then non-capturing
-		// According to the DOM spec, at the target phase, listeners are invoked
-		// in the order they were registered, regardless of capture flag.
-		// But the test expects capturing listeners to fire before non-capturing.
-		// Let's sort: capturing first, then non-capturing, preserving registration order within each group
+		// Separate capturing and bubbling listeners
 		capturingListeners := make([]*eventListener, 0)
 		bubblingListeners := make([]*eventListener, 0)
 		for _, l := range listeners {
@@ -148,7 +153,23 @@ func (et *EventTarget) DispatchEvent(vm *goja.Runtime, event *goja.Object, phase
 				bubblingListeners = append(bubblingListeners, l)
 			}
 		}
-		listeners = append(capturingListeners, bubblingListeners...)
+
+		// Invoke capturing listeners first
+		et.invokeListeners(vm, event, capturingListeners)
+
+		// Check stopPropagation before invoking bubble listeners
+		if shouldStopPropagation() {
+			return !event.Get("defaultPrevented").ToBoolean()
+		}
+
+		// Invoke bubbling listeners
+		et.invokeListeners(vm, event, bubblingListeners)
+
+		// Return true if default wasn't prevented
+		if defaultPrevented := event.Get("defaultPrevented"); defaultPrevented != nil {
+			return !defaultPrevented.ToBoolean()
+		}
+		return true
 	}
 
 	// Get currentTarget for 'this' binding
@@ -278,6 +299,102 @@ func (et *EventTarget) DispatchEvent(vm *goja.Runtime, event *goja.Object, phase
 		return !defaultPrevented.ToBoolean()
 	}
 	return true
+}
+
+// invokeListeners invokes a list of event listeners for an event.
+// This is a helper used by DispatchEvent for the AT_TARGET phase.
+func (et *EventTarget) invokeListeners(vm *goja.Runtime, event *goja.Object, listeners []*eventListener) {
+	eventType := event.Get("type").String()
+
+	// Get currentTarget for 'this' binding
+	currentTarget := event.Get("currentTarget")
+	if currentTarget == nil || goja.IsUndefined(currentTarget) {
+		currentTarget = goja.Undefined()
+	}
+
+	for _, l := range listeners {
+		// Per DOM spec: skip listeners that have been removed
+		if l.removed {
+			continue
+		}
+
+		// Per DOM spec: If listener's once is true, remove the event listener
+		// BEFORE invoking the callback.
+		if l.options.once {
+			et.mu.Lock()
+			l.removed = true
+			eventListeners := et.listeners[eventType]
+			for i, existing := range eventListeners {
+				if existing.id == l.id {
+					et.listeners[eventType] = append(eventListeners[:i], eventListeners[i+1:]...)
+					break
+				}
+			}
+			et.mu.Unlock()
+		}
+
+		var err error
+		if l.isObject {
+			handleEventVal := l.listenerObj.Get("handleEvent")
+			handleEvent, isCallable := goja.AssertFunction(handleEventVal)
+			if !isCallable {
+				if et.errorHandler != nil {
+					typeErr := vm.NewTypeError("handleEvent is not a function")
+					et.errorHandler(typeErr)
+				}
+				continue
+			}
+			_, err = handleEvent(l.listenerObj, event)
+		} else {
+			if l.options.isOnErrorHandler && eventType == "error" {
+				message := ""
+				filename := ""
+				var lineno, colno int64 = 0, 0
+				var errorVal goja.Value = goja.Undefined()
+
+				if msgVal := event.Get("message"); msgVal != nil && !goja.IsUndefined(msgVal) {
+					message = msgVal.String()
+				}
+				if fnVal := event.Get("filename"); fnVal != nil && !goja.IsUndefined(fnVal) {
+					filename = fnVal.String()
+				}
+				if lnVal := event.Get("lineno"); lnVal != nil && !goja.IsUndefined(lnVal) {
+					lineno = lnVal.ToInteger()
+				}
+				if cnVal := event.Get("colno"); cnVal != nil && !goja.IsUndefined(cnVal) {
+					colno = cnVal.ToInteger()
+				}
+				if errVal := event.Get("error"); errVal != nil {
+					errorVal = errVal
+				}
+
+				_, err = l.callback(currentTarget,
+					vm.ToValue(message),
+					vm.ToValue(filename),
+					vm.ToValue(lineno),
+					vm.ToValue(colno),
+					errorVal,
+				)
+			} else {
+				_, err = l.callback(currentTarget, event)
+			}
+		}
+
+		if err != nil {
+			if et.errorHandler != nil {
+				if exc, ok := err.(*goja.Exception); ok {
+					et.errorHandler(exc.Value())
+				} else {
+					et.errorHandler(vm.ToValue(err.Error()))
+				}
+			}
+		}
+
+		// Check for stopImmediatePropagation
+		if stopImmediate := event.Get("_stopImmediate"); stopImmediate != nil && stopImmediate.ToBoolean() {
+			break
+		}
+	}
 }
 
 // HasEventListeners returns true if there are any listeners for the event type.
@@ -513,6 +630,28 @@ func (eb *EventBinder) BindEventTarget(obj *goja.Object) {
 
 		// Set target
 		event.Set("target", obj)
+
+		// Per HTML spec: Set window.event to the current event during dispatch.
+		// Save the previous value to support nested event dispatch.
+		window := vm.Get("window")
+		var previousWindowEvent goja.Value
+		if window != nil && !goja.IsUndefined(window) {
+			windowObj := window.ToObject(vm)
+			if windowObj != nil {
+				previousWindowEvent = windowObj.Get("event")
+				windowObj.Set("event", event)
+			}
+		}
+
+		// Defer restoration of window.event
+		defer func() {
+			if window != nil && !goja.IsUndefined(window) {
+				windowObj := window.ToObject(vm)
+				if windowObj != nil {
+					windowObj.Set("event", previousWindowEvent)
+				}
+			}
+		}()
 
 		// Build event path from target up to root
 		// The path is ordered from the target to the root (for bubbling)
