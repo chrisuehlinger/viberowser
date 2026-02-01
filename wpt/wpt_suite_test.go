@@ -172,7 +172,7 @@ func DOMNodesPassingTests() []string {
 		"MutationObserver-takeRecords.html",
 		"MutationObserver-textContent.html",
 
-		// Node tests (22 tests)
+		// Node tests (23 tests)
 		"Node-appendChild.html",
 		"Node-baseURI.html",
 		"Node-childNodes.html",
@@ -192,6 +192,7 @@ func DOMNodesPassingTests() []string {
 		"Node-mutation-adoptNode.html",
 		"Node-nodeName.html",
 		"Node-nodeValue.html",
+		"Node-normalize.html",
 		"Node-parentElement.html",
 		"Node-parentNode.html",
 		"Node-removeChild.html",

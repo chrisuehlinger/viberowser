@@ -1247,3 +1247,92 @@ func TestProcessingInstruction_CanBeChildOfElement(t *testing.T) {
 		t.Error("Expected ProcessingInstruction to be first child of Element")
 	}
 }
+
+// TestNode_NormalizeXML tests normalize with XML nodes
+func TestNode_NormalizeXML(t *testing.T) {
+	// Create an XML document
+	doc, err := ParseXML("<div/>")
+	if err != nil {
+		t.Fatalf("Failed to parse XML: %v", err)
+	}
+
+	t.Logf("doc type: %d", doc.AsNode().NodeType())
+	docChildren := doc.AsNode().ChildNodes()
+	t.Logf("doc.childNodes.length: %d", docChildren.Length())
+	for i := 0; i < docChildren.Length(); i++ {
+		child := docChildren.Item(i)
+		t.Logf("  doc child %d: nodeType=%d, nodeName=%s", i, child.NodeType(), child.NodeName())
+	}
+
+	div := doc.DocumentElement()
+	if div == nil {
+		t.Fatal("doc.documentElement is nil")
+	}
+	t.Logf("documentElement: %s", div.TagName())
+
+	// Create nodes
+	t1 := doc.CreateTextNode("a")
+	t.Logf("Created t1 (text 'a')")
+
+	t2 := doc.CreateProcessingInstruction("pi", "")
+	t.Logf("Created t2 (PI)")
+
+	t3 := doc.CreateTextNode("b")
+	t.Logf("Created t3 (text 'b')")
+
+	t4, err := doc.CreateCDATASectionWithError("")
+	if err != nil {
+		t.Fatalf("Failed to create CDATA: %v", err)
+	}
+	t.Logf("Created t4 (CDATA)")
+
+	t5 := doc.CreateTextNode("c")
+	t.Logf("Created t5 (text 'c')")
+
+	t6 := doc.CreateComment("")
+	t.Logf("Created t6 (Comment)")
+
+	t7 := doc.CreateTextNode("d")
+	t.Logf("Created t7 (text 'd')")
+
+	t8 := doc.CreateElement("el")
+	t.Logf("Created t8 (Element 'el')")
+
+	t9 := doc.CreateTextNode("e")
+	t.Logf("Created t9 (text 'e')")
+
+	// Append nodes
+	div.AsNode().AppendChild(t1)
+	div.AsNode().AppendChild(t2)
+	div.AsNode().AppendChild(t3)
+	div.AsNode().AppendChild(t4)
+	div.AsNode().AppendChild(t5)
+	div.AsNode().AppendChild(t6)
+	div.AsNode().AppendChild(t7)
+	div.AsNode().AppendChild(t8.AsNode())
+	div.AsNode().AppendChild(t9)
+
+	t.Log("\nBefore normalize:")
+	children := div.AsNode().ChildNodes()
+	t.Logf("div.childNodes.length: %d", children.Length())
+	for i := 0; i < children.Length(); i++ {
+		child := children.Item(i)
+		t.Logf("  child %d: nodeType=%d, nodeName=%s, nodeValue=%q", i, child.NodeType(), child.NodeName(), child.NodeValue())
+	}
+
+	// Normalize
+	div.AsNode().Normalize()
+
+	t.Log("\nAfter normalize:")
+	children = div.AsNode().ChildNodes()
+	t.Logf("div.childNodes.length: %d", children.Length())
+	for i := 0; i < children.Length(); i++ {
+		child := children.Item(i)
+		t.Logf("  child %d: nodeType=%d, nodeName=%s, nodeValue=%q", i, child.NodeType(), child.NodeName(), child.NodeValue())
+	}
+
+	// Expect 9 children (no merging since they're separated by non-text nodes)
+	if children.Length() != 9 {
+		t.Errorf("Expected 9 children, got %d", children.Length())
+	}
+}

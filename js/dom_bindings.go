@@ -1274,10 +1274,8 @@ func (b *DOMBinder) setupPrototypes() {
 				return b.bindDocumentInternal(doc)
 
 			case "text/xml", "application/xml", "application/xhtml+xml", "image/svg+xml":
-				// For XML-based types, we should parse as XML
-				// For now, we'll parse as HTML which handles most cases
-				// TODO: Implement proper XML parsing
-				doc, err := dom.ParseHTML(str)
+				// For XML-based types, parse as XML
+				doc, err := dom.ParseXML(str)
 				if err != nil {
 					// For XML, create a document with a parsererror element
 					doc = dom.NewDocument()
