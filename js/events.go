@@ -1870,6 +1870,32 @@ func (eb *EventBinder) setupAbortController() {
 
 	// Store event proto reference for AbortSignal event dispatch
 	_ = eventProto
+
+	// Make event-related interface objects non-enumerable on the global object
+	// Per the Web IDL specification, interface objects should be defined with enumerable: false
+	_, _ = vm.RunString(`
+		(function() {
+			var eventInterfaces = [
+				"EventTarget", "Event", "CustomEvent",
+				"UIEvent", "MouseEvent", "FocusEvent", "KeyboardEvent",
+				"CompositionEvent", "TextEvent", "MessageEvent", "StorageEvent",
+				"HashChangeEvent", "BeforeUnloadEvent", "DeviceMotionEvent",
+				"DeviceOrientationEvent", "DragEvent", "WheelEvent", "TouchEvent",
+				"ErrorEvent", "AbortController", "AbortSignal"
+			];
+			var globalObj = typeof window !== 'undefined' ? window : this;
+			eventInterfaces.forEach(function(name) {
+				if (name in globalObj) {
+					Object.defineProperty(globalObj, name, {
+						value: globalObj[name],
+						writable: true,
+						enumerable: false,
+						configurable: true
+					});
+				}
+			});
+		})();
+	`)
 }
 
 // createAbortSignal creates a new AbortSignal object.

@@ -205,9 +205,10 @@ func DOMNodesPassingTests() []string {
 		"Node-replaceChild.html",
 		"Node-textContent.html",
 
-		// NodeList tests (2 tests)
+		// NodeList tests (3 tests)
 		"NodeList-Iterable.html",
 		"NodeList-static-length-getter-tampered-1.html",
+		"NodeList-static-length-getter-tampered-indexOf-1.html",
 
 		// ParentNode tests (9 tests)
 		"ParentNode-append.html",
@@ -486,6 +487,7 @@ func DOMTopLevelPassingTests() []string {
 		"eventPathRemoved.html",
 		"historical.html",
 		"historical-mutation-events.html",
+		"interface-objects.html",
 		"svg-insert-crash.html",
 	}
 }

@@ -322,6 +322,7 @@ type DOMBinder struct {
 	domImplementationProto       *goja.Object
 	htmlCollectionProto          *goja.Object
 	nodeListProto                *goja.Object
+	domTokenListProto            *goja.Object
 	namedNodeMapProto            *goja.Object
 	attrProto                    *goja.Object
 	cssStyleDeclarationProto     *goja.Object
@@ -1097,6 +1098,26 @@ func (b *DOMBinder) setupPrototypes() {
 		});
 	`)
 
+	// Create DOMTokenList prototype
+	b.domTokenListProto = vm.NewObject()
+	domTokenListConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		panic(vm.NewTypeError("Illegal constructor"))
+	})
+	domTokenListConstructorObj := domTokenListConstructor.ToObject(vm)
+	domTokenListConstructorObj.Set("prototype", b.domTokenListProto)
+	b.domTokenListProto.Set("constructor", domTokenListConstructorObj)
+	vm.Set("DOMTokenList", domTokenListConstructorObj)
+
+	// Set Symbol.toStringTag for DOMTokenList to ensure proper class string
+	_, _ = vm.RunString(`
+		Object.defineProperty(DOMTokenList.prototype, Symbol.toStringTag, {
+			value: "DOMTokenList",
+			writable: false,
+			enumerable: false,
+			configurable: true
+		});
+	`)
+
 	// Create NamedNodeMap prototype with methods
 	b.namedNodeMapProto = vm.NewObject()
 	namedNodeMapConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
@@ -1385,6 +1406,37 @@ func (b *DOMBinder) setupPrototypes() {
 	domParserProto.Set("constructor", domParserConstructorObj)
 
 	vm.Set("DOMParser", domParserConstructorObj)
+
+	// Make interface objects non-enumerable on the global object (window)
+	// Per the Web IDL specification, interface objects should be defined with enumerable: false
+	_, _ = vm.RunString(`
+		(function() {
+			var interfaces = [
+				"Event", "CustomEvent", "EventTarget",
+				"AbortController", "AbortSignal",
+				"Node", "Document", "DOMImplementation", "DocumentFragment",
+				"ProcessingInstruction", "DocumentType", "Element", "Attr",
+				"CharacterData", "Text", "Comment", "CDATASection",
+				"NodeIterator", "TreeWalker", "NodeFilter",
+				"NodeList", "HTMLCollection", "DOMTokenList", "NamedNodeMap",
+				"Range", "StaticRange", "Selection",
+				"DOMException", "DOMRect", "DOMRectReadOnly",
+				"ShadowRoot", "XMLDocument", "DOMParser",
+				"HTMLElement", "HTMLUnknownElement"
+			];
+			var globalObj = typeof window !== 'undefined' ? window : this;
+			interfaces.forEach(function(name) {
+				if (name in globalObj) {
+					Object.defineProperty(globalObj, name, {
+						value: globalObj[name],
+						writable: true,
+						enumerable: false,
+						configurable: true
+					});
+				}
+			});
+		})();
+	`)
 }
 
 // htmlElementTypeMap maps lowercase HTML tag names to their constructor names.
@@ -9168,6 +9220,11 @@ func (b *DOMBinder) BindDOMTokenList(tokenList *dom.DOMTokenList) *goja.Object {
 
 	vm := b.runtime.vm
 	jsList := vm.NewObject()
+
+	// Set prototype for instanceof to work
+	if b.domTokenListProto != nil {
+		jsList.SetPrototype(b.domTokenListProto)
+	}
 
 	jsList.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		return vm.ToValue(tokenList.Length())
