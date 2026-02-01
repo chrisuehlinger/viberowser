@@ -49,6 +49,7 @@ type listenerOptions struct {
 	capture bool
 	once    bool
 	passive bool
+	signal  *goja.Object // AbortSignal to watch for abort
 }
 
 // ListenerErrorHandler is called when an event listener throws an exception.
@@ -396,6 +397,22 @@ func (eb *EventBinder) BindEventTarget(obj *goja.Object) {
 					}
 					if v := optObj.Get("passive"); v != nil && !goja.IsUndefined(v) {
 						opts.passive = v.ToBoolean()
+					}
+					if v := optObj.Get("signal"); v != nil && !goja.IsUndefined(v) {
+						// Per DOM spec, if signal is null, throw TypeError
+						if goja.IsNull(v) {
+							panic(vm.NewTypeError("Failed to execute 'addEventListener': member signal is not of type AbortSignal."))
+						}
+						signalObj := v.ToObject(vm)
+						if signalObj != nil {
+							// Check if the signal is already aborted
+							abortedVal := signalObj.Get("aborted")
+							if abortedVal != nil && abortedVal.ToBoolean() {
+								// Signal is already aborted, don't add the listener
+								return goja.Undefined()
+							}
+							opts.signal = signalObj
+						}
 					}
 				}
 			}
@@ -827,6 +844,24 @@ func (eb *EventBinder) createEventConstructor(name string, parentProto *goja.Obj
 func (eb *EventBinder) SetupEventConstructors() {
 	vm := eb.runtime.vm
 
+	// EventTarget constructor - allows creating standalone EventTarget objects
+	eventTargetProto := vm.NewObject()
+	eventTargetCtor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		et := call.This
+		et.SetPrototype(eventTargetProto)
+		eb.BindEventTarget(et)
+		return et
+	})
+	eventTargetCtorObj := eventTargetCtor.ToObject(vm)
+	eventTargetCtorObj.Set("prototype", eventTargetProto)
+	eventTargetProto.Set("constructor", eventTargetCtorObj)
+	vm.Set("EventTarget", eventTargetCtorObj)
+
+	// Store the EventTarget prototype
+	eb.mu.Lock()
+	eb.eventProtos["EventTarget"] = eventTargetProto
+	eb.mu.Unlock()
+
 	// Event - base event constructor
 	eb.createEventConstructor("Event", nil, nil)
 	eventProto := eb.GetEventProto("Event")
@@ -1229,6 +1264,339 @@ func (eb *EventBinder) SetupEventConstructors() {
 			}
 		}
 	})
+
+	// Set up AbortController and AbortSignal
+	eb.setupAbortController()
+}
+
+// setupAbortController sets up the AbortController and AbortSignal constructors.
+// Per DOM spec:
+// - AbortController has a signal property (AbortSignal) and an abort(reason) method
+// - AbortSignal is an EventTarget with aborted property, reason property, and throwIfAborted() method
+// - AbortSignal has static methods: abort(reason) and timeout(milliseconds)
+func (eb *EventBinder) setupAbortController() {
+	vm := eb.runtime.vm
+	eventProto := eb.GetEventProto("Event")
+
+	// Create AbortSignal prototype - AbortSignal extends EventTarget
+	abortSignalProto := vm.NewObject()
+
+	// AbortSignal constructor (not directly constructible by users)
+	abortSignalCtor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		// Per DOM spec, AbortSignal cannot be directly constructed
+		panic(vm.NewTypeError("Illegal constructor"))
+	})
+	abortSignalCtorObj := abortSignalCtor.ToObject(vm)
+	abortSignalCtorObj.Set("prototype", abortSignalProto)
+	abortSignalProto.Set("constructor", abortSignalCtorObj)
+
+	// AbortSignal.abort(reason) - static method that returns an already-aborted signal
+	abortSignalCtorObj.Set("abort", func(call goja.FunctionCall) goja.Value {
+		signal := eb.createAbortSignal(true) // Create already-aborted signal
+
+		// Set the abort reason
+		if len(call.Arguments) > 0 && !goja.IsUndefined(call.Arguments[0]) {
+			signal.Set("reason", call.Arguments[0])
+		} else {
+			// Default reason is AbortError DOMException
+			signal.Set("reason", eb.createDOMException("AbortError", "signal is aborted without reason"))
+		}
+
+		return signal
+	})
+
+	// AbortSignal.timeout(milliseconds) - static method that aborts after a delay
+	abortSignalCtorObj.Set("timeout", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'timeout' on 'AbortSignal': 1 argument required"))
+		}
+
+		ms := call.Arguments[0].ToInteger()
+		signal := eb.createAbortSignal(false) // Create non-aborted signal
+
+		// Schedule the abort after the timeout
+		// Note: This requires setTimeout to be available in the runtime
+		setTimeoutVal := vm.Get("setTimeout")
+		if setTimeoutVal != nil && !goja.IsUndefined(setTimeoutVal) {
+			if setTimeout, ok := goja.AssertFunction(setTimeoutVal); ok {
+				// Create a callback that aborts the signal with TimeoutError
+				callback := vm.ToValue(func(call goja.FunctionCall) goja.Value {
+					// Only abort if not already aborted
+					if !signal.Get("aborted").ToBoolean() {
+						signal.Set("aborted", true)
+						signal.Set("reason", eb.createDOMException("TimeoutError", "signal timed out"))
+
+						// Dispatch abort event
+						eb.dispatchAbortEvent(signal)
+					}
+					return goja.Undefined()
+				})
+				setTimeout(goja.Undefined(), callback, vm.ToValue(ms))
+			}
+		}
+
+		return signal
+	})
+
+	// AbortSignal.any(signals) - static method that returns a signal that aborts when any of the given signals abort
+	abortSignalCtorObj.Set("any", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'any' on 'AbortSignal': 1 argument required"))
+		}
+
+		// Get the iterable of signals
+		signalsArg := call.Arguments[0]
+		if goja.IsNull(signalsArg) || goja.IsUndefined(signalsArg) {
+			panic(vm.NewTypeError("Failed to execute 'any' on 'AbortSignal': The provided value is not iterable"))
+		}
+
+		signalsObj := signalsArg.ToObject(vm)
+		if signalsObj == nil {
+			panic(vm.NewTypeError("Failed to execute 'any' on 'AbortSignal': The provided value is not iterable"))
+		}
+
+		// Check if any signal is already aborted
+		lengthVal := signalsObj.Get("length")
+		if lengthVal == nil || goja.IsUndefined(lengthVal) {
+			// Not an array-like object
+			panic(vm.NewTypeError("Failed to execute 'any' on 'AbortSignal': The provided value is not iterable"))
+		}
+
+		length := int(lengthVal.ToInteger())
+		for i := 0; i < length; i++ {
+			signalVal := signalsObj.Get(vm.ToValue(i).String())
+			if signalVal == nil || goja.IsUndefined(signalVal) {
+				continue
+			}
+			signalObj := signalVal.ToObject(vm)
+			if signalObj == nil {
+				continue
+			}
+			// Check if this signal is already aborted
+			abortedVal := signalObj.Get("aborted")
+			if abortedVal != nil && abortedVal.ToBoolean() {
+				// Return a signal that's already aborted with this signal's reason
+				result := eb.createAbortSignal(true)
+				reasonVal := signalObj.Get("reason")
+				if reasonVal != nil && !goja.IsUndefined(reasonVal) {
+					result.Set("reason", reasonVal)
+				} else {
+					result.Set("reason", eb.createDOMException("AbortError", "signal is aborted without reason"))
+				}
+				return result
+			}
+		}
+
+		// Create a new signal that will abort when any of the source signals abort
+		resultSignal := eb.createAbortSignal(false)
+
+		// Add abort listeners to each source signal
+		for i := 0; i < length; i++ {
+			signalVal := signalsObj.Get(vm.ToValue(i).String())
+			if signalVal == nil || goja.IsUndefined(signalVal) {
+				continue
+			}
+			signalObj := signalVal.ToObject(vm)
+			if signalObj == nil {
+				continue
+			}
+
+			// Add an abort listener
+			addEventListenerVal := signalObj.Get("addEventListener")
+			if addEventListenerVal != nil && !goja.IsUndefined(addEventListenerVal) {
+				if addEventListenerFn, ok := goja.AssertFunction(addEventListenerVal); ok {
+					// Create a callback that aborts the result signal
+					localSignalObj := signalObj // Capture for closure
+					callback := vm.ToValue(func(call goja.FunctionCall) goja.Value {
+						// Only abort if not already aborted
+						if !resultSignal.Get("aborted").ToBoolean() {
+							resultSignal.Set("aborted", true)
+							// Copy the reason from the source signal
+							reasonVal := localSignalObj.Get("reason")
+							if reasonVal != nil && !goja.IsUndefined(reasonVal) {
+								resultSignal.Set("reason", reasonVal)
+							} else {
+								resultSignal.Set("reason", eb.createDOMException("AbortError", "signal is aborted without reason"))
+							}
+							// Dispatch abort event
+							eb.dispatchAbortEvent(resultSignal)
+						}
+						return goja.Undefined()
+					})
+					addEventListenerFn(signalObj, vm.ToValue("abort"), callback)
+				}
+			}
+		}
+
+		return resultSignal
+	})
+
+	vm.Set("AbortSignal", abortSignalCtorObj)
+
+	// Store the AbortSignal prototype for later use
+	eb.mu.Lock()
+	eb.eventProtos["AbortSignal"] = abortSignalProto
+	eb.mu.Unlock()
+
+	// Create AbortController constructor
+	abortControllerProto := vm.NewObject()
+
+	abortControllerCtor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		controller := call.This
+		controller.SetPrototype(abortControllerProto)
+
+		// Create the associated AbortSignal
+		signal := eb.createAbortSignal(false)
+		controller.Set("signal", signal)
+
+		// Store a reference to the controller on the signal for internal use
+		signal.Set("_controller", controller)
+
+		// abort(reason) method
+		controller.Set("abort", func(call goja.FunctionCall) goja.Value {
+			// Get the signal
+			signalVal := controller.Get("signal")
+			if signalVal == nil || goja.IsUndefined(signalVal) {
+				return goja.Undefined()
+			}
+			signalObj := signalVal.ToObject(vm)
+			if signalObj == nil {
+				return goja.Undefined()
+			}
+
+			// If already aborted, do nothing
+			if signalObj.Get("aborted").ToBoolean() {
+				return goja.Undefined()
+			}
+
+			// Set aborted to true
+			signalObj.Set("aborted", true)
+
+			// Set the abort reason
+			if len(call.Arguments) > 0 && !goja.IsUndefined(call.Arguments[0]) {
+				signalObj.Set("reason", call.Arguments[0])
+			} else {
+				// Default reason is AbortError DOMException
+				signalObj.Set("reason", eb.createDOMException("AbortError", "signal is aborted without reason"))
+			}
+
+			// Dispatch "abort" event on the signal
+			eb.dispatchAbortEvent(signalObj)
+
+			return goja.Undefined()
+		})
+
+		return controller
+	})
+
+	abortControllerCtorObj := abortControllerCtor.ToObject(vm)
+	abortControllerCtorObj.Set("prototype", abortControllerProto)
+	abortControllerProto.Set("constructor", abortControllerCtorObj)
+
+	vm.Set("AbortController", abortControllerCtorObj)
+
+	// Store event proto reference for AbortSignal event dispatch
+	_ = eventProto
+}
+
+// createAbortSignal creates a new AbortSignal object.
+func (eb *EventBinder) createAbortSignal(aborted bool) *goja.Object {
+	vm := eb.runtime.vm
+
+	signal := vm.NewObject()
+
+	// Get and set the AbortSignal prototype
+	eb.mu.RLock()
+	proto := eb.eventProtos["AbortSignal"]
+	eb.mu.RUnlock()
+	if proto != nil {
+		signal.SetPrototype(proto)
+	}
+
+	// Set initial properties
+	signal.Set("aborted", aborted)
+	if aborted {
+		signal.Set("reason", eb.createDOMException("AbortError", "signal is aborted without reason"))
+	} else {
+		signal.Set("reason", goja.Undefined())
+	}
+
+	// onabort event handler property
+	signal.Set("onabort", goja.Null())
+
+	// throwIfAborted() method
+	signal.Set("throwIfAborted", func(call goja.FunctionCall) goja.Value {
+		if signal.Get("aborted").ToBoolean() {
+			reason := signal.Get("reason")
+			if reason != nil && !goja.IsUndefined(reason) {
+				panic(reason)
+			}
+			panic(eb.createDOMException("AbortError", "signal is aborted without reason"))
+		}
+		return goja.Undefined()
+	})
+
+	// Make the signal an EventTarget
+	eb.BindEventTarget(signal)
+
+	return signal
+}
+
+// dispatchAbortEvent dispatches an "abort" event on the given AbortSignal.
+func (eb *EventBinder) dispatchAbortEvent(signal *goja.Object) {
+	vm := eb.runtime.vm
+
+	// Create the abort event
+	abortEvent := eb.CreateEvent("abort", map[string]interface{}{
+		"bubbles":    false,
+		"cancelable": false,
+	})
+
+	// Dispatch the event
+	dispatchEventVal := signal.Get("dispatchEvent")
+	if dispatchEventVal != nil && !goja.IsUndefined(dispatchEventVal) {
+		if dispatchEventFn, ok := goja.AssertFunction(dispatchEventVal); ok {
+			dispatchEventFn(signal, abortEvent)
+		}
+	}
+
+	// Also call the onabort handler if set
+	onabortVal := signal.Get("onabort")
+	if onabortVal != nil && !goja.IsNull(onabortVal) && !goja.IsUndefined(onabortVal) {
+		if onabortFn, ok := goja.AssertFunction(onabortVal); ok {
+			onabortFn(signal, abortEvent)
+		}
+	}
+
+	// Trigger removal of all listeners that were added with this signal
+	eb.removeListenersForSignal(signal)
+
+	_ = vm
+}
+
+// removeListenersForSignal removes all event listeners that were registered with the given signal.
+func (eb *EventBinder) removeListenersForSignal(signal *goja.Object) {
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+
+	// Iterate over all targets and remove listeners that have this signal
+	for _, target := range eb.targetMap {
+		target.mu.Lock()
+		for eventType, listeners := range target.listeners {
+			// Filter out listeners with this signal
+			filtered := make([]*eventListener, 0, len(listeners))
+			for _, l := range listeners {
+				if l.options.signal == nil || l.options.signal != signal {
+					filtered = append(filtered, l)
+				} else {
+					// Mark as removed so ongoing iterations skip it
+					l.removed = true
+				}
+			}
+			target.listeners[eventType] = filtered
+		}
+		target.mu.Unlock()
+	}
 }
 
 // ClearTargets clears all event target registrations.

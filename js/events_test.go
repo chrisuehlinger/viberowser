@@ -650,3 +650,439 @@ func TestWheelEventConstructor(t *testing.T) {
 		t.Error("WheelEvent should inherit MouseEvent properties")
 	}
 }
+
+func TestAbortControllerBasic(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+	eventBinder := NewEventBinder(r)
+	eventBinder.SetupEventConstructors()
+
+	doc := dom.NewDocument()
+	binder.BindDocument(doc)
+	eventBinder.BindEventTarget(r.vm.Get("document").ToObject(r.vm))
+
+	// Test AbortController creation and that signal has addEventListener
+	result, err := r.Execute(`
+		var controller = new AbortController();
+		typeof controller.signal.addEventListener === 'function';
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("AbortSignal should have addEventListener method")
+	}
+
+	// Test initial signal state
+	result, err = r.Execute(`
+		controller.signal.aborted === false;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("AbortSignal should start as non-aborted")
+	}
+
+	// Test abort
+	result, err = r.Execute(`
+		controller.abort();
+		controller.signal.aborted === true;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("AbortSignal should be aborted after controller.abort()")
+	}
+
+	// Test abort reason
+	result, err = r.Execute(`
+		var controller2 = new AbortController();
+		controller2.abort("test reason");
+		controller2.signal.reason === "test reason";
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("AbortSignal.reason should match the abort reason")
+	}
+}
+
+func TestAbortSignalRemovesListener(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+	eventBinder := NewEventBinder(r)
+	eventBinder.SetupEventConstructors()
+
+	doc := dom.NewDocument()
+	binder.BindDocument(doc)
+	eventBinder.BindEventTarget(r.vm.Get("document").ToObject(r.vm))
+
+	// Test that aborting removes the listener
+	result, err := r.Execute(`
+		var count = 0;
+		var controller = new AbortController();
+		document.addEventListener('test', function() { count++; }, { signal: controller.signal });
+
+		// First dispatch should work
+		document.dispatchEvent(new Event('test'));
+		var countAfterFirst = count;
+
+		// Abort the controller
+		controller.abort();
+
+		// Second dispatch should not call the handler
+		document.dispatchEvent(new Event('test'));
+		var countAfterSecond = count;
+
+		countAfterFirst === 1 && countAfterSecond === 1;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Aborting should remove the event listener")
+	}
+}
+
+func TestAbortSignalAlreadyAborted(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+	eventBinder := NewEventBinder(r)
+	eventBinder.SetupEventConstructors()
+
+	doc := dom.NewDocument()
+	binder.BindDocument(doc)
+	eventBinder.BindEventTarget(r.vm.Get("document").ToObject(r.vm))
+
+	// Test that an already-aborted signal prevents adding the listener
+	result, err := r.Execute(`
+		var count = 0;
+		var controller = new AbortController();
+		controller.abort();  // Abort before adding listener
+
+		document.addEventListener('test', function() { count++; }, { signal: controller.signal });
+		document.dispatchEvent(new Event('test'));
+
+		count === 0;  // Listener should not have been added
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Already-aborted signal should prevent adding listener")
+	}
+}
+
+func TestAbortSignalAbortStatic(t *testing.T) {
+	r := NewRuntime()
+	eventBinder := NewEventBinder(r)
+	eventBinder.SetupEventConstructors()
+
+	// Test AbortSignal.abort() static method
+	result, err := r.Execute(`
+		var signal = AbortSignal.abort();
+		signal.aborted === true;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("AbortSignal.abort() should return an already-aborted signal")
+	}
+
+	// Test AbortSignal.abort(reason)
+	result, err = r.Execute(`
+		var signal2 = AbortSignal.abort("custom reason");
+		signal2.aborted === true && signal2.reason === "custom reason";
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("AbortSignal.abort(reason) should set the abort reason")
+	}
+}
+
+func TestAbortSignalThrowIfAborted(t *testing.T) {
+	r := NewRuntime()
+	eventBinder := NewEventBinder(r)
+	eventBinder.SetupEventConstructors()
+
+	// Test throwIfAborted on non-aborted signal
+	result, err := r.Execute(`
+		var controller = new AbortController();
+		var threw = false;
+		try {
+			controller.signal.throwIfAborted();
+		} catch (e) {
+			threw = true;
+		}
+		threw === false;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("throwIfAborted should not throw on non-aborted signal")
+	}
+
+	// Test throwIfAborted on aborted signal
+	result, err = r.Execute(`
+		var controller2 = new AbortController();
+		controller2.abort("test");
+		var threw2 = false;
+		var reason2 = null;
+		try {
+			controller2.signal.throwIfAborted();
+		} catch (e) {
+			threw2 = true;
+			reason2 = e;
+		}
+		threw2 === true && reason2 === "test";
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("throwIfAborted should throw the abort reason on aborted signal")
+	}
+}
+
+func TestAbortSignalOnAbortHandler(t *testing.T) {
+	r := NewRuntime()
+	eventBinder := NewEventBinder(r)
+	eventBinder.SetupEventConstructors()
+
+	// Test onabort event handler
+	result, err := r.Execute(`
+		var controller = new AbortController();
+		var onabortCalled = false;
+		controller.signal.onabort = function() { onabortCalled = true; };
+		controller.abort();
+		onabortCalled === true;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("onabort handler should be called when signal is aborted")
+	}
+}
+
+func TestAbortSignalWithOnce(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+	eventBinder := NewEventBinder(r)
+	eventBinder.SetupEventConstructors()
+
+	doc := dom.NewDocument()
+	binder.BindDocument(doc)
+	eventBinder.BindEventTarget(r.vm.Get("document").ToObject(r.vm))
+
+	// Test signal option combined with once option
+	result, err := r.Execute(`
+		var count = 0;
+		var controller = new AbortController();
+		document.addEventListener('test', function() { count++; }, { signal: controller.signal, once: true });
+
+		// First dispatch should work and remove listener due to once
+		document.dispatchEvent(new Event('test'));
+
+		// Second dispatch should not work (listener was removed by once)
+		document.dispatchEvent(new Event('test'));
+
+		count === 1;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("signal option should work together with once option")
+	}
+}
+
+func TestEventTargetConstructor(t *testing.T) {
+	r := NewRuntime()
+	eventBinder := NewEventBinder(r)
+	eventBinder.SetupEventConstructors()
+
+	// Test that EventTarget constructor exists and creates usable objects
+	result, err := r.Execute(`
+		var et = new EventTarget();
+		typeof et.addEventListener === 'function' &&
+		typeof et.removeEventListener === 'function' &&
+		typeof et.dispatchEvent === 'function';
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("EventTarget should have all required methods")
+	}
+
+	// Test using EventTarget like in WPT tests
+	result, err = r.Execute(`
+		var count = 0;
+		function handler() { count++; }
+		var et = new EventTarget();
+		var controller = new AbortController();
+		et.addEventListener('test', handler, { signal: controller.signal });
+		et.dispatchEvent(new Event('test'));
+		var countAfterFirst = count; // Should be 1
+		et.dispatchEvent(new Event('test'));
+		var countAfterSecond = count; // Should be 2
+		controller.abort();
+		et.dispatchEvent(new Event('test'));
+		var countAfterAbort = count; // Should still be 2
+		et.addEventListener('test', handler, { signal: controller.signal });
+		et.dispatchEvent(new Event('test'));
+		var countAfterReAdd = count; // Should still be 2 (signal already aborted)
+
+		countAfterFirst === 1 && countAfterSecond === 2 && countAfterAbort === 2 && countAfterReAdd === 2;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("EventTarget with AbortController should work as in WPT tests")
+	}
+}
+
+func TestAbortSignalNullThrows(t *testing.T) {
+	r := NewRuntime()
+	eventBinder := NewEventBinder(r)
+	eventBinder.SetupEventConstructors()
+
+	// Test that passing null as signal throws TypeError
+	result, err := r.Execute(`
+		var et = new EventTarget();
+		var threw = false;
+		var errorType = "";
+		try {
+			et.addEventListener("foo", function() {}, { signal: null });
+		} catch (e) {
+			threw = true;
+			errorType = e.name || e.constructor.name;
+		}
+		threw && errorType === "TypeError";
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Passing null as signal should throw TypeError")
+	}
+}
+
+func TestAbortDuringDispatch(t *testing.T) {
+	r := NewRuntime()
+	eventBinder := NewEventBinder(r)
+	eventBinder.SetupEventConstructors()
+
+	// Test that aborting from a listener removes future listeners
+	result, err := r.Execute(`
+		var count = 0;
+		function handler() {
+			count++;
+		}
+		var et = new EventTarget();
+		var controller = new AbortController();
+		// First listener aborts the controller
+		et.addEventListener('test', function() {
+			controller.abort();
+		}, { signal: controller.signal });
+		// Second listener should not be called because controller was aborted
+		et.addEventListener('test', handler, { signal: controller.signal });
+		et.dispatchEvent(new Event('test'));
+		count === 0;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Aborting from a listener should remove future listeners")
+	}
+}
+
+func TestAbortWithMultipleEvents(t *testing.T) {
+	r := NewRuntime()
+	eventBinder := NewEventBinder(r)
+	eventBinder.SetupEventConstructors()
+
+	// Test that a single abort removes listeners from multiple event types
+	result, err := r.Execute(`
+		var count = 0;
+		function handler() {
+			count++;
+		}
+		var et = new EventTarget();
+		var controller = new AbortController();
+		et.addEventListener('first', handler, { signal: controller.signal, once: true });
+		et.addEventListener('second', handler, { signal: controller.signal, once: true });
+		controller.abort();
+		et.dispatchEvent(new Event('first'));
+		et.dispatchEvent(new Event('second'));
+		count === 0;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Aborting should remove listeners from multiple event types")
+	}
+}
+
+func TestAbortWithCaptureFlag(t *testing.T) {
+	r := NewRuntime()
+	eventBinder := NewEventBinder(r)
+	eventBinder.SetupEventConstructors()
+
+	// Test signal option with capture flag
+	result, err := r.Execute(`
+		var count = 0;
+		function handler() {
+			count++;
+		}
+		var et = new EventTarget();
+		var controller = new AbortController();
+		et.addEventListener('test', handler, { signal: controller.signal, capture: true });
+		controller.abort();
+		et.dispatchEvent(new Event('test'));
+		count === 0;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Signal option should work with capture flag")
+	}
+}
+
+func TestAbortSignalRemoveEventListenerStillWorks(t *testing.T) {
+	r := NewRuntime()
+	eventBinder := NewEventBinder(r)
+	eventBinder.SetupEventConstructors()
+
+	// Test that removeEventListener still works with signal option
+	result, err := r.Execute(`
+		var count = 0;
+		function handler() {
+			count++;
+		}
+		var et = new EventTarget();
+		var controller = new AbortController();
+		et.addEventListener('test', handler, { signal: controller.signal });
+		et.removeEventListener('test', handler);
+		et.dispatchEvent(new Event('test'));
+		count === 0;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("removeEventListener should still work with signal option")
+	}
+}
