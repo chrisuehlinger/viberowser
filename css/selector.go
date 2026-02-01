@@ -547,9 +547,10 @@ func (p *SelectorParser) parseAttributeSelector() (*AttributeMatcher, error) {
 		}
 	}
 
-	// Attribute name
+	// Attribute name - preserve original case; case-sensitivity is determined at match time
+	// based on whether we're matching against an HTML element or not
 	if p.current().Type == TokenIdent {
-		attr.Name = strings.ToLower(p.consume().Value)
+		attr.Name = p.consume().Value
 	}
 
 	p.skipWhitespace()

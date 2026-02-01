@@ -170,6 +170,11 @@ func matchAttributeSelector(attr *AttributeMatcher, el *dom.Element) bool {
 	//   "*" - any namespace (or no namespace), match by local name
 	//   other - specific namespace prefix (not implemented for matching)
 
+	// Per Selectors Level 4 spec:
+	// For HTML elements in HTML documents, attribute names in selectors are case-insensitive.
+	// For SVG/MathML/XML elements, attribute names are case-sensitive.
+	isHTMLElement := el.NamespaceURI() == "http://www.w3.org/1999/xhtml" || el.NamespaceURI() == ""
+
 	var matchedAttrValue string
 	var found bool
 
@@ -178,24 +183,57 @@ func matchAttributeSelector(attr *AttributeMatcher, el *dom.Element) bool {
 		attrs := el.Attributes()
 		for i := 0; i < attrs.Length(); i++ {
 			a := attrs.Item(i)
-			if strings.EqualFold(a.LocalName(), attr.Name) {
-				matchedAttrValue = a.Value()
-				found = true
-				break
+			attrLocalName := a.LocalName()
+			selectorAttrName := attr.Name
+			if isHTMLElement {
+				// Case-insensitive match for HTML elements
+				if strings.EqualFold(attrLocalName, selectorAttrName) {
+					matchedAttrValue = a.Value()
+					found = true
+					break
+				}
+			} else {
+				// Case-sensitive match for SVG/MathML elements
+				if attrLocalName == selectorAttrName {
+					matchedAttrValue = a.Value()
+					found = true
+					break
+				}
 			}
 		}
 	} else if attr.Namespace == "" {
 		// No namespace specified - match by qualified name (normal case)
-		if el.HasAttribute(attr.Name) {
-			matchedAttrValue = el.GetAttribute(attr.Name)
-			found = true
+		// For HTML elements, HasAttribute is already case-insensitive (it lowercases the name)
+		// For SVG/MathML elements, HasAttribute is case-sensitive
+		// But we also need to handle the case where the selector has different case
+		if isHTMLElement {
+			// HTML: element.HasAttribute already lowercases, but we need to lowercase the selector name too
+			attrNameLower := strings.ToLower(attr.Name)
+			if el.HasAttribute(attrNameLower) {
+				matchedAttrValue = el.GetAttribute(attrNameLower)
+				found = true
+			}
+		} else {
+			// SVG/MathML: case-sensitive match
+			if el.HasAttribute(attr.Name) {
+				matchedAttrValue = el.GetAttribute(attr.Name)
+				found = true
+			}
 		}
 	} else {
 		// Specific namespace - would need to map prefix to URI
 		// For now, fall back to qualified name match
-		if el.HasAttribute(attr.Name) {
-			matchedAttrValue = el.GetAttribute(attr.Name)
-			found = true
+		if isHTMLElement {
+			attrNameLower := strings.ToLower(attr.Name)
+			if el.HasAttribute(attrNameLower) {
+				matchedAttrValue = el.GetAttribute(attrNameLower)
+				found = true
+			}
+		} else {
+			if el.HasAttribute(attr.Name) {
+				matchedAttrValue = el.GetAttribute(attr.Name)
+				found = true
+			}
 		}
 	}
 

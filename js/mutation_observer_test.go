@@ -470,6 +470,62 @@ func TestMutationObserverInnerHTMLWithMultipleChildren(t *testing.T) {
 	}
 }
 
+func TestMutationObserverNamespacedAttributeName(t *testing.T) {
+	r := NewRuntime()
+	se := NewScriptExecutor(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body><p id="test"></p></body>
+</html>`)
+
+	se.SetupDocument(doc)
+
+	// Test that attributeName is the localName, not the qualified name
+	_, err := r.Execute(`
+		var receivedAttributeName = null;
+		var receivedAttributeNamespace = null;
+
+		var observer = new MutationObserver(function(mutations) {
+			if (mutations.length > 0) {
+				receivedAttributeName = mutations[0].attributeName;
+				receivedAttributeNamespace = mutations[0].attributeNamespace;
+			}
+		});
+
+		var target = document.getElementById('test');
+		observer.observe(target, { attributes: true, attributeOldValue: true });
+
+		// Set a namespaced attribute with prefix
+		target.setAttributeNS("http://www.w3.org/XML/1998/namespace", "xml:lang", "42");
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Run the event loop
+	se.RunEventLoop()
+
+	// Check attributeName - should be "lang" (localName), not "xml:lang" (qualified name)
+	result, err := r.Execute("receivedAttributeName")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "lang" {
+		t.Errorf("Expected attributeName to be 'lang', got '%s'", result.String())
+	}
+
+	// Check attributeNamespace
+	result, err = r.Execute("receivedAttributeNamespace")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "http://www.w3.org/XML/1998/namespace" {
+		t.Errorf("Expected attributeNamespace to be 'http://www.w3.org/XML/1998/namespace', got '%s'", result.String())
+	}
+}
+
 func TestMutationObserverInnerHTMLAndAttribute(t *testing.T) {
 	r := NewRuntime()
 	se := NewScriptExecutor(r)
