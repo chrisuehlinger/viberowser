@@ -185,6 +185,7 @@ func DOMNodesPassingTests() []string {
 		"Node-cloneNode.html",
 		"Node-cloneNode-document-with-doctype.html",
 		"Node-cloneNode-svg.html",
+		"Node-cloneNode-XMLDocument.html",
 		"Node-compareDocumentPosition.html",
 		"Node-constants.html",
 		"Node-contains.html",
@@ -279,6 +280,15 @@ func DOMRangesPassingTests() []string {
 		"Range-detach.html",
 		"Range-selectNode.html",
 		"Range-stringifier.html",
+	}
+}
+
+// DOMListsPassingTests returns the list of DOM lists tests that are expected to pass.
+// This list is based on actual passing tests as of 2026-02-01.
+func DOMListsPassingTests() []string {
+	return []string{
+		"DOMTokenList-Iterable.html",
+		"DOMTokenList-iteration.html",
 	}
 }
 
@@ -432,6 +442,27 @@ func TestWPT_DOMCollections(t *testing.T) {
 
 	for _, testFile := range tests {
 		testPath := "/dom/collections/" + testFile
+		t.Run(testFile, func(t *testing.T) {
+			runWPTTest(t, runner, testPath)
+		})
+	}
+}
+
+// TestWPT_DOMLists runs all passing DOM lists tests.
+func TestWPT_DOMLists(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping WPT tests in short mode")
+	}
+
+	wptPath := getWPTPath(t)
+	runner := NewRunner(wptPath)
+	runner.Timeout = 30 * time.Second
+
+	tests := DOMListsPassingTests()
+	t.Logf("Running %d DOM lists tests", len(tests))
+
+	for _, testFile := range tests {
+		testPath := "/dom/lists/" + testFile
 		t.Run(testFile, func(t *testing.T) {
 			runWPTTest(t, runner, testPath)
 		})
