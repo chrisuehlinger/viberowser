@@ -313,8 +313,11 @@ func (d *Document) CreateElementNSWithError(namespaceURI, qualifiedName string) 
 		tagName = localName
 	}
 
-	// For HTML namespace, tagName is ASCII uppercase. For other namespaces, preserve case.
-	if namespace == HTMLNamespace {
+	// Per DOM spec, tagName is ASCII uppercase only when:
+	// 1. The element is in the HTML namespace, AND
+	// 2. The ownerDocument is an HTML document (contentType "text/html")
+	// For XML documents (including XHTML), preserve case.
+	if namespace == HTMLNamespace && d.IsHTML() {
 		tagName = toASCIIUppercase(tagName)
 	}
 

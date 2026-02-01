@@ -28,10 +28,25 @@ func (e *Element) NodeName() string {
 	return e.TagName()
 }
 
-// TagName returns the tag name in uppercase (for HTML elements).
+// TagName returns the tag name of the element.
+// Per DOM spec, tagName is ASCII uppercase only when:
+// 1. The element is in the HTML namespace, AND
+// 2. The ownerDocument is an HTML document (contentType "text/html")
+// For XML documents (including XHTML), case is preserved.
 func (e *Element) TagName() string {
 	if e.AsNode().elementData != nil {
-		return e.AsNode().elementData.tagName
+		// Compute qualified name from prefix and localName
+		var qualifiedName string
+		if e.AsNode().elementData.prefix != "" {
+			qualifiedName = e.AsNode().elementData.prefix + ":" + e.AsNode().elementData.localName
+		} else {
+			qualifiedName = e.AsNode().elementData.localName
+		}
+		// Uppercase only for HTML namespace elements in HTML documents
+		if e.isHTMLElementInHTMLDocument() {
+			return toASCIIUppercase(qualifiedName)
+		}
+		return qualifiedName
 	}
 	return strings.ToUpper(e.AsNode().nodeName)
 }

@@ -136,7 +136,7 @@ func DOMNodesPassingTests() []string {
 		"DocumentType-literal.html",
 		"DocumentType-remove.html",
 
-		// Element tests (26 tests)
+		// Element tests (27 tests)
 		"Element-childElement-null.html",
 		"Element-childElementCount.html",
 		"Element-childElementCount-dynamic-add.html",
@@ -164,6 +164,7 @@ func DOMNodesPassingTests() []string {
 		"Element-setAttribute.html",
 		"Element-setAttribute-crbug-1138487.html",
 		"Element-siblingElement-null.html",
+		"Element-tagName.html",
 
 		// MutationObserver tests (5 tests)
 		"MutationObserver-childList.html",
@@ -198,6 +199,10 @@ func DOMNodesPassingTests() []string {
 		"Node-removeChild.html",
 		"Node-replaceChild.html",
 		"Node-textContent.html",
+
+		// NodeList tests (2 tests)
+		"NodeList-Iterable.html",
+		"NodeList-static-length-getter-tampered-1.html",
 
 		// ParentNode tests (9 tests)
 		"ParentNode-append.html",
