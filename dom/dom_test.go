@@ -65,6 +65,25 @@ func TestDocument_CreateComment(t *testing.T) {
 	}
 }
 
+func TestDocument_URL(t *testing.T) {
+	// Test default URL is "about:blank"
+	doc := NewDocument()
+	if doc.URL() != "about:blank" {
+		t.Errorf("Expected default URL 'about:blank', got '%s'", doc.URL())
+	}
+
+	// Test setting URL
+	doc.SetURL("https://example.com/page.html")
+	if doc.URL() != "https://example.com/page.html" {
+		t.Errorf("Expected 'https://example.com/page.html', got '%s'", doc.URL())
+	}
+
+	// Test DocumentURI returns same as URL
+	if doc.DocumentURI() != doc.URL() {
+		t.Errorf("DocumentURI() should equal URL(), got '%s' vs '%s'", doc.DocumentURI(), doc.URL())
+	}
+}
+
 func TestDocument_CreateCDATASection(t *testing.T) {
 	// Test creating CDATASection in XML document
 	impl := NewDOMImplementation(nil)

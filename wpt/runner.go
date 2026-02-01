@@ -133,7 +133,7 @@ func (r *Runner) RunTestFile(testPath string) TestSuiteResult {
 	} else {
 		iframeBaseURL = r.BaseURL
 	}
-	executor.SetIframeContentLoader(func(src string) *dom.Document {
+	executor.SetIframeContentLoader(func(src string) (*dom.Document, string) {
 		return r.loadIframeContent(ctx, src, iframeBaseURL)
 	})
 
@@ -331,9 +331,10 @@ func (r *Runner) loadResource(ctx context.Context, resourcePath string) (string,
 }
 
 // loadIframeContent loads the content for an iframe src URL and parses it as the appropriate document type.
-func (r *Runner) loadIframeContent(ctx context.Context, src, baseURL string) *dom.Document {
+// Returns the document and the final URL (which may differ from src if there were redirects).
+func (r *Runner) loadIframeContent(ctx context.Context, src, baseURL string) (*dom.Document, string) {
 	if src == "" || src == "about:blank" {
-		return nil
+		return nil, src
 	}
 
 	// Resolve the URL relative to baseURL
@@ -349,14 +350,17 @@ func (r *Runner) loadIframeContent(ctx context.Context, src, baseURL string) *do
 		// Relative path - resolve against baseURL
 		parsedBase, err := url.Parse(baseURL)
 		if err != nil {
-			return nil
+			return nil, ""
 		}
 		parsedSrc, err := parsedBase.Parse(src)
 		if err != nil {
-			return nil
+			return nil, ""
 		}
 		fullURL = parsedSrc.String()
 	}
+
+	// Track the final URL after any redirects
+	finalURL := fullURL
 
 	// Load the content
 	var content string
@@ -364,51 +368,53 @@ func (r *Runner) loadIframeContent(ctx context.Context, src, baseURL string) *do
 		filePath := strings.TrimPrefix(fullURL, "file://")
 		data, readErr := os.ReadFile(filePath)
 		if readErr != nil {
-			return nil
+			return nil, ""
 		}
 		content = string(data)
 	} else {
-		// HTTP request
+		// HTTP request - use a custom transport to track redirects
 		req, reqErr := http.NewRequestWithContext(ctx, "GET", fullURL, nil)
 		if reqErr != nil {
-			return nil
+			return nil, ""
 		}
 		resp, respErr := r.httpClient.Do(req)
 		if respErr != nil {
-			return nil
+			return nil, ""
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			return nil
+			return nil, ""
 		}
+		// Get the final URL after redirects from the response
+		finalURL = resp.Request.URL.String()
 		data, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {
-			return nil
+			return nil, ""
 		}
 		content = string(data)
 	}
 
 	// Determine document type based on URL extension
-	lowerSrc := strings.ToLower(src)
-	if strings.HasSuffix(lowerSrc, ".xml") {
+	lowerFinalURL := strings.ToLower(finalURL)
+	if strings.HasSuffix(lowerFinalURL, ".xml") {
 		doc, err := dom.ParseXML(content)
 		if err != nil {
-			return nil
+			return nil, ""
 		}
-		return doc
-	} else if strings.HasSuffix(lowerSrc, ".xhtml") {
+		return doc, finalURL
+	} else if strings.HasSuffix(lowerFinalURL, ".xhtml") {
 		doc, err := dom.ParseXHTML(content)
 		if err != nil {
-			return nil
+			return nil, ""
 		}
-		return doc
+		return doc, finalURL
 	} else {
 		// Default to HTML parsing
 		doc, err := dom.ParseHTML(content)
 		if err != nil {
-			return nil
+			return nil, ""
 		}
-		return doc
+		return doc, finalURL
 	}
 }
 

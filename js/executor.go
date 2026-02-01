@@ -16,8 +16,9 @@ type iframeContent struct {
 }
 
 // IframeContentLoader is a callback for loading iframe content.
-// It takes the iframe src URL and returns the loaded document, or nil if loading failed.
-type IframeContentLoader func(src string) *dom.Document
+// It takes the iframe src URL and returns the loaded document and the final URL
+// (which may differ from src if there were redirects), or nil if loading failed.
+type IframeContentLoader func(src string) (doc *dom.Document, finalURL string)
 
 // ScriptExecutor handles executing scripts in an HTML document.
 type ScriptExecutor struct {
@@ -463,8 +464,9 @@ func (se *ScriptExecutor) getIframeContent(iframe *dom.Element) (goja.Value, goj
 
 	// Try to load iframe content using the loader
 	var iframeDoc *dom.Document
+	var finalURL string
 	if se.iframeContentLoader != nil {
-		iframeDoc = se.iframeContentLoader(src)
+		iframeDoc, finalURL = se.iframeContentLoader(src)
 	}
 
 	// If no loader or loading failed, create a minimal blank document
@@ -477,6 +479,12 @@ func (se *ScriptExecutor) getIframeContent(iframe *dom.Element) (goja.Value, goj
 		iframeDoc.AsNode().AppendChild(html.AsNode())
 		html.AsNode().AppendChild(head.AsNode())
 		html.AsNode().AppendChild(body.AsNode())
+		finalURL = src // Use src as the URL for blank documents
+	}
+
+	// Set the document's URL to the final URL (which may differ from src due to redirects)
+	if finalURL != "" {
+		iframeDoc.SetURL(finalURL)
 	}
 
 	// Bind the iframe document to JavaScript without replacing global document.

@@ -37,6 +37,42 @@ func TestDOMBinderDocument(t *testing.T) {
 	}
 }
 
+func TestDocumentURL(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html><html><body></body></html>`)
+
+	// Default URL should be "about:blank"
+	binder.BindDocument(doc)
+	result, err := r.Execute("document.URL")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "about:blank" {
+		t.Errorf("Expected default URL 'about:blank', got %v", result.String())
+	}
+
+	// Set URL and verify
+	doc.SetURL("https://example.com/page.html")
+	result, err = r.Execute("document.URL")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "https://example.com/page.html" {
+		t.Errorf("Expected 'https://example.com/page.html', got %v", result.String())
+	}
+
+	// Test documentURI is the same as URL
+	result, err = r.Execute("document.documentURI")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "https://example.com/page.html" {
+		t.Errorf("Expected documentURI to match URL, got %v", result.String())
+	}
+}
+
 func TestDOMBinderQuerySelector(t *testing.T) {
 	r := NewRuntime()
 	binder := NewDOMBinder(r)

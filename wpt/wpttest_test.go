@@ -734,3 +734,59 @@ func TestWPTDocumentConstructor(t *testing.T) {
 
 	t.Logf("Summary: %d passed, %d failed", passed, failed)
 }
+
+// TestIframeContentDocumentURL tests that iframe.contentDocument.URL is set correctly
+func TestIframeContentDocumentURL(t *testing.T) {
+	wptPath := "/workspaces/wpt"
+
+	// Check if WPT exists
+	if _, err := os.Stat(wptPath); os.IsNotExist(err) {
+		t.Skip("WPT not available")
+	}
+
+	// Create a test document with an iframe
+	doc, err := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head><title>Test</title></head>
+<body>
+<iframe id="test-iframe"></iframe>
+</body>
+</html>`)
+	if err != nil {
+		t.Fatalf("Failed to parse HTML: %v", err)
+	}
+
+	// Create runtime and executor
+	runtime := js.NewRuntime()
+	executor := js.NewScriptExecutor(runtime)
+
+	// Set up iframe content loader with a known URL
+	expectedURL := "file://" + wptPath + "/common/blank.html"
+	executor.SetIframeContentLoader(func(src string) (*dom.Document, string) {
+		iframeDoc := dom.NewDocument()
+		html := iframeDoc.CreateElement("html")
+		body := iframeDoc.CreateElement("body")
+		iframeDoc.AsNode().AppendChild(html.AsNode())
+		html.AsNode().AppendChild(body.AsNode())
+		// Return the document with a fixed URL
+		return iframeDoc, expectedURL
+	})
+
+	executor.SetupDocument(doc)
+
+	// Set the iframe src
+	_, err = runtime.Execute(`document.getElementById('test-iframe').src = '/common/blank.html'`)
+	if err != nil {
+		t.Fatalf("Failed to set iframe src: %v", err)
+	}
+
+	// Get the contentDocument.URL
+	result, err := runtime.Execute(`document.getElementById('test-iframe').contentDocument.URL`)
+	if err != nil {
+		t.Fatalf("Failed to get contentDocument.URL: %v", err)
+	}
+
+	if result.String() != expectedURL {
+		t.Errorf("Expected contentDocument.URL to be '%s', got '%s'", expectedURL, result.String())
+	}
+}
