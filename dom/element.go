@@ -121,6 +121,18 @@ func (e *Element) ClassList() *DOMTokenList {
 	return e.AsNode().elementData.classList
 }
 
+// RelList returns a DOMTokenList for the rel attribute.
+// This is typically used for HTMLAnchorElement, HTMLAreaElement, and HTMLLinkElement.
+func (e *Element) RelList() *DOMTokenList {
+	if e.AsNode().elementData == nil {
+		e.AsNode().elementData = &elementData{}
+	}
+	if e.AsNode().elementData.relList == nil {
+		e.AsNode().elementData.relList = newDOMTokenList(e, "rel")
+	}
+	return e.AsNode().elementData.relList
+}
+
 // Attributes returns the NamedNodeMap of attributes.
 func (e *Element) Attributes() *NamedNodeMap {
 	if e.AsNode().elementData == nil {

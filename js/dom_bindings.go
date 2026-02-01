@@ -4004,9 +4004,19 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		b.bindTemplateProperties(jsEl, el)
 	}
 
-	// Add anchor-specific properties (href with URL encoding)
+	// Add anchor-specific properties (href with URL encoding, relList)
 	if el.LocalName() == "a" && ns == dom.HTMLNamespace {
 		b.bindAnchorProperties(jsEl, el)
+	}
+
+	// Add area-specific properties (relList)
+	if el.LocalName() == "area" && ns == dom.HTMLNamespace {
+		b.bindAreaProperties(jsEl, el)
+	}
+
+	// Add link-specific properties (relList)
+	if el.LocalName() == "link" && ns == dom.HTMLNamespace {
+		b.bindLinkProperties(jsEl, el)
 	}
 
 	// Add input-specific properties (type, checked, disabled, value, etc.)
@@ -4131,6 +4141,36 @@ func (b *DOMBinder) bindAnchorProperties(jsEl *goja.Object, el *dom.Element) {
 			hrefVal := call.Arguments[0].String()
 			// Store the URL as-is; encoding happens in the getter
 			el.SetAttribute("href", hrefVal)
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// relList property - DOMTokenList for the rel attribute
+	b.bindRelList(jsEl, el)
+}
+
+// bindAreaProperties adds HTMLAreaElement-specific properties.
+func (b *DOMBinder) bindAreaProperties(jsEl *goja.Object, el *dom.Element) {
+	// relList property - DOMTokenList for the rel attribute
+	b.bindRelList(jsEl, el)
+}
+
+// bindLinkProperties adds HTMLLinkElement-specific properties.
+func (b *DOMBinder) bindLinkProperties(jsEl *goja.Object, el *dom.Element) {
+	// relList property - DOMTokenList for the rel attribute
+	b.bindRelList(jsEl, el)
+}
+
+// bindRelList adds the relList property to an element.
+func (b *DOMBinder) bindRelList(jsEl *goja.Object, el *dom.Element) {
+	vm := b.runtime.vm
+
+	jsEl.DefineAccessorProperty("relList", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindDOMTokenList(el.RelList())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Per spec, assigning to relList sets the rel attribute value
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("rel", call.Arguments[0].String())
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)

@@ -70,6 +70,7 @@ type elementData struct {
 	tagName          string
 	attributes       *NamedNodeMap
 	classList        *DOMTokenList
+	relList          *DOMTokenList
 	styleDeclaration *CSSStyleDeclaration
 	id               string
 	className        string
