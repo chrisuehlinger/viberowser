@@ -766,8 +766,14 @@ func (se *ScriptExecutor) DispatchLoadEvent() {
 	event.Set("eventPhase", int(EventPhaseAtTarget))
 	event.Set("isTrusted", true)
 
+	// Set the dispatch flag so attempts to re-dispatch during the event will throw
+	event.Set("_dispatch", true)
+
 	target := se.eventBinder.GetOrCreateTarget(window)
 	target.DispatchEvent(se.runtime.vm, event, EventPhaseAtTarget)
+
+	// Clear the dispatch flag after dispatching
+	event.Set("_dispatch", false)
 }
 
 // DispatchDOMContentLoaded dispatches the DOMContentLoaded event on the document.
@@ -788,8 +794,14 @@ func (se *ScriptExecutor) DispatchDOMContentLoaded() {
 	event.Set("eventPhase", int(EventPhaseAtTarget))
 	event.Set("isTrusted", true)
 
+	// Set the dispatch flag so attempts to re-dispatch during the event will throw
+	event.Set("_dispatch", true)
+
 	target := se.eventBinder.GetOrCreateTarget(docObj)
 	target.DispatchEvent(se.runtime.vm, event, EventPhaseAtTarget)
+
+	// Clear the dispatch flag after dispatching
+	event.Set("_dispatch", false)
 }
 
 // RunEventLoop runs the event loop until there's no more work.

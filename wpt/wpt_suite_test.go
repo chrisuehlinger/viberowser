@@ -344,6 +344,7 @@ func DOMEventsPassingTests() []string {
 		"Event-dispatch-order.html",
 		"Event-dispatch-other-document.html",
 		"Event-dispatch-propagation-stopped.html",
+		"Event-dispatch-redispatch.html",
 		"Event-dispatch-reenter.html",
 		"Event-dispatch-target-moved.html",
 		"Event-dispatch-target-removed.html",

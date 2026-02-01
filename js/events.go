@@ -507,6 +507,10 @@ func (eb *EventBinder) BindEventTarget(obj *goja.Object) {
 		// Set dispatch flag
 		event.Set("_dispatch", true)
 
+		// Per DOM spec: When an event is dispatched by script, isTrusted becomes false
+		// This handles the case where a trusted event is captured and re-dispatched by user script
+		event.Set("isTrusted", false)
+
 		// Set target
 		event.Set("target", obj)
 
