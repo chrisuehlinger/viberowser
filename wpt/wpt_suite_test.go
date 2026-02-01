@@ -342,6 +342,7 @@ func DOMEventsPassingTests() []string {
 		"EventTarget-dispatchEvent-returnvalue.html",
 		"Event-type.html",
 		"Event-type-empty.html",
+		"event-src-element-nullable.html",
 		"remove-all-listeners.html",
 	}
 }
