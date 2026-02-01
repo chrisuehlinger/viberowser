@@ -35,12 +35,13 @@ type Event struct {
 
 // eventListener represents a registered event listener.
 type eventListener struct {
-	id         int
-	callback   goja.Callable // Non-nil if listener is a function
-	value      goja.Value    // Original value for comparison
-	isObject   bool          // True if listener is an object with handleEvent (not a function)
-	listenerObj *goja.Object // The object if isObject is true
-	options    listenerOptions
+	id          int
+	callback    goja.Callable // Non-nil if listener is a function
+	value       goja.Value    // Original value for comparison
+	isObject    bool          // True if listener is an object with handleEvent (not a function)
+	listenerObj *goja.Object  // The object if isObject is true
+	options     listenerOptions
+	removed     bool // Per DOM spec: set when listener is removed, checked during iteration
 }
 
 // listenerOptions represents addEventListener options.
@@ -56,7 +57,7 @@ type ListenerErrorHandler func(err goja.Value)
 
 // EventTarget manages event listeners for a target.
 type EventTarget struct {
-	listeners    map[string][]eventListener
+	listeners    map[string][]*eventListener // Use pointers so removed flag works across copies
 	nextID       int
 	mu           sync.RWMutex
 	errorHandler ListenerErrorHandler
@@ -65,7 +66,7 @@ type EventTarget struct {
 // NewEventTarget creates a new EventTarget.
 func NewEventTarget() *EventTarget {
 	return &EventTarget{
-		listeners: make(map[string][]eventListener),
+		listeners: make(map[string][]*eventListener),
 	}
 }
 
@@ -89,7 +90,7 @@ func (et *EventTarget) AddEventListener(eventType string, callback goja.Callable
 	}
 
 	et.nextID++
-	et.listeners[eventType] = append(et.listeners[eventType], eventListener{
+	et.listeners[eventType] = append(et.listeners[eventType], &eventListener{
 		id:          et.nextID,
 		callback:    callback,
 		value:       value,
@@ -107,6 +108,7 @@ func (et *EventTarget) RemoveEventListener(eventType string, value goja.Value, c
 	listeners := et.listeners[eventType]
 	for i, l := range listeners {
 		if l.value.SameAs(value) && l.options.capture == capture {
+			l.removed = true // Mark as removed so any ongoing iteration skips it
 			et.listeners[eventType] = append(listeners[:i], listeners[i+1:]...)
 			return
 		}
@@ -119,11 +121,11 @@ func (et *EventTarget) RemoveEventListener(eventType string, value goja.Value, c
 func (et *EventTarget) DispatchEvent(vm *goja.Runtime, event *goja.Object, phase EventPhase) bool {
 	et.mu.RLock()
 	eventType := event.Get("type").String()
-	listeners := make([]eventListener, len(et.listeners[eventType]))
+	// Copy the slice of pointers (not the listeners themselves)
+	// This allows us to check the removed flag during iteration
+	listeners := make([]*eventListener, len(et.listeners[eventType]))
 	copy(listeners, et.listeners[eventType])
 	et.mu.RUnlock()
-
-	var toRemove []eventListener
 
 	// At the target phase, per DOM spec, we need to call all listeners
 	// regardless of capture flag, but capturing listeners should be called first
@@ -135,8 +137,8 @@ func (et *EventTarget) DispatchEvent(vm *goja.Runtime, event *goja.Object, phase
 		// in the order they were registered, regardless of capture flag.
 		// But the test expects capturing listeners to fire before non-capturing.
 		// Let's sort: capturing first, then non-capturing, preserving registration order within each group
-		capturingListeners := make([]eventListener, 0)
-		bubblingListeners := make([]eventListener, 0)
+		capturingListeners := make([]*eventListener, 0)
+		bubblingListeners := make([]*eventListener, 0)
 		for _, l := range listeners {
 			if l.options.capture {
 				capturingListeners = append(capturingListeners, l)
@@ -154,12 +156,33 @@ func (et *EventTarget) DispatchEvent(vm *goja.Runtime, event *goja.Object, phase
 	}
 
 	for _, l := range listeners {
+		// Per DOM spec: skip listeners that have been removed
+		if l.removed {
+			continue
+		}
+
 		// Check phase - only filter by capture/non-capture for non-target phases
 		if phase == EventPhaseCapturing && !l.options.capture {
 			continue
 		}
 		if phase == EventPhaseBubbling && l.options.capture {
 			continue
+		}
+
+		// Per DOM spec: If listener's once is true, remove the event listener
+		// BEFORE invoking the callback. This ensures that if the callback
+		// dispatches another event of the same type, this listener won't be called again.
+		if l.options.once {
+			et.mu.Lock()
+			l.removed = true // Mark as removed so other iterations skip it
+			eventListeners := et.listeners[eventType]
+			for i, existing := range eventListeners {
+				if existing.id == l.id {
+					et.listeners[eventType] = append(eventListeners[:i], eventListeners[i+1:]...)
+					break
+				}
+			}
+			et.mu.Unlock()
 		}
 
 		var err error
@@ -213,26 +236,6 @@ func (et *EventTarget) DispatchEvent(vm *goja.Runtime, event *goja.Object, phase
 		if stopImmediate := event.Get("_stopImmediate"); stopImmediate != nil && stopImmediate.ToBoolean() {
 			break
 		}
-
-		// Mark for removal if once
-		if l.options.once {
-			toRemove = append(toRemove, l)
-		}
-	}
-
-	// Remove 'once' listeners
-	if len(toRemove) > 0 {
-		et.mu.Lock()
-		for _, l := range toRemove {
-			listeners := et.listeners[eventType]
-			for i, existing := range listeners {
-				if existing.id == l.id {
-					et.listeners[eventType] = append(listeners[:i], listeners[i+1:]...)
-					break
-				}
-			}
-		}
-		et.mu.Unlock()
 	}
 
 	// Return true if default wasn't prevented

@@ -320,6 +320,12 @@ func DOMEventsPassingTests() []string {
 		"Event-propagation.html",
 		"Event-returnValue.html",
 		"Event-stopImmediatePropagation.html",
+		"EventListener-handleEvent.html",
+		"EventTarget-dispatchEvent.html",
+		"EventTarget-dispatchEvent-returnvalue.html",
+		"Event-type.html",
+		"Event-type-empty.html",
+		"remove-all-listeners.html",
 	}
 }
 
