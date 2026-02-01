@@ -175,35 +175,40 @@ func (m *MutationObserverManager) NotifyAttributeMutation(
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	record := MutationRecord{
-		Type:               "attributes",
-		Target:             target,
-		AttributeName:      attributeName,
-		AttributeNamespace: attributeNamespace,
-		OldValue:           oldValue,
-	}
-
 	for _, observer := range m.observers {
 		if observer.shouldObserve(target, "attributes") {
+			opts := observer.getOptions(target)
+			if opts == nil {
+				continue
+			}
+
 			// Check attribute filter
-			if opts := observer.getOptions(target); opts != nil {
-				if len(opts.AttributeFilter) > 0 {
-					found := false
-					for _, name := range opts.AttributeFilter {
-						if name == attributeName {
-							found = true
-							break
-						}
-					}
-					if !found {
-						continue
+			if len(opts.AttributeFilter) > 0 {
+				found := false
+				for _, name := range opts.AttributeFilter {
+					if name == attributeName {
+						found = true
+						break
 					}
 				}
-				// Only include old value if requested
-				if !opts.AttributeOldValue {
-					record.OldValue = ""
+				if !found {
+					continue
 				}
 			}
+
+			// Create a record for this observer with appropriate oldValue
+			record := MutationRecord{
+				Type:               "attributes",
+				Target:             target,
+				AttributeName:      attributeName,
+				AttributeNamespace: attributeNamespace,
+			}
+
+			// Only include old value if requested
+			if opts.AttributeOldValue {
+				record.OldValue = oldValue
+			}
+
 			observer.queueRecord(record)
 		}
 	}
@@ -217,18 +222,24 @@ func (m *MutationObserverManager) NotifyCharacterDataMutation(
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	record := MutationRecord{
-		Type:     "characterData",
-		Target:   target,
-		OldValue: oldValue,
-	}
-
 	for _, observer := range m.observers {
 		if observer.shouldObserve(target, "characterData") {
-			// Only include old value if requested
-			if opts := observer.getOptions(target); opts != nil && !opts.CharacterDataOldValue {
-				record.OldValue = ""
+			opts := observer.getOptions(target)
+			if opts == nil {
+				continue
 			}
+
+			// Create a record for this observer with appropriate oldValue
+			record := MutationRecord{
+				Type:   "characterData",
+				Target: target,
+			}
+
+			// Only include old value if requested
+			if opts.CharacterDataOldValue {
+				record.OldValue = oldValue
+			}
+
 			observer.queueRecord(record)
 		}
 	}
