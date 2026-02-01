@@ -335,6 +335,7 @@ func DOMEventsPassingTests() []string {
 		"Event-dispatch-target-moved.html",
 		"Event-dispatch-target-removed.html",
 		"Event-dispatch-throwing.html",
+		"Event-init-while-dispatching.html",
 		"Event-initEvent.html",
 		"Event-propagation.html",
 		"Event-returnValue.html",

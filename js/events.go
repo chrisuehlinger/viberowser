@@ -979,10 +979,64 @@ func (eb *EventBinder) SetupEventConstructors() {
 	})
 	uiEventProto := eb.GetEventProto("UIEvent")
 
+	// Add initUIEvent legacy method to UIEvent prototype
+	uiEventProto.Set("initUIEvent", func(call goja.FunctionCall) goja.Value {
+		// Get the 'this' event object
+		thisObj := call.This.ToObject(vm)
+		if thisObj == nil {
+			return goja.Undefined()
+		}
+
+		// Per DOM spec: If event's dispatch flag is set, terminate these steps
+		dispatchFlag := thisObj.Get("_dispatch")
+		if dispatchFlag != nil && dispatchFlag.ToBoolean() {
+			return goja.Undefined()
+		}
+
+		// Get arguments: initUIEvent(type, bubbles, cancelable, view, detail)
+		typeArg := ""
+		if len(call.Arguments) > 0 {
+			typeArg = call.Arguments[0].String()
+		}
+		bubbles := false
+		if len(call.Arguments) > 1 {
+			bubbles = call.Arguments[1].ToBoolean()
+		}
+		cancelable := false
+		if len(call.Arguments) > 2 {
+			cancelable = call.Arguments[2].ToBoolean()
+		}
+		view := goja.Null()
+		if len(call.Arguments) > 3 && !goja.IsUndefined(call.Arguments[3]) && !goja.IsNull(call.Arguments[3]) {
+			view = call.Arguments[3]
+		}
+		detail := int64(0)
+		if len(call.Arguments) > 4 {
+			detail = call.Arguments[4].ToInteger()
+		}
+
+		// Initialize base Event properties
+		thisObj.Set("_initialized", true)
+		thisObj.Set("_stopPropagation", false)
+		thisObj.Set("_stopImmediate", false)
+		thisObj.Set("defaultPrevented", false)
+		thisObj.Set("type", typeArg)
+		thisObj.Set("bubbles", bubbles)
+		thisObj.Set("cancelable", cancelable)
+
+		// Initialize UIEvent properties
+		thisObj.Set("view", view)
+		thisObj.Set("detail", detail)
+
+		return goja.Undefined()
+	})
+
 	// MouseEvent - extends UIEvent
 	eb.createEventConstructor("MouseEvent", uiEventProto, func(event *goja.Object, call goja.ConstructorCall) {
+		// Set UIEvent defaults
 		event.Set("view", goja.Null())
 		event.Set("detail", 0)
+		// Set MouseEvent defaults
 		event.Set("screenX", 0)
 		event.Set("screenY", 0)
 		event.Set("clientX", 0)
@@ -997,6 +1051,14 @@ func (eb *EventBinder) SetupEventConstructors() {
 		if len(call.Arguments) > 1 && !goja.IsUndefined(call.Arguments[1]) && !goja.IsNull(call.Arguments[1]) {
 			optObj := call.Arguments[1].ToObject(vm)
 			if optObj != nil {
+				// UIEvent properties
+				if v := optObj.Get("view"); v != nil && !goja.IsUndefined(v) {
+					event.Set("view", v)
+				}
+				if v := optObj.Get("detail"); v != nil && !goja.IsUndefined(v) {
+					event.Set("detail", v.ToInteger())
+				}
+				// MouseEvent properties
 				if v := optObj.Get("screenX"); v != nil && !goja.IsUndefined(v) {
 					event.Set("screenX", v.ToInteger())
 				}
@@ -1012,18 +1074,153 @@ func (eb *EventBinder) SetupEventConstructors() {
 				if v := optObj.Get("button"); v != nil && !goja.IsUndefined(v) {
 					event.Set("button", v.ToInteger())
 				}
+				if v := optObj.Get("buttons"); v != nil && !goja.IsUndefined(v) {
+					event.Set("buttons", v.ToInteger())
+				}
+				if v := optObj.Get("relatedTarget"); v != nil && !goja.IsUndefined(v) {
+					event.Set("relatedTarget", v)
+				}
+				// EventModifierInit properties
+				if v := optObj.Get("ctrlKey"); v != nil && !goja.IsUndefined(v) {
+					event.Set("ctrlKey", v.ToBoolean())
+				}
+				if v := optObj.Get("shiftKey"); v != nil && !goja.IsUndefined(v) {
+					event.Set("shiftKey", v.ToBoolean())
+				}
+				if v := optObj.Get("altKey"); v != nil && !goja.IsUndefined(v) {
+					event.Set("altKey", v.ToBoolean())
+				}
+				if v := optObj.Get("metaKey"); v != nil && !goja.IsUndefined(v) {
+					event.Set("metaKey", v.ToBoolean())
+				}
 			}
 		}
 	})
 
+	// Add initMouseEvent legacy method to MouseEvent prototype
+	mouseEventProtoForInit := eb.GetEventProto("MouseEvent")
+	mouseEventProtoForInit.Set("initMouseEvent", func(call goja.FunctionCall) goja.Value {
+		// Get the 'this' event object
+		thisObj := call.This.ToObject(vm)
+		if thisObj == nil {
+			return goja.Undefined()
+		}
+
+		// Per DOM spec: If event's dispatch flag is set, terminate these steps
+		dispatchFlag := thisObj.Get("_dispatch")
+		if dispatchFlag != nil && dispatchFlag.ToBoolean() {
+			return goja.Undefined()
+		}
+
+		// Get arguments: initMouseEvent(type, bubbles, cancelable, view, detail,
+		//   screenX, screenY, clientX, clientY, ctrlKey, altKey, shiftKey, metaKey, button, relatedTarget)
+		typeArg := ""
+		if len(call.Arguments) > 0 {
+			typeArg = call.Arguments[0].String()
+		}
+		bubbles := false
+		if len(call.Arguments) > 1 {
+			bubbles = call.Arguments[1].ToBoolean()
+		}
+		cancelable := false
+		if len(call.Arguments) > 2 {
+			cancelable = call.Arguments[2].ToBoolean()
+		}
+		view := goja.Null()
+		if len(call.Arguments) > 3 && !goja.IsUndefined(call.Arguments[3]) && !goja.IsNull(call.Arguments[3]) {
+			view = call.Arguments[3]
+		}
+		detail := int64(0)
+		if len(call.Arguments) > 4 {
+			detail = call.Arguments[4].ToInteger()
+		}
+		screenX := int64(0)
+		if len(call.Arguments) > 5 {
+			screenX = call.Arguments[5].ToInteger()
+		}
+		screenY := int64(0)
+		if len(call.Arguments) > 6 {
+			screenY = call.Arguments[6].ToInteger()
+		}
+		clientX := int64(0)
+		if len(call.Arguments) > 7 {
+			clientX = call.Arguments[7].ToInteger()
+		}
+		clientY := int64(0)
+		if len(call.Arguments) > 8 {
+			clientY = call.Arguments[8].ToInteger()
+		}
+		ctrlKey := false
+		if len(call.Arguments) > 9 {
+			ctrlKey = call.Arguments[9].ToBoolean()
+		}
+		altKey := false
+		if len(call.Arguments) > 10 {
+			altKey = call.Arguments[10].ToBoolean()
+		}
+		shiftKey := false
+		if len(call.Arguments) > 11 {
+			shiftKey = call.Arguments[11].ToBoolean()
+		}
+		metaKey := false
+		if len(call.Arguments) > 12 {
+			metaKey = call.Arguments[12].ToBoolean()
+		}
+		button := int64(0)
+		if len(call.Arguments) > 13 {
+			button = call.Arguments[13].ToInteger()
+		}
+		relatedTarget := goja.Null()
+		if len(call.Arguments) > 14 && !goja.IsUndefined(call.Arguments[14]) && !goja.IsNull(call.Arguments[14]) {
+			relatedTarget = call.Arguments[14]
+		}
+
+		// Initialize base Event properties
+		thisObj.Set("_initialized", true)
+		thisObj.Set("_stopPropagation", false)
+		thisObj.Set("_stopImmediate", false)
+		thisObj.Set("defaultPrevented", false)
+		thisObj.Set("type", typeArg)
+		thisObj.Set("bubbles", bubbles)
+		thisObj.Set("cancelable", cancelable)
+
+		// Initialize UIEvent properties
+		thisObj.Set("view", view)
+		thisObj.Set("detail", detail)
+
+		// Initialize MouseEvent properties
+		thisObj.Set("screenX", screenX)
+		thisObj.Set("screenY", screenY)
+		thisObj.Set("clientX", clientX)
+		thisObj.Set("clientY", clientY)
+		thisObj.Set("ctrlKey", ctrlKey)
+		thisObj.Set("altKey", altKey)
+		thisObj.Set("shiftKey", shiftKey)
+		thisObj.Set("metaKey", metaKey)
+		thisObj.Set("button", button)
+		thisObj.Set("relatedTarget", relatedTarget)
+
+		return goja.Undefined()
+	})
+
 	// FocusEvent - extends UIEvent
 	eb.createEventConstructor("FocusEvent", uiEventProto, func(event *goja.Object, call goja.ConstructorCall) {
+		// Set UIEvent defaults
 		event.Set("view", goja.Null())
 		event.Set("detail", 0)
+		// Set FocusEvent defaults
 		event.Set("relatedTarget", goja.Null())
 		if len(call.Arguments) > 1 && !goja.IsUndefined(call.Arguments[1]) && !goja.IsNull(call.Arguments[1]) {
 			optObj := call.Arguments[1].ToObject(vm)
 			if optObj != nil {
+				// UIEvent properties
+				if v := optObj.Get("view"); v != nil && !goja.IsUndefined(v) {
+					event.Set("view", v)
+				}
+				if v := optObj.Get("detail"); v != nil && !goja.IsUndefined(v) {
+					event.Set("detail", v.ToInteger())
+				}
+				// FocusEvent properties
 				if v := optObj.Get("relatedTarget"); v != nil && !goja.IsUndefined(v) {
 					event.Set("relatedTarget", v)
 				}
@@ -1033,8 +1230,10 @@ func (eb *EventBinder) SetupEventConstructors() {
 
 	// KeyboardEvent - extends UIEvent
 	eb.createEventConstructor("KeyboardEvent", uiEventProto, func(event *goja.Object, call goja.ConstructorCall) {
+		// Set UIEvent defaults
 		event.Set("view", goja.Null())
 		event.Set("detail", 0)
+		// Set KeyboardEvent defaults
 		event.Set("key", "")
 		event.Set("code", "")
 		event.Set("location", 0)
@@ -1050,24 +1249,155 @@ func (eb *EventBinder) SetupEventConstructors() {
 		if len(call.Arguments) > 1 && !goja.IsUndefined(call.Arguments[1]) && !goja.IsNull(call.Arguments[1]) {
 			optObj := call.Arguments[1].ToObject(vm)
 			if optObj != nil {
+				// UIEvent properties
+				if v := optObj.Get("view"); v != nil && !goja.IsUndefined(v) {
+					event.Set("view", v)
+				}
+				if v := optObj.Get("detail"); v != nil && !goja.IsUndefined(v) {
+					event.Set("detail", v.ToInteger())
+				}
+				// KeyboardEvent properties
 				if v := optObj.Get("key"); v != nil && !goja.IsUndefined(v) {
 					event.Set("key", v.String())
 				}
 				if v := optObj.Get("code"); v != nil && !goja.IsUndefined(v) {
 					event.Set("code", v.String())
 				}
+				if v := optObj.Get("location"); v != nil && !goja.IsUndefined(v) {
+					event.Set("location", v.ToInteger())
+				}
+				if v := optObj.Get("repeat"); v != nil && !goja.IsUndefined(v) {
+					event.Set("repeat", v.ToBoolean())
+				}
+				if v := optObj.Get("isComposing"); v != nil && !goja.IsUndefined(v) {
+					event.Set("isComposing", v.ToBoolean())
+				}
+				if v := optObj.Get("charCode"); v != nil && !goja.IsUndefined(v) {
+					event.Set("charCode", v.ToInteger())
+				}
+				if v := optObj.Get("keyCode"); v != nil && !goja.IsUndefined(v) {
+					event.Set("keyCode", v.ToInteger())
+				}
+				if v := optObj.Get("which"); v != nil && !goja.IsUndefined(v) {
+					event.Set("which", v.ToInteger())
+				}
+				// EventModifierInit properties
+				if v := optObj.Get("ctrlKey"); v != nil && !goja.IsUndefined(v) {
+					event.Set("ctrlKey", v.ToBoolean())
+				}
+				if v := optObj.Get("shiftKey"); v != nil && !goja.IsUndefined(v) {
+					event.Set("shiftKey", v.ToBoolean())
+				}
+				if v := optObj.Get("altKey"); v != nil && !goja.IsUndefined(v) {
+					event.Set("altKey", v.ToBoolean())
+				}
+				if v := optObj.Get("metaKey"); v != nil && !goja.IsUndefined(v) {
+					event.Set("metaKey", v.ToBoolean())
+				}
 			}
 		}
 	})
 
+	// Add initKeyboardEvent legacy method to KeyboardEvent prototype
+	keyboardEventProtoForInit := eb.GetEventProto("KeyboardEvent")
+	keyboardEventProtoForInit.Set("initKeyboardEvent", func(call goja.FunctionCall) goja.Value {
+		// Get the 'this' event object
+		thisObj := call.This.ToObject(vm)
+		if thisObj == nil {
+			return goja.Undefined()
+		}
+
+		// Per DOM spec: If event's dispatch flag is set, terminate these steps
+		dispatchFlag := thisObj.Get("_dispatch")
+		if dispatchFlag != nil && dispatchFlag.ToBoolean() {
+			return goja.Undefined()
+		}
+
+		// Get arguments: initKeyboardEvent(type, bubbles, cancelable, view, key, location, ctrlKey, altKey, shiftKey, metaKey)
+		// Note: The old spec had different arguments, modern spec is simplified
+		typeArg := ""
+		if len(call.Arguments) > 0 {
+			typeArg = call.Arguments[0].String()
+		}
+		bubbles := false
+		if len(call.Arguments) > 1 {
+			bubbles = call.Arguments[1].ToBoolean()
+		}
+		cancelable := false
+		if len(call.Arguments) > 2 {
+			cancelable = call.Arguments[2].ToBoolean()
+		}
+		view := goja.Null()
+		if len(call.Arguments) > 3 && !goja.IsUndefined(call.Arguments[3]) && !goja.IsNull(call.Arguments[3]) {
+			view = call.Arguments[3]
+		}
+		key := ""
+		if len(call.Arguments) > 4 {
+			key = call.Arguments[4].String()
+		}
+		location := int64(0)
+		if len(call.Arguments) > 5 {
+			location = call.Arguments[5].ToInteger()
+		}
+		ctrlKey := false
+		if len(call.Arguments) > 6 {
+			ctrlKey = call.Arguments[6].ToBoolean()
+		}
+		altKey := false
+		if len(call.Arguments) > 7 {
+			altKey = call.Arguments[7].ToBoolean()
+		}
+		shiftKey := false
+		if len(call.Arguments) > 8 {
+			shiftKey = call.Arguments[8].ToBoolean()
+		}
+		metaKey := false
+		if len(call.Arguments) > 9 {
+			metaKey = call.Arguments[9].ToBoolean()
+		}
+
+		// Initialize base Event properties
+		thisObj.Set("_initialized", true)
+		thisObj.Set("_stopPropagation", false)
+		thisObj.Set("_stopImmediate", false)
+		thisObj.Set("defaultPrevented", false)
+		thisObj.Set("type", typeArg)
+		thisObj.Set("bubbles", bubbles)
+		thisObj.Set("cancelable", cancelable)
+
+		// Initialize UIEvent properties
+		thisObj.Set("view", view)
+		thisObj.Set("detail", 0) // KeyboardEvent always has detail of 0
+
+		// Initialize KeyboardEvent properties
+		thisObj.Set("key", key)
+		thisObj.Set("location", location)
+		thisObj.Set("ctrlKey", ctrlKey)
+		thisObj.Set("altKey", altKey)
+		thisObj.Set("shiftKey", shiftKey)
+		thisObj.Set("metaKey", metaKey)
+
+		return goja.Undefined()
+	})
+
 	// CompositionEvent - extends UIEvent
 	eb.createEventConstructor("CompositionEvent", uiEventProto, func(event *goja.Object, call goja.ConstructorCall) {
+		// Set UIEvent defaults
 		event.Set("view", goja.Null())
 		event.Set("detail", 0)
+		// Set CompositionEvent defaults
 		event.Set("data", "")
 		if len(call.Arguments) > 1 && !goja.IsUndefined(call.Arguments[1]) && !goja.IsNull(call.Arguments[1]) {
 			optObj := call.Arguments[1].ToObject(vm)
 			if optObj != nil {
+				// UIEvent properties
+				if v := optObj.Get("view"); v != nil && !goja.IsUndefined(v) {
+					event.Set("view", v)
+				}
+				if v := optObj.Get("detail"); v != nil && !goja.IsUndefined(v) {
+					event.Set("detail", v.ToInteger())
+				}
+				// CompositionEvent properties
 				if v := optObj.Get("data"); v != nil && !goja.IsUndefined(v) {
 					event.Set("data", v.String())
 				}
@@ -1184,9 +1514,10 @@ func (eb *EventBinder) SetupEventConstructors() {
 
 	// WheelEvent - extends MouseEvent
 	eb.createEventConstructor("WheelEvent", mouseEventProto, func(event *goja.Object, call goja.ConstructorCall) {
-		// Inherit MouseEvent properties
+		// Set UIEvent defaults
 		event.Set("view", goja.Null())
 		event.Set("detail", 0)
+		// Set MouseEvent defaults
 		event.Set("screenX", 0)
 		event.Set("screenY", 0)
 		event.Set("clientX", 0)
@@ -1198,7 +1529,7 @@ func (eb *EventBinder) SetupEventConstructors() {
 		event.Set("button", 0)
 		event.Set("buttons", 0)
 		event.Set("relatedTarget", goja.Null())
-		// WheelEvent-specific properties
+		// Set WheelEvent-specific defaults
 		event.Set("deltaX", 0.0)
 		event.Set("deltaY", 0.0)
 		event.Set("deltaZ", 0.0)
@@ -1206,6 +1537,13 @@ func (eb *EventBinder) SetupEventConstructors() {
 		if len(call.Arguments) > 1 && !goja.IsUndefined(call.Arguments[1]) && !goja.IsNull(call.Arguments[1]) {
 			optObj := call.Arguments[1].ToObject(vm)
 			if optObj != nil {
+				// UIEvent properties
+				if v := optObj.Get("view"); v != nil && !goja.IsUndefined(v) {
+					event.Set("view", v)
+				}
+				if v := optObj.Get("detail"); v != nil && !goja.IsUndefined(v) {
+					event.Set("detail", v.ToInteger())
+				}
 				// MouseEvent properties
 				if v := optObj.Get("screenX"); v != nil && !goja.IsUndefined(v) {
 					event.Set("screenX", v.ToInteger())
@@ -1225,6 +1563,10 @@ func (eb *EventBinder) SetupEventConstructors() {
 				if v := optObj.Get("buttons"); v != nil && !goja.IsUndefined(v) {
 					event.Set("buttons", v.ToInteger())
 				}
+				if v := optObj.Get("relatedTarget"); v != nil && !goja.IsUndefined(v) {
+					event.Set("relatedTarget", v)
+				}
+				// EventModifierInit properties
 				if v := optObj.Get("ctrlKey"); v != nil && !goja.IsUndefined(v) {
 					event.Set("ctrlKey", v.ToBoolean())
 				}
@@ -1236,9 +1578,6 @@ func (eb *EventBinder) SetupEventConstructors() {
 				}
 				if v := optObj.Get("metaKey"); v != nil && !goja.IsUndefined(v) {
 					event.Set("metaKey", v.ToBoolean())
-				}
-				if v := optObj.Get("relatedTarget"); v != nil && !goja.IsUndefined(v) {
-					event.Set("relatedTarget", v)
 				}
 				// WheelEvent-specific properties
 				if v := optObj.Get("deltaX"); v != nil && !goja.IsUndefined(v) {
