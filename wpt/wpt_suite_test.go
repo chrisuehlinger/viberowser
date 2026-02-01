@@ -294,6 +294,8 @@ func DOMListsPassingTests() []string {
 	return []string{
 		"DOMTokenList-Iterable.html",
 		"DOMTokenList-iteration.html",
+		"DOMTokenList-stringifier.html",
+		"DOMTokenList-value.html",
 	}
 }
 
