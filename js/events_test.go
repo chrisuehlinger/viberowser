@@ -560,3 +560,93 @@ func TestDisabledCheckboxClick(t *testing.T) {
 		t.Error("disabled checkbox should NOT be checked after click()")
 	}
 }
+
+func TestWheelEventConstructor(t *testing.T) {
+	r := NewRuntime()
+	eventBinder := NewEventBinder(r)
+	eventBinder.SetupEventConstructors()
+
+	// Test basic WheelEvent constructor
+	result, err := r.Execute(`
+		var event = new WheelEvent('wheel');
+		event instanceof WheelEvent;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("WheelEvent constructor should create a WheelEvent instance")
+	}
+
+	// Test WheelEvent extends MouseEvent
+	result, err = r.Execute(`event instanceof MouseEvent`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("WheelEvent should extend MouseEvent")
+	}
+
+	// Test WheelEvent extends UIEvent
+	result, err = r.Execute(`event instanceof UIEvent`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("WheelEvent should extend UIEvent")
+	}
+
+	// Test default property values
+	result, err = r.Execute(`event.deltaX === 0.0 && event.deltaY === 0.0 && event.deltaZ === 0.0`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("WheelEvent should have default delta values of 0")
+	}
+
+	result, err = r.Execute(`event.deltaMode === 0`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("WheelEvent deltaMode should default to 0 (DOM_DELTA_PIXEL)")
+	}
+
+	// Test WheelEvent with options
+	result, err = r.Execute(`
+		var event2 = new WheelEvent('wheel', {
+			deltaX: 3.1,
+			deltaY: 3.1,
+			deltaZ: 3.1,
+			deltaMode: 40
+		});
+		event2.deltaX === 3.1 && event2.deltaY === 3.1 && event2.deltaZ === 3.1 && event2.deltaMode === 40;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("WheelEvent should accept delta options")
+	}
+
+	// Test inherited MouseEvent properties
+	result, err = r.Execute(`
+		var event3 = new WheelEvent('wheel', {
+			clientX: 40,
+			clientY: 40,
+			screenX: 40,
+			screenY: 40,
+			button: 40,
+			buttons: 40,
+			ctrlKey: true
+		});
+		event3.clientX === 40 && event3.screenX === 40 && event3.button === 40 && event3.ctrlKey === true;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("WheelEvent should inherit MouseEvent properties")
+	}
+}
