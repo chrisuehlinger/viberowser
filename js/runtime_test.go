@@ -317,3 +317,32 @@ func TestRuntimeQueueMicrotask(t *testing.T) {
 		t.Errorf("Expected '0,1', got %v", result.String())
 	}
 }
+
+func TestRuntimePanicRecovery(t *testing.T) {
+	r := NewRuntime()
+
+	// Test that we recover from parser panics gracefully
+	// Unicode escapes like \u{10ffff} can cause goja to panic
+	// We should handle this gracefully without crashing
+	code := `var x = "\u{10ffff}";` // This may panic in some goja versions
+	err := r.ExecuteScript(code, "test.js")
+
+	// The function should not have panicked, but might return an error
+	// We just verify that we didn't crash and the error is handled
+	if err != nil {
+		// Error is expected if goja panics - verify it contains panic info
+		if !strings.Contains(err.Error(), "panic") && !strings.Contains(err.Error(), "unicode") {
+			// This might be a different error, still OK as long as we didn't crash
+			t.Logf("Got error (expected for unicode escape): %v", err)
+		}
+	}
+
+	// Verify the runtime is still usable after the error
+	result, err := r.Execute("1 + 1")
+	if err != nil {
+		t.Errorf("Runtime should still work after panic recovery: %v", err)
+	}
+	if result.ToInteger() != 2 {
+		t.Errorf("Expected 2, got %v", result.ToInteger())
+	}
+}

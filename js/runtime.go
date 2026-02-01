@@ -69,11 +69,22 @@ func (r *Runtime) SetOnError(handler func(error)) {
 }
 
 // Execute runs JavaScript code and returns the result.
-func (r *Runtime) Execute(code string) (goja.Value, error) {
+func (r *Runtime) Execute(code string) (result goja.Value, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	result, err := r.vm.RunString(code)
+	// Recover from panics in the goja parser/runtime
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("script execution panic: %v", p)
+			r.errors = append(r.errors, err)
+			if r.onError != nil {
+				r.onError(err)
+			}
+		}
+	}()
+
+	result, err = r.vm.RunString(code)
 	if err != nil {
 		r.errors = append(r.errors, err)
 		if r.onError != nil {
@@ -87,9 +98,20 @@ func (r *Runtime) Execute(code string) (goja.Value, error) {
 // It handles errors gracefully and doesn't stop execution of subsequent scripts.
 // Scripts are compiled in non-strict (sloppy) mode by default, as per HTML5 spec.
 // Scripts that need strict mode should include "use strict" directive.
-func (r *Runtime) ExecuteScript(code, src string) error {
+func (r *Runtime) ExecuteScript(code, src string) (err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	// Recover from panics in the goja parser/compiler (e.g., unicode escape bugs)
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("script compilation panic in %s: %v", src, p)
+			r.errors = append(r.errors, err)
+			if r.onError != nil {
+				r.onError(err)
+			}
+		}
+	}()
 
 	program, err := goja.Compile(src, code, false)
 	if err != nil {
