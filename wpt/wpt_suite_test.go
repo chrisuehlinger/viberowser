@@ -226,7 +226,7 @@ func DOMNodesPassingTests() []string {
 		"Text-splitText.html",
 		"Text-wholeText.html",
 
-		// Other tests (11 tests)
+		// Other tests (12 tests)
 		"append-on-Document.html",
 		"attributes.html",
 		"attributes-namednodemap.html",
@@ -238,6 +238,7 @@ func DOMNodesPassingTests() []string {
 		"name-validation.html",
 		"Node-properties.html",
 		"prepend-on-Document.html",
+		"querySelector-mixed-case.html",
 		"remove-unscopable.html",
 		"rootNode.html",
 		"svg-template-querySelector.html",
@@ -277,7 +278,9 @@ func DOMRangesPassingTests() []string {
 		"Range-commonAncestorContainer.html",
 		"Range-comparePoint-2.html",
 		"Range-constructor.html",
+		"Range-deleteContents.html",
 		"Range-detach.html",
+		"Range-extractContents.html",
 		"Range-selectNode.html",
 		"Range-stringifier.html",
 	}
