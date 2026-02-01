@@ -422,6 +422,22 @@ func (r *Runtime) setupWindow() {
 	location.Set("search", "")
 	location.Set("hash", "")
 	location.Set("origin", "null")
+	// toString returns href (per Location spec)
+	location.Set("toString", func(call goja.FunctionCall) goja.Value {
+		href := location.Get("href")
+		if href == nil {
+			return r.vm.ToValue("about:blank")
+		}
+		return href
+	})
+	// valueOf also returns the href string for coercion
+	location.Set("valueOf", func(call goja.FunctionCall) goja.Value {
+		href := location.Get("href")
+		if href == nil {
+			return r.vm.ToValue("about:blank")
+		}
+		return href
+	})
 	window.Set("location", location)
 	r.vm.Set("location", location)
 

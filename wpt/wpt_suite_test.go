@@ -224,6 +224,7 @@ func DOMNodesPassingTests() []string {
 		"getElementsByClassName-whitespace-class-names.html",
 		"insert-adjacent.html",
 		"name-validation.html",
+		"Node-properties.html",
 		"prepend-on-Document.html",
 		"remove-unscopable.html",
 		"rootNode.html",
