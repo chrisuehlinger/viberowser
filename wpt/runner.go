@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AYColumbia/viberowser/css"
-	"github.com/AYColumbia/viberowser/dom"
-	"github.com/AYColumbia/viberowser/js"
-	"github.com/AYColumbia/viberowser/network"
+	"github.com/chrisuehlinger/viberowser/css"
+	"github.com/chrisuehlinger/viberowser/dom"
+	"github.com/chrisuehlinger/viberowser/js"
+	"github.com/chrisuehlinger/viberowser/network"
 )
 
 // TestResult represents the result of a WPT test.

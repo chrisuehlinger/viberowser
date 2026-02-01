@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AYColumbia/viberowser/dom"
-	"github.com/AYColumbia/viberowser/js"
-	"github.com/AYColumbia/viberowser/network"
+	"github.com/chrisuehlinger/viberowser/dom"
+	"github.com/chrisuehlinger/viberowser/js"
+	"github.com/chrisuehlinger/viberowser/network"
 )
 
 // TestWPTRunnerDebug is like TestWPTRunner but with more debug output

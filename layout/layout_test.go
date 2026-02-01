@@ -4,8 +4,8 @@ package layout
 import (
 	"testing"
 
-	"github.com/AYColumbia/viberowser/css"
-	"github.com/AYColumbia/viberowser/dom"
+	"github.com/chrisuehlinger/viberowser/css"
+	"github.com/chrisuehlinger/viberowser/dom"
 )
 
 func TestDimensionsBoxCalculations(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/AYColumbia/viberowser/wpt"
+	"github.com/chrisuehlinger/viberowser/wpt"
 )
 
 func main() {

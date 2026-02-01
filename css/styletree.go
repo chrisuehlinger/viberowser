@@ -2,7 +2,7 @@
 package css
 
 import (
-	"github.com/AYColumbia/viberowser/dom"
+	"github.com/chrisuehlinger/viberowser/dom"
 )
 
 // StyledNode represents a DOM node with computed styles.

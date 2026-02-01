@@ -3,8 +3,8 @@ package js
 import (
 	"strings"
 
-	"github.com/AYColumbia/viberowser/css"
-	"github.com/AYColumbia/viberowser/dom"
+	"github.com/chrisuehlinger/viberowser/css"
+	"github.com/chrisuehlinger/viberowser/dom"
 	"github.com/dop251/goja"
 )
 

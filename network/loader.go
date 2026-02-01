@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/AYColumbia/viberowser/dom"
+	"github.com/chrisuehlinger/viberowser/dom"
 )
 
 // ResourceType represents the type of a resource.

@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/AYColumbia/viberowser/dom"
+	"github.com/chrisuehlinger/viberowser/dom"
 )
 
 func TestDocumentLoaderStylesheets(t *testing.T) {

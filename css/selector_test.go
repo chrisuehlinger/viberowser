@@ -3,7 +3,7 @@ package css
 import (
 	"testing"
 
-	"github.com/AYColumbia/viberowser/dom"
+	"github.com/chrisuehlinger/viberowser/dom"
 )
 
 // Helper to create a simple document for testing

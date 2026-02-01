@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/AYColumbia/viberowser/css"
-	"github.com/AYColumbia/viberowser/layout"
+	"github.com/chrisuehlinger/viberowser/css"
+	"github.com/chrisuehlinger/viberowser/layout"
 )
 
 // Canvas represents the rendering surface.

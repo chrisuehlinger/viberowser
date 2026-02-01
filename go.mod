@@ -1,4 +1,4 @@
-module github.com/AYColumbia/viberowser
+module github.com/chrisuehlinger/viberowser
 
 go 1.25.6
 

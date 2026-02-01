@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AYColumbia/viberowser/dom"
+	"github.com/chrisuehlinger/viberowser/dom"
 )
 
 func TestCascadeSpecificityCalculation(t *testing.T) {

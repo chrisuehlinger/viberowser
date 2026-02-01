@@ -17,11 +17,11 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
-	"github.com/AYColumbia/viberowser/css"
-	"github.com/AYColumbia/viberowser/dom"
-	vibelayout "github.com/AYColumbia/viberowser/layout"
-	"github.com/AYColumbia/viberowser/network"
-	"github.com/AYColumbia/viberowser/render"
+	"github.com/chrisuehlinger/viberowser/css"
+	"github.com/chrisuehlinger/viberowser/dom"
+	vibelayout "github.com/chrisuehlinger/viberowser/layout"
+	"github.com/chrisuehlinger/viberowser/network"
+	"github.com/chrisuehlinger/viberowser/render"
 )
 
 // BrowserUI represents the main browser UI.

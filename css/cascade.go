@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/AYColumbia/viberowser/dom"
+	"github.com/chrisuehlinger/viberowser/dom"
 )
 
 // CascadeOrigin represents the origin of a stylesheet in the cascade.

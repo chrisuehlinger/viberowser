@@ -3,8 +3,8 @@ package js
 import (
 	"testing"
 
-	"github.com/AYColumbia/viberowser/css"
-	"github.com/AYColumbia/viberowser/dom"
+	"github.com/chrisuehlinger/viberowser/css"
+	"github.com/chrisuehlinger/viberowser/dom"
 )
 
 func TestScriptExecutorBasic(t *testing.T) {

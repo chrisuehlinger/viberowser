@@ -6,8 +6,8 @@ import (
 	"math"
 	"strings"
 
-	"github.com/AYColumbia/viberowser/css"
-	"github.com/AYColumbia/viberowser/dom"
+	"github.com/chrisuehlinger/viberowser/css"
+	"github.com/chrisuehlinger/viberowser/dom"
 )
 
 // Dimensions represents the dimensions of a layout box including content, padding, border, and margin.

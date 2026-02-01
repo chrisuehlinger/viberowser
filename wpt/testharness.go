@@ -2,7 +2,7 @@
 package wpt
 
 import (
-	"github.com/AYColumbia/viberowser/js"
+	"github.com/chrisuehlinger/viberowser/js"
 	"github.com/dop251/goja"
 )
 

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AYColumbia/viberowser/dom"
-	"github.com/AYColumbia/viberowser/js"
+	"github.com/chrisuehlinger/viberowser/dom"
+	"github.com/chrisuehlinger/viberowser/js"
 )
 
 func TestMinimalTestHarness(t *testing.T) {

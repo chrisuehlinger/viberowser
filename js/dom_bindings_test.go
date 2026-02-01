@@ -3,7 +3,7 @@ package js
 import (
 	"testing"
 
-	"github.com/AYColumbia/viberowser/dom"
+	"github.com/chrisuehlinger/viberowser/dom"
 )
 
 func TestDOMBinderDocument(t *testing.T) {

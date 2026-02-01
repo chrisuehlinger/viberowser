@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/AYColumbia/viberowser/ui"
+	"github.com/chrisuehlinger/viberowser/ui"
 )
 
 func main() {

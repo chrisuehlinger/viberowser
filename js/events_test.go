@@ -3,7 +3,7 @@ package js
 import (
 	"testing"
 
-	"github.com/AYColumbia/viberowser/dom"
+	"github.com/chrisuehlinger/viberowser/dom"
 )
 
 func TestEventBasic(t *testing.T) {

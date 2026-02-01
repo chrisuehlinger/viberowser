@@ -5,8 +5,8 @@ import (
 	"image/color"
 	"testing"
 
-	"github.com/AYColumbia/viberowser/css"
-	"github.com/AYColumbia/viberowser/layout"
+	"github.com/chrisuehlinger/viberowser/css"
+	"github.com/chrisuehlinger/viberowser/layout"
 )
 
 func TestNewCanvas(t *testing.T) {
