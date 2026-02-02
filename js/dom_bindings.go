@@ -4543,6 +4543,11 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		b.bindOutputProperties(jsEl, el)
 	}
 
+	// Add canvas-specific properties (width, height, getContext)
+	if el.LocalName() == "canvas" && ns == dom.HTMLNamespace {
+		b.bindCanvasProperties(jsEl, el)
+	}
+
 	// Bind common node properties and methods
 	b.bindNodeProperties(jsEl, node)
 
@@ -4802,6 +4807,135 @@ func (b *DOMBinder) bindOutputProperties(jsEl *goja.Object, el *dom.Element) {
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+}
+
+// bindCanvasProperties adds HTMLCanvasElement-specific properties.
+// Per HTML spec: https://html.spec.whatwg.org/multipage/canvas.html
+func (b *DOMBinder) bindCanvasProperties(jsEl *goja.Object, el *dom.Element) {
+	vm := b.runtime.vm
+
+	// Store the 2D rendering context - lazily created
+	var ctx2d *CanvasRenderingContext2D
+	var ctx2dObj *goja.Object
+
+	// width property - reflects the width attribute (default 300)
+	jsEl.DefineAccessorProperty("width", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		widthAttr := el.GetAttribute("width")
+		if widthAttr != "" {
+			// Parse as unsigned long
+			var width int
+			if _, err := fmt.Sscanf(widthAttr, "%d", &width); err == nil && width >= 0 {
+				return vm.ToValue(width)
+			}
+		}
+		return vm.ToValue(300) // Default width
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			width := int(call.Arguments[0].ToInteger())
+			if width < 0 {
+				width = 0
+			}
+			el.SetAttribute("width", fmt.Sprintf("%d", width))
+			// Resize the rendering context if it exists
+			if ctx2d != nil {
+				height := 150 // Default
+				heightAttr := el.GetAttribute("height")
+				if heightAttr != "" {
+					if _, err := fmt.Sscanf(heightAttr, "%d", &height); err != nil {
+						height = 150
+					}
+				}
+				ctx2d.Resize(width, height)
+			}
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// height property - reflects the height attribute (default 150)
+	jsEl.DefineAccessorProperty("height", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		heightAttr := el.GetAttribute("height")
+		if heightAttr != "" {
+			// Parse as unsigned long
+			var height int
+			if _, err := fmt.Sscanf(heightAttr, "%d", &height); err == nil && height >= 0 {
+				return vm.ToValue(height)
+			}
+		}
+		return vm.ToValue(150) // Default height
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			height := int(call.Arguments[0].ToInteger())
+			if height < 0 {
+				height = 0
+			}
+			el.SetAttribute("height", fmt.Sprintf("%d", height))
+			// Resize the rendering context if it exists
+			if ctx2d != nil {
+				width := 300 // Default
+				widthAttr := el.GetAttribute("width")
+				if widthAttr != "" {
+					if _, err := fmt.Sscanf(widthAttr, "%d", &width); err != nil {
+						width = 300
+					}
+				}
+				ctx2d.Resize(width, height)
+			}
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// getContext(contextType, contextAttributes?) method
+	jsEl.Set("getContext", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		contextType := call.Arguments[0].String()
+
+		switch contextType {
+		case "2d":
+			if ctx2d == nil {
+				// Get canvas dimensions
+				width := 300
+				height := 150
+				widthAttr := el.GetAttribute("width")
+				if widthAttr != "" {
+					if _, err := fmt.Sscanf(widthAttr, "%d", &width); err != nil {
+						width = 300
+					}
+				}
+				heightAttr := el.GetAttribute("height")
+				if heightAttr != "" {
+					if _, err := fmt.Sscanf(heightAttr, "%d", &height); err != nil {
+						height = 150
+					}
+				}
+				ctx2d = NewCanvasRenderingContext2D(el, width, height)
+				ctx2dObj = b.BindCanvasContext2D(ctx2d)
+			}
+			return ctx2dObj
+		case "webgl", "webgl2", "experimental-webgl":
+			// WebGL not implemented
+			return goja.Null()
+		case "bitmaprenderer":
+			// ImageBitmapRenderingContext not implemented
+			return goja.Null()
+		default:
+			return goja.Null()
+		}
+	})
+
+	// toDataURL(type?, quality?) method
+	jsEl.Set("toDataURL", func(call goja.FunctionCall) goja.Value {
+		// Returns a data URL with the image
+		// For now, return a placeholder - full implementation would encode the canvas as PNG/JPEG
+		return vm.ToValue("data:,")
+	})
+
+	// toBlob(callback, type?, quality?) method
+	jsEl.Set("toBlob", func(call goja.FunctionCall) goja.Value {
+		// Not implemented - would need Blob support
+		return goja.Undefined()
+	})
 }
 
 // bindInputProperties adds HTMLInputElement-specific properties.

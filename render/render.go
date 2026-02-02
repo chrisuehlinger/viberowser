@@ -948,3 +948,13 @@ func (c *Canvas) DrawImageScaled(src *Canvas, x, y, width, height int) {
 		}
 	}
 }
+
+// GetBitmapFont returns the bitmap data for a character, along with a boolean indicating if it exists.
+// Returns the '?' bitmap if the character doesn't exist.
+func GetBitmapFont(ch rune) ([]uint8, bool) {
+	bitmap, ok := bitmapFont[ch]
+	if ok {
+		return bitmap, true
+	}
+	return bitmapFont['?'], false
+}
