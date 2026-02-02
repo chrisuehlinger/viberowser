@@ -524,13 +524,15 @@ func (r *Range) CloneContents() (*DocumentFragment, error) {
 }
 
 // InsertNode inserts a node at the start of the range.
+// Per https://dom.spec.whatwg.org/#dom-range-insertnode
 func (r *Range) InsertNode(node *Node) error {
 	if node == nil {
 		return ErrNotFound("Node is null")
 	}
 
-	// Check if start container is a text node
-	if r.startContainer.nodeType == TextNode {
+	// Check if start container is a Text node (includes CDATASection)
+	// Per DOM spec, CDATASection inherits from Text
+	if r.startContainer.nodeType == TextNode || r.startContainer.nodeType == CDATASectionNode {
 		parent := r.startContainer.parentNode
 		if parent == nil {
 			return ErrHierarchyRequest("Cannot insert into an orphan text node")
@@ -542,8 +544,16 @@ func (r *Range) InsertNode(node *Node) error {
 			text := r.startContainer.NodeValue()
 			// Use UTF-16 aware slicing
 			r.startContainer.SetNodeValue(UTF16SliceTo(text, r.startOffset))
-			newText := r.ownerDocument.CreateTextNode(UTF16SliceFrom(text, r.startOffset))
-			parent.InsertBefore(newText, r.startContainer.nextSibling)
+			// Create appropriate node type for the split
+			var newText *Node
+			if r.startContainer.nodeType == CDATASectionNode {
+				newText = r.ownerDocument.CreateCDATASection(UTF16SliceFrom(text, r.startOffset))
+			} else {
+				newText = r.ownerDocument.CreateTextNode(UTF16SliceFrom(text, r.startOffset))
+			}
+			if newText != nil {
+				parent.InsertBefore(newText, r.startContainer.nextSibling)
+			}
 		}
 
 		// Insert the node after the start container
@@ -561,47 +571,98 @@ func (r *Range) InsertNode(node *Node) error {
 }
 
 // SurroundContents wraps the range contents with a new parent element.
+// Per https://dom.spec.whatwg.org/#dom-range-surroundcontents
 func (r *Range) SurroundContents(newParent *Node) error {
 	if newParent == nil {
 		return ErrNotFound("New parent is null")
 	}
 
-	// Check if range partially selects a non-Text node
-	if r.startContainer != r.endContainer {
-		if r.startContainer.nodeType != TextNode && r.startOffset > 0 {
-			return ErrInvalidState("Range partially selects a non-Text node")
-		}
-		if r.endContainer.nodeType != TextNode && r.endOffset < nodeLength(r.endContainer) {
-			return ErrInvalidState("Range partially selects a non-Text node")
+	// Step 1: If a non-Text node is partially contained in this range, throw InvalidStateError.
+	// A node is "partially contained" if it is an ancestor container of the range's start
+	// but not its end, or vice versa.
+	// We traverse from commonAncestorContainer to check all nodes in the range.
+	commonAncestor := r.CommonAncestorContainer()
+	if commonAncestor != nil {
+		// Traverse all nodes from commonAncestor in tree order
+		stop := nextNodeDescendants(commonAncestor)
+		for node := commonAncestor; node != stop; node = nextNodeInTree(node) {
+			// A node is partially contained if it's an inclusive ancestor of start but not end,
+			// or vice versa
+			if !isTextLike(node) && r.isPartiallyContained(node) {
+				return ErrInvalidState("Range partially selects a non-Text node")
+			}
 		}
 	}
 
-	// Check newParent type
+	// Step 2: If newParent is a Document, DocumentType, or DocumentFragment, throw InvalidNodeTypeError
 	if newParent.nodeType == DocumentNode || newParent.nodeType == DocumentTypeNode || newParent.nodeType == DocumentFragmentNode {
 		return ErrInvalidNodeType("Invalid new parent type")
 	}
 
-	// Extract contents
+	// Step 3: Let fragment be the result of extracting this range
 	frag, err := r.ExtractContents()
 	if err != nil {
 		return err
 	}
 
-	// Clear newParent's children
+	// Step 4: If newParent has children, replace all with null within newParent
 	for newParent.firstChild != nil {
 		newParent.RemoveChild(newParent.firstChild)
 	}
 
-	// Insert newParent at start
+	// Step 5: Insert newParent into this range
 	if err := r.InsertNode(newParent); err != nil {
 		return err
 	}
 
-	// Append fragment to newParent
+	// Step 6: Append fragment to newParent
 	newParent.AppendChild((*Node)(frag))
 
-	// Select newParent
+	// Step 7: Select newParent within this range
 	return r.SelectNode(newParent)
+}
+
+// isTextLike returns true if the node is a Text or CDATASection node
+func isTextLike(node *Node) bool {
+	return node.nodeType == TextNode || node.nodeType == CDATASectionNode
+}
+
+// isPartiallyContained returns true if node is partially contained in the range.
+// A node is partially contained if it is an inclusive ancestor of the range's start
+// but not its end, or vice versa.
+func (r *Range) isPartiallyContained(node *Node) bool {
+	isAncestorOfStart := r.isInclusiveAncestor(node, r.startContainer)
+	isAncestorOfEnd := r.isInclusiveAncestor(node, r.endContainer)
+	return (isAncestorOfStart && !isAncestorOfEnd) || (!isAncestorOfStart && isAncestorOfEnd)
+}
+
+// isInclusiveAncestor returns true if ancestor is an inclusive ancestor of node
+func (r *Range) isInclusiveAncestor(ancestor, node *Node) bool {
+	for n := node; n != nil; n = n.parentNode {
+		if n == ancestor {
+			return true
+		}
+	}
+	return false
+}
+
+// nextNodeInTree returns the next node in tree order (pre-order traversal)
+func nextNodeInTree(node *Node) *Node {
+	if node.firstChild != nil {
+		return node.firstChild
+	}
+	return nextNodeDescendants(node)
+}
+
+// nextNodeDescendants returns the next node after node and all its descendants
+func nextNodeDescendants(node *Node) *Node {
+	for node != nil {
+		if node.nextSibling != nil {
+			return node.nextSibling
+		}
+		node = node.parentNode
+	}
+	return nil
 }
 
 // CloneRange returns a copy of this range.
