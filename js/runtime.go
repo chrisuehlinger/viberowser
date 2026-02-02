@@ -22,6 +22,7 @@ type Runtime struct {
 	mu         sync.Mutex
 	errors     []error
 	onError    func(error)
+	timeOrigin time.Time // Time origin for performance.now() and event timestamps
 }
 
 // NewRuntime creates a new JavaScript runtime.
@@ -29,10 +30,11 @@ func NewRuntime() *Runtime {
 	vm := goja.New()
 
 	r := &Runtime{
-		vm:        vm,
-		timers:    newTimerManager(),
-		eventLoop: newEventLoop(),
-		errors:    make([]error, 0),
+		vm:         vm,
+		timers:     newTimerManager(),
+		eventLoop:  newEventLoop(),
+		errors:     make([]error, 0),
+		timeOrigin: time.Now(), // Set time origin when runtime is created
 	}
 
 	// Set up global objects
@@ -67,6 +69,17 @@ func (r *Runtime) SetOnError(handler func(error)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.onError = handler
+}
+
+// TimeOrigin returns the time origin for this runtime.
+func (r *Runtime) TimeOrigin() time.Time {
+	return r.timeOrigin
+}
+
+// Now returns a DOMHighResTimeStamp (milliseconds since time origin).
+// This is equivalent to performance.now() in JavaScript.
+func (r *Runtime) Now() float64 {
+	return float64(time.Since(r.timeOrigin).Nanoseconds()) / 1e6
 }
 
 // Execute runs JavaScript code and returns the result.
@@ -559,13 +572,14 @@ func (r *Runtime) setupWindow() {
 		return result
 	})
 
-	// window.performance (basic)
+	// window.performance - High Resolution Time API (https://www.w3.org/TR/hr-time-3/)
 	performance := r.vm.NewObject()
-	startTime := time.Now()
 	performance.Set("now", func(call goja.FunctionCall) goja.Value {
-		return r.vm.ToValue(float64(time.Since(startTime).Nanoseconds()) / 1e6)
+		// Returns DOMHighResTimeStamp: milliseconds since time origin
+		return r.vm.ToValue(r.Now())
 	})
-	performance.Set("timeOrigin", float64(startTime.UnixNano())/1e6)
+	// timeOrigin is the absolute time (Unix epoch) when the time origin was established
+	performance.Set("timeOrigin", float64(r.timeOrigin.UnixNano())/1e6)
 	window.Set("performance", performance)
 	r.vm.Set("performance", performance)
 

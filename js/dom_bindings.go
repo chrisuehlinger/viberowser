@@ -5733,7 +5733,8 @@ func (b *DOMBinder) initEventObject(event *goja.Object) {
 	event.Set("defaultPrevented", false)
 	event.Set("composed", false)
 	event.Set("isTrusted", false)
-	event.Set("timeStamp", float64(0))
+	// DOMHighResTimeStamp: milliseconds since time origin
+	event.Set("timeStamp", b.runtime.Now())
 
 	// Internal flags for event dispatch
 	event.Set("_initialized", false)

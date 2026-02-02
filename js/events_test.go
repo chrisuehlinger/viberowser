@@ -1245,3 +1245,52 @@ func TestUIEventViewTypeValidation(t *testing.T) {
 		t.Error("UIEvent with wrong view type should throw TypeError")
 	}
 }
+
+func TestEventTimeStamp(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+	eventBinder := NewEventBinder(r)
+	eventBinder.SetupEventConstructors()
+
+	doc := dom.NewDocument()
+	binder.BindDocument(doc)
+
+	// Test that Event.timeStamp is a DOMHighResTimeStamp (positive number relative to timeOrigin)
+	result, err := r.Execute(`
+		var event = new Event('test');
+		event.timeStamp >= 0 && typeof event.timeStamp === 'number';
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Event.timeStamp should be a non-negative number")
+	}
+
+	// Test that timeStamp is relative to performance.timeOrigin
+	result, err = r.Execute(`
+		var event = new Event('test');
+		var now = performance.now();
+		// Event timeStamp should be close to performance.now() (within 100ms)
+		Math.abs(event.timeStamp - now) < 100;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Event.timeStamp should be close to performance.now()")
+	}
+
+	// Test that createEvent also sets timeStamp
+	result, err = r.Execute(`
+		var event2 = document.createEvent('Event');
+		event2.initEvent('click', true, true);
+		event2.timeStamp >= 0;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Events created via createEvent should have non-negative timeStamp")
+	}
+}

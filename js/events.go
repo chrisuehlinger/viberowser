@@ -854,7 +854,8 @@ func (eb *EventBinder) InitEventObject(event *goja.Object, eventType string) {
 	event.Set("composed", false)
 	event.Set("defaultPrevented", false)
 	event.Set("isTrusted", false)
-	event.Set("timeStamp", float64(0))
+	// DOMHighResTimeStamp: milliseconds since time origin
+	event.Set("timeStamp", eb.runtime.Now())
 
 	// Internal flags
 	event.Set("_stopPropagation", false)
@@ -999,7 +1000,8 @@ func (eb *EventBinder) CreateEvent(eventType string, options map[string]interfac
 	event.Set("composed", false)
 	event.Set("defaultPrevented", false)
 	event.Set("isTrusted", false)
-	event.Set("timeStamp", float64(0))
+	// DOMHighResTimeStamp: milliseconds since time origin
+	event.Set("timeStamp", eb.runtime.Now())
 
 	// Internal flags
 	event.Set("_stopPropagation", false)

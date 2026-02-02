@@ -221,6 +221,52 @@ func TestRuntimePerformance(t *testing.T) {
 	}
 }
 
+func TestPerformanceTimeOrigin(t *testing.T) {
+	r := NewRuntime()
+
+	// Test that performance.timeOrigin is a positive number (milliseconds since Unix epoch)
+	result, err := r.Execute("performance.timeOrigin")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	timeOrigin := result.ToFloat()
+	// timeOrigin should be a large positive number (milliseconds since Unix epoch)
+	// As of 2024, this should be at least 1700000000000 (Nov 2023)
+	if timeOrigin < 1700000000000 {
+		t.Errorf("Expected timeOrigin to be milliseconds since Unix epoch, got %v", timeOrigin)
+	}
+
+	// Verify that timeOrigin matches Go's timeOrigin
+	goTimeOrigin := float64(r.TimeOrigin().UnixNano()) / 1e6
+	if timeOrigin != goTimeOrigin {
+		t.Errorf("JS timeOrigin %v doesn't match Go timeOrigin %v", timeOrigin, goTimeOrigin)
+	}
+}
+
+func TestRuntimeNow(t *testing.T) {
+	r := NewRuntime()
+
+	// Test the Go Now() method
+	goNow := r.Now()
+	if goNow < 0 {
+		t.Errorf("Expected Now() >= 0, got %v", goNow)
+	}
+
+	// Compare with JS performance.now()
+	result, err := r.Execute("performance.now()")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	jsNow := result.ToFloat()
+
+	// JS value should be close to Go value (within a few ms)
+	diff := jsNow - goNow
+	if diff < 0 || diff > 50 { // Allow up to 50ms difference
+		t.Errorf("Go Now() %v and JS performance.now() %v differ too much (diff=%v)", goNow, jsNow, diff)
+	}
+}
+
 func TestRuntimeErrorHandling(t *testing.T) {
 	r := NewRuntime()
 
