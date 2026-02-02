@@ -635,6 +635,9 @@ func (b *DOMBinder) setupPrototypes() {
 		};
 	`)
 
+	// Set up Element prototype methods (matches, closest, etc.)
+	b.setupElementPrototypeMethods()
+
 	// Create HTMLElement prototype (extends Element)
 	b.htmlElementProto = vm.NewObject()
 	b.htmlElementProto.SetPrototype(b.elementProto)
@@ -4161,48 +4164,8 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		return b.BindShadowRoot(sr)
 	})
 
-	matchesFunc := func(call goja.FunctionCall) goja.Value {
-		if len(call.Arguments) < 1 {
-			return vm.ToValue(false)
-		}
-		selector := call.Arguments[0].String()
-		// Use CSS selector matcher for proper pseudo-class support
-		parsed, err := css.ParseSelector(selector)
-		if err != nil {
-			return vm.ToValue(false)
-		}
-		// For matches(), scope is the element itself
-		ctx := &css.MatchContext{ScopeElement: el}
-		return vm.ToValue(parsed.MatchElementWithContext(el, ctx))
-	}
-	jsEl.Set("matches", matchesFunc)
-	jsEl.Set("webkitMatchesSelector", matchesFunc)
-
-	jsEl.Set("closest", func(call goja.FunctionCall) goja.Value {
-		if len(call.Arguments) < 1 {
-			return goja.Null()
-		}
-		selector := call.Arguments[0].String()
-		// Parse the selector once
-		parsed, err := css.ParseSelector(selector)
-		if err != nil {
-			return goja.Null()
-		}
-		// For closest(), scope is the element closest was called on
-		ctx := &css.MatchContext{ScopeElement: el}
-		// Walk up the tree
-		for current := el; current != nil; {
-			if parsed.MatchElementWithContext(current, ctx) {
-				return b.BindElement(current)
-			}
-			parent := current.AsNode().ParentNode()
-			if parent == nil || parent.NodeType() != dom.ElementNode {
-				break
-			}
-			current = (*dom.Element)(parent)
-		}
-		return goja.Null()
-	})
+	// NOTE: matches(), webkitMatchesSelector(), and closest() are now defined on Element.prototype
+	// in setupElementPrototypeMethods() so they appear in the prototype chain as required by the spec.
 
 	// ParentNode mixin properties
 	jsEl.DefineAccessorProperty("children", vm.ToValue(func(call goja.FunctionCall) goja.Value {
@@ -11769,4 +11732,96 @@ func (b *DOMBinder) BindDOMStringMap(el *dom.Element) *goja.Object {
 	proxyObj := vm.ToValue(proxy).ToObject(vm)
 
 	return proxyObj
+}
+
+// setupElementPrototypeMethods adds methods like matches(), closest() to Element.prototype.
+// Per the DOM specification, these methods are available on all Element instances.
+func (b *DOMBinder) setupElementPrototypeMethods() {
+	vm := b.runtime.vm
+
+	// matches() - prototype version that gets element from 'this'
+	// Per DOM spec, matches() MUST throw TypeError if no argument is provided
+	// and MUST throw SyntaxError for invalid selectors
+	b.elementProto.Set("matches", func(call goja.FunctionCall) goja.Value {
+		thisObj := call.This.ToObject(vm)
+		el := b.getGoElement(thisObj)
+		if el == nil {
+			panic(vm.NewTypeError("Illegal invocation"))
+		}
+
+		// Per WebIDL, matches() requires exactly 1 argument
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'matches' on 'Element': 1 argument required, but only 0 present."))
+		}
+
+		// Convert argument to string (handles null -> "null", undefined -> "undefined")
+		selector := call.Arguments[0].String()
+
+		// Parse the selector - invalid selectors should throw SyntaxError
+		parsed, err := css.ParseSelector(selector)
+		if err != nil {
+			b.throwDOMError(vm, dom.ErrSyntax(err.Error()))
+			return goja.Undefined()
+		}
+
+		// For matches(), scope is the element itself
+		ctx := &css.MatchContext{ScopeElement: el}
+		return vm.ToValue(parsed.MatchElementWithContext(el, ctx))
+	})
+
+	// webkitMatchesSelector() - alias for matches()
+	b.elementProto.Set("webkitMatchesSelector", b.elementProto.Get("matches"))
+
+	// closest() - prototype version that gets element from 'this'
+	b.elementProto.Set("closest", func(call goja.FunctionCall) goja.Value {
+		thisObj := call.This.ToObject(vm)
+		el := b.getGoElement(thisObj)
+		if el == nil {
+			panic(vm.NewTypeError("Illegal invocation"))
+		}
+
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'closest' on 'Element': 1 argument required, but only 0 present."))
+		}
+
+		selector := call.Arguments[0].String()
+
+		// Parse the selector - invalid selectors should throw SyntaxError
+		parsed, err := css.ParseSelector(selector)
+		if err != nil {
+			b.throwDOMError(vm, dom.ErrSyntax(err.Error()))
+			return goja.Undefined()
+		}
+
+		// For closest(), scope is the element closest was called on
+		ctx := &css.MatchContext{ScopeElement: el}
+
+		// Walk up the tree
+		for current := el; current != nil; {
+			if parsed.MatchElementWithContext(current, ctx) {
+				return b.BindElement(current)
+			}
+			parentNode := current.AsNode().ParentNode()
+			if parentNode == nil || parentNode.NodeType() != dom.ElementNode {
+				break
+			}
+			current = (*dom.Element)(parentNode)
+		}
+		return goja.Null()
+	})
+}
+
+// getGoElement extracts the Go *dom.Element from a JavaScript object.
+func (b *DOMBinder) getGoElement(obj *goja.Object) *dom.Element {
+	if obj == nil {
+		return nil
+	}
+	goEl := obj.Get("_goElement")
+	if goEl == nil || goja.IsUndefined(goEl) {
+		return nil
+	}
+	if el, ok := goEl.Export().(*dom.Element); ok {
+		return el
+	}
+	return nil
 }

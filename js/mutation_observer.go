@@ -48,10 +48,15 @@ type MutationObserver struct {
 	mu             sync.Mutex
 }
 
+// IframeLoadCallback is called when an iframe is added to the DOM.
+// The callback receives the iframe element that was added.
+type IframeLoadCallback func(iframe *dom.Element)
+
 // MutationObserverManager manages all active mutation observers for a runtime.
 type MutationObserverManager struct {
-	observers []*MutationObserver
-	mu        sync.RWMutex
+	observers          []*MutationObserver
+	iframeLoadCallback IframeLoadCallback
+	mu                 sync.RWMutex
 }
 
 // NewMutationObserverManager creates a new manager for mutation observers.
@@ -59,6 +64,13 @@ func NewMutationObserverManager() *MutationObserverManager {
 	return &MutationObserverManager{
 		observers: make([]*MutationObserver, 0),
 	}
+}
+
+// SetIframeLoadCallback sets a callback to be called when iframes are added to the DOM.
+func (m *MutationObserverManager) SetIframeLoadCallback(callback IframeLoadCallback) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.iframeLoadCallback = callback
 }
 
 // OnChildListMutation implements dom.MutationCallback interface.
@@ -70,6 +82,44 @@ func (m *MutationObserverManager) OnChildListMutation(
 	nextSibling *dom.Node,
 ) {
 	m.NotifyChildListMutation(target, addedNodes, removedNodes, previousSibling, nextSibling)
+
+	// Check if any added nodes are iframes (or contain iframes) and trigger load events
+	m.mu.RLock()
+	callback := m.iframeLoadCallback
+	m.mu.RUnlock()
+
+	if callback != nil {
+		for _, node := range addedNodes {
+			m.findIframesAndNotify(node, callback)
+		}
+	}
+}
+
+// findIframesAndNotify recursively finds iframe elements in a node tree and notifies the callback.
+func (m *MutationObserverManager) findIframesAndNotify(node *dom.Node, callback IframeLoadCallback) {
+	if node == nil {
+		return
+	}
+
+	// Check if this node is an iframe element
+	if node.NodeType() == dom.ElementNode {
+		el := (*dom.Element)(node)
+		if el != nil {
+			tagName := el.TagName()
+			if tagName == "IFRAME" || tagName == "iframe" {
+				// Only fire load event if the iframe is connected to the document
+				if node.IsConnected() {
+					callback(el)
+				}
+			}
+		}
+	}
+
+	// Recursively check child nodes
+	childNodes := node.ChildNodes()
+	for i := 0; i < childNodes.Length(); i++ {
+		m.findIframesAndNotify(childNodes.Item(i), callback)
+	}
 }
 
 // OnAttributeMutation implements dom.MutationCallback interface.

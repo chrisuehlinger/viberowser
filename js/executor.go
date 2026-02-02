@@ -426,6 +426,9 @@ func (se *ScriptExecutor) SetupDocument(doc *dom.Document) {
 	se.currentDocument = doc
 	dom.RegisterMutationCallback(doc, se.mutationObserverManager)
 
+	// Set up iframe load callback so we fire load events when iframes are added to the DOM
+	se.mutationObserverManager.SetIframeLoadCallback(se.onIframeAdded)
+
 	// Mark this as the main document (associated with window) for event bubbling
 	se.domBinder.SetMainDocument(doc)
 
@@ -820,6 +823,51 @@ func (se *ScriptExecutor) getIframeContent(iframe *dom.Element) (goja.Value, goj
 func (se *ScriptExecutor) getIframeContentWindow(iframe *dom.Element, parentDoc *dom.Document) goja.Value {
 	contentWindow, _ := se.getIframeContent(iframe)
 	return contentWindow
+}
+
+// onIframeAdded is called when an iframe is added to the DOM.
+// It queues a macrotask to fire the load event on the iframe.
+func (se *ScriptExecutor) onIframeAdded(iframe *dom.Element) {
+	// Queue a macrotask to fire the load event on the iframe
+	// This simulates the asynchronous nature of iframe loading in browsers
+	se.runtime.eventLoop.queueGoFunc(func() {
+		se.fireIframeLoadEvent(iframe)
+	})
+}
+
+// fireIframeLoadEvent fires a load event on an iframe element.
+// This is called after the iframe's content has been "loaded".
+func (se *ScriptExecutor) fireIframeLoadEvent(iframe *dom.Element) {
+	// First, ensure the iframe content is loaded (this initializes the contentDocument)
+	// by accessing getIframeContent which lazy-loads the document
+	se.getIframeContent(iframe)
+
+	// Bind the iframe element to JS if not already bound
+	jsIframe := se.domBinder.BindElement(iframe)
+	if jsIframe == nil {
+		return
+	}
+
+	// Create a load event
+	event := se.eventBinder.CreateEvent("load", map[string]interface{}{
+		"bubbles":    false, // load events don't bubble
+		"cancelable": false,
+	})
+
+	event.Set("target", jsIframe)
+	event.Set("currentTarget", jsIframe)
+	event.Set("eventPhase", int(EventPhaseAtTarget))
+	event.Set("isTrusted", true)
+
+	// Set the dispatch flag so attempts to re-dispatch during the event will throw
+	event.Set("_dispatch", true)
+
+	// Dispatch the load event on the iframe element
+	target := se.eventBinder.GetOrCreateTarget(jsIframe)
+	target.DispatchEvent(se.runtime.vm, event, EventPhaseAtTarget)
+
+	// Clear the dispatch flag after dispatching
+	event.Set("_dispatch", false)
 }
 
 // bindGlobalEventTargetMethods adds global addEventListener/removeEventListener/dispatchEvent
