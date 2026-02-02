@@ -10,6 +10,7 @@ import (
 type task struct {
 	callback goja.Callable
 	args     []goja.Value
+	goFunc   func() // Optional Go function to run
 }
 
 // eventLoop manages the JavaScript event loop for microtasks and macrotasks.
@@ -43,6 +44,14 @@ func (el *eventLoop) queueMacrotask(callback goja.Callable, args []goja.Value) {
 	el.macrotasks = append(el.macrotasks, task{callback: callback, args: args})
 }
 
+// queueGoFunc adds a plain Go function as a macrotask.
+// This is useful for internal async operations like XHR.
+func (el *eventLoop) queueGoFunc(fn func()) {
+	el.mu.Lock()
+	defer el.mu.Unlock()
+	el.macrotasks = append(el.macrotasks, task{goFunc: fn})
+}
+
 // runOnce processes one iteration of the event loop.
 // It drains all microtasks, then executes one macrotask.
 // Returns true if there are more events to process.
@@ -73,7 +82,11 @@ func (el *eventLoop) runOnce(r *Runtime) bool {
 		el.mu.Unlock()
 
 		// Execute the macrotask
-		_, _ = t.callback(goja.Undefined(), t.args...)
+		if t.goFunc != nil {
+			t.goFunc()
+		} else if t.callback != nil {
+			_, _ = t.callback(goja.Undefined(), t.args...)
+		}
 		return true
 	}
 	el.mu.Unlock()
