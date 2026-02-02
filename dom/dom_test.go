@@ -1336,3 +1336,98 @@ func TestNode_NormalizeXML(t *testing.T) {
 		t.Errorf("Expected 9 children, got %d", children.Length())
 	}
 }
+
+func TestSerializeToXML(t *testing.T) {
+	// Test simple element
+	doc := NewDocument()
+	div := doc.CreateElement("div")
+	div.SetTextContent("Hello")
+
+	result, err := SerializeToXML(div.AsNode())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Div is in HTML namespace, so it gets xmlns attribute
+	expected := `<div xmlns="http://www.w3.org/1999/xhtml">Hello</div>`
+	if result != expected {
+		t.Errorf("Expected %q, got %q", expected, result)
+	}
+
+	// Test nested elements
+	parent := doc.CreateElement("div")
+	child := doc.CreateElement("span")
+	child.SetTextContent("nested")
+	parent.AsNode().AppendChild(child.AsNode())
+
+	result, err = SerializeToXML(parent.AsNode())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Child in same namespace should not repeat xmlns
+	expected = `<div xmlns="http://www.w3.org/1999/xhtml"><span>nested</span></div>`
+	if result != expected {
+		t.Errorf("Expected %q, got %q", expected, result)
+	}
+
+	// Test element with attributes
+	el := doc.CreateElement("div")
+	el.SetAttribute("id", "test")
+	el.SetAttribute("class", "foo bar")
+
+	result, err = SerializeToXML(el.AsNode())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Should contain the attributes (order may vary)
+	if !contains(result, `id="test"`) || !contains(result, `class="foo bar"`) {
+		t.Errorf("Expected attributes in result, got %q", result)
+	}
+
+	// Test comment node
+	comment := doc.CreateComment("This is a comment")
+	result, err = SerializeToXML(comment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected = "<!--This is a comment-->"
+	if result != expected {
+		t.Errorf("Expected %q, got %q", expected, result)
+	}
+
+	// Test invalid comment (contains --)
+	badComment := doc.CreateComment("bad--comment")
+	_, err = SerializeToXML(badComment)
+	if err == nil {
+		t.Error("Expected error for comment containing '--'")
+	}
+
+	// Test text with special characters
+	textNode := doc.CreateTextNode("<script>&amp;</script>")
+	result, err = SerializeToXML(textNode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected = "&lt;script&gt;&amp;amp;&lt;/script&gt;"
+	if result != expected {
+		t.Errorf("Expected %q, got %q", expected, result)
+	}
+
+	// Test document serialization
+	htmlDoc, _ := ParseHTML("<html><body><div>Test</div></body></html>")
+	result, err = SerializeToXML(htmlDoc.AsNode())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(result, "<html") || !contains(result, "<body") || !contains(result, "<div>Test</div>") {
+		t.Errorf("Expected full HTML document, got %q", result)
+	}
+}
+
+func contains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

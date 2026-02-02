@@ -1474,6 +1474,54 @@ func (b *DOMBinder) setupPrototypes() {
 
 	vm.Set("DOMParser", domParserConstructorObj)
 
+	// Create XMLSerializer prototype and constructor
+	xmlSerializerProto := vm.NewObject()
+	xmlSerializerConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		// XMLSerializer can be constructed with new XMLSerializer()
+		serializer := call.This
+		serializer.SetPrototype(xmlSerializerProto)
+
+		// serializeToString method
+		serializer.Set("serializeToString", func(fc goja.FunctionCall) goja.Value {
+			if len(fc.Arguments) < 1 {
+				panic(vm.NewTypeError("Failed to execute 'serializeToString' on 'XMLSerializer': 1 argument required"))
+			}
+
+			// Get the node argument
+			arg := fc.Arguments[0]
+			if arg == nil || goja.IsNull(arg) || goja.IsUndefined(arg) {
+				panic(vm.NewTypeError("Failed to execute 'serializeToString' on 'XMLSerializer': parameter 1 is not of type 'Node'"))
+			}
+
+			obj := arg.ToObject(vm)
+			if obj == nil {
+				panic(vm.NewTypeError("Failed to execute 'serializeToString' on 'XMLSerializer': parameter 1 is not of type 'Node'"))
+			}
+
+			// Get the node from the object - try _goNode first, then _goElement
+			node := b.getGoNode(obj)
+			if node == nil {
+				panic(vm.NewTypeError("Failed to execute 'serializeToString' on 'XMLSerializer': parameter 1 is not of type 'Node'"))
+			}
+
+			// Serialize the node to XML
+			result, err := dom.SerializeToXML(node)
+			if err != nil {
+				// Per spec, throw InvalidStateError if serialization fails
+				panic(b.createDOMException("InvalidStateError", err.Error()))
+			}
+
+			return vm.ToValue(result)
+		})
+
+		return serializer
+	})
+	xmlSerializerConstructorObj := xmlSerializerConstructor.ToObject(vm)
+	xmlSerializerConstructorObj.Set("prototype", xmlSerializerProto)
+	xmlSerializerProto.Set("constructor", xmlSerializerConstructorObj)
+
+	vm.Set("XMLSerializer", xmlSerializerConstructorObj)
+
 	// Make interface objects non-enumerable on the global object (window)
 	// Per the Web IDL specification, interface objects should be defined with enumerable: false
 	_, _ = vm.RunString(`
@@ -1488,7 +1536,7 @@ func (b *DOMBinder) setupPrototypes() {
 				"NodeList", "HTMLCollection", "DOMTokenList", "NamedNodeMap",
 				"Range", "StaticRange", "Selection",
 				"DOMException", "DOMRect", "DOMRectReadOnly",
-				"ShadowRoot", "XMLDocument", "DOMParser",
+				"ShadowRoot", "XMLDocument", "DOMParser", "XMLSerializer",
 				"HTMLElement", "HTMLUnknownElement"
 			];
 			var globalObj = typeof window !== 'undefined' ? window : this;

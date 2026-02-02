@@ -1365,6 +1365,155 @@ func TestDOMParser(t *testing.T) {
 	}
 }
 
+func TestXMLSerializer(t *testing.T) {
+	runtime := NewRuntime()
+	binder := NewDOMBinder(runtime)
+
+	// Need to bind a document first for the binder to work properly
+	doc, _ := dom.ParseHTML("<html><body></body></html>")
+	binder.BindDocument(doc)
+
+	// Test that XMLSerializer exists
+	result, err := runtime.Execute(`typeof XMLSerializer`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.String() != "function" {
+		t.Errorf("XMLSerializer should be a function, got %s", result.String())
+	}
+
+	// Test XMLSerializer can be constructed
+	result, err = runtime.Execute(`typeof new XMLSerializer()`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.String() != "object" {
+		t.Errorf("new XMLSerializer() should return an object, got %s", result.String())
+	}
+
+	// Test instanceof
+	result, err = runtime.Execute(`new XMLSerializer() instanceof XMLSerializer`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.ToBoolean() {
+		t.Error("new XMLSerializer() should be instanceof XMLSerializer")
+	}
+
+	// Test serializeToString with a simple element
+	// Note: HTML namespace elements get xmlns attribute in XML serialization
+	result, err = runtime.Execute(`
+		var serializer = new XMLSerializer();
+		var div = document.createElement('div');
+		div.textContent = 'Hello';
+		serializer.serializeToString(div);
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Per spec, HTML namespace elements get xmlns="http://www.w3.org/1999/xhtml"
+	expectedOptions := []string{
+		`<div xmlns="http://www.w3.org/1999/xhtml">Hello</div>`,
+		`<div>Hello</div>`, // fallback if no namespace
+	}
+	str := result.String()
+	found := false
+	for _, exp := range expectedOptions {
+		if str == exp {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Expected one of %v, got %s", expectedOptions, str)
+	}
+
+	// Test serializeToString with element with attributes
+	result, err = runtime.Execute(`
+		var serializer = new XMLSerializer();
+		var div = document.createElement('div');
+		div.id = 'test';
+		div.className = 'foo bar';
+		serializer.serializeToString(div);
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The result should contain id and class attributes
+	str = result.String()
+	if !contains(str, "id=\"test\"") {
+		t.Errorf("Expected id attribute in '%s'", str)
+	}
+	if !contains(str, "class=\"foo bar\"") {
+		t.Errorf("Expected class attribute in '%s'", str)
+	}
+
+	// Test serializeToString with nested elements
+	result, err = runtime.Execute(`
+		var serializer = new XMLSerializer();
+		var div = document.createElement('div');
+		var span = document.createElement('span');
+		span.textContent = 'nested';
+		div.appendChild(span);
+		serializer.serializeToString(div);
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Per spec, child elements in same namespace don't repeat xmlns
+	str = result.String()
+	if !contains(str, "<div") || !contains(str, "<span>nested</span>") || !contains(str, "</div>") {
+		t.Errorf("Expected nested elements, got %s", str)
+	}
+
+	// Test serializeToString with XML document
+	result, err = runtime.Execute(`
+		var serializer = new XMLSerializer();
+		var parser = new DOMParser();
+		var xmlDoc = parser.parseFromString('<root><item>Test</item></root>', 'text/xml');
+		serializer.serializeToString(xmlDoc);
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	str = result.String()
+	if !contains(str, "<root>") || !contains(str, "<item>Test</item>") || !contains(str, "</root>") {
+		t.Errorf("Expected XML serialization, got '%s'", str)
+	}
+
+	// Test that serializeToString requires one argument
+	_, err = runtime.Execute(`
+		var serializer = new XMLSerializer();
+		serializer.serializeToString();
+	`)
+	if err == nil {
+		t.Error("serializeToString with no arguments should throw")
+	}
+
+	// Test that serializeToString throws for non-Node argument
+	_, err = runtime.Execute(`
+		var serializer = new XMLSerializer();
+		serializer.serializeToString("not a node");
+	`)
+	if err == nil {
+		t.Error("serializeToString with non-Node argument should throw")
+	}
+}
+
+// contains checks if a string contains a substring
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
+}
+
+func containsHelper(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
 func TestDOMTokenList_IndexAccess(t *testing.T) {
 	r := NewRuntime()
 	binder := NewDOMBinder(r)
