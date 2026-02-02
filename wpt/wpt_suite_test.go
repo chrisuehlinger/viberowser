@@ -146,7 +146,7 @@ func DOMNodesPassingTests() []string {
 		"DocumentType-literal.html",
 		"DocumentType-remove.html",
 
-		// Element tests (27 tests)
+		// Element tests (28 tests)
 		"Element-childElement-null.html",
 		"Element-childElementCount.html",
 		"Element-childElementCount-dynamic-add.html",
@@ -159,6 +159,7 @@ func DOMNodesPassingTests() []string {
 		"Element-firstElementChild-namespace.html",
 		"Element-getElementsByClassName.html",
 		"Element-getElementsByTagName.html",
+		"Element-getElementsByTagName-change-document-HTMLNess.html",
 		"Element-getElementsByTagNameNS.html",
 		"Element-hasAttribute.html",
 		"Element-hasAttributes.html",
@@ -633,6 +634,10 @@ func TestWPT_DiscoverAll(t *testing.T) {
 // This list is based on actual passing tests as of 2026-02-02.
 func HTMLDOMGlobalAttributesPassingTests() []string {
 	return []string{
+		// classList tests
+		"classlist-nonstring.html",
+		// Data attribute tests
+		"data_unicode_attr.html",
 		// Dataset tests (6 tests)
 		"dataset.html",
 		"dataset-delete.html",
@@ -640,6 +645,8 @@ func HTMLDOMGlobalAttributesPassingTests() []string {
 		"dataset-get.html",
 		"dataset-prototype.html",
 		"dataset-set.html",
+		// Translate attribute tests
+		"the-translate-attribute-007.html",
 	}
 }
 
@@ -650,7 +657,12 @@ func HTMLDOMDocumentTreeAccessorsPassingTests() []string {
 		// Document collection tests
 		"document.embeds-document.plugins-01.html",
 		"document.head-01.html",
+		"document.images.html",
+		"document.links.html",
 		"document.scripts.html",
+		// Document.getElementsByClassName tests
+		"Document.getElementsByClassName-null-undef.html",
+		"document.getElementsByClassName-same.html",
 		// Document.title tests
 		"document.title-01.html",
 		"document.title-03.html",
@@ -660,6 +672,8 @@ func HTMLDOMDocumentTreeAccessorsPassingTests() []string {
 		"document.title-08.html",
 		"document.title-09.html",
 		"document.title-not-in-html-svg.html",
+		// Element.getElementsByClassName tests
+		"Element.getElementsByClassName-null-undef.html",
 		// Document named item tests (document[name] access)
 		"nameditem-01.html",
 		"nameditem-02.html",
@@ -746,6 +760,38 @@ func TestWPT_HTMLDOMGetElementsByName(t *testing.T) {
 
 	for _, testFile := range tests {
 		testPath := "/html/dom/documents/dom-tree-accessors/document.getElementsByName/" + testFile
+		t.Run(testFile, func(t *testing.T) {
+			runWPTTest(t, runner, testPath)
+		})
+	}
+}
+
+// HTMLDOMResourceMetadataPassingTests returns the list of HTML/dom resource metadata tests that pass.
+// This list is based on actual passing tests as of 2026-02-02.
+func HTMLDOMResourceMetadataPassingTests() []string {
+	return []string{
+		"document-compatmode-01.html",
+		"document-compatmode-02.html",
+		"document-compatmode-03.html",
+		"document-lastModified-01.html",
+	}
+}
+
+// TestWPT_HTMLDOMResourceMetadata runs all passing HTML/dom resource metadata tests.
+func TestWPT_HTMLDOMResourceMetadata(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping WPT tests in short mode")
+	}
+
+	wptPath := getWPTPath(t)
+	runner := NewRunner(wptPath)
+	runner.Timeout = 30 * time.Second
+
+	tests := HTMLDOMResourceMetadataPassingTests()
+	t.Logf("Running %d HTML/dom resource metadata tests", len(tests))
+
+	for _, testFile := range tests {
+		testPath := "/html/dom/documents/resource-metadata-management/" + testFile
 		t.Run(testFile, func(t *testing.T) {
 			runWPTTest(t, runner, testPath)
 		})
