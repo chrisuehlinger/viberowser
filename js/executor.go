@@ -623,11 +623,12 @@ func (se *ScriptExecutor) setupNamedIframeAccess() {
 			return se.getIframeContentWindow(iframeElement, doc)
 		})
 
-		// Set on window
-		window.DefineAccessorProperty(name, getter, nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+		// Set on window.
+		// Use FLAG_TRUE for configurable so scripts can overwrite these properties.
+		window.DefineAccessorProperty(name, getter, nil, goja.FLAG_TRUE, goja.FLAG_TRUE)
 
 		// Also set as global variable (for direct access without window. prefix)
-		vm.GlobalObject().DefineAccessorProperty(name, getter, nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+		vm.GlobalObject().DefineAccessorProperty(name, getter, nil, goja.FLAG_TRUE, goja.FLAG_TRUE)
 	}
 
 	// Set up named access for elements with id attributes.
@@ -673,16 +674,21 @@ func (se *ScriptExecutor) setupNamedElementAccess() {
 			continue
 		}
 
-		// Create a getter for this named element.
-		// Capture element by value for the closure.
+		// Bind the element and set it as a regular property.
+		// Use regular properties (not accessor properties) so scripts can overwrite them.
+		// Per HTML spec, named properties should not shadow explicitly defined properties.
+		// We need the binding to be lazy though, so we create it only when accessed.
+		// For now, we bind immediately and set as a regular writable property.
 		el := element
-		getter := vm.ToValue(func(call goja.FunctionCall) goja.Value {
-			return se.domBinder.BindElement(el)
-		})
+		boundEl := se.domBinder.BindElement(el)
 
-		// Set on window and global scope
-		window.DefineAccessorProperty(id, getter, nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
-		globalObj.DefineAccessorProperty(id, getter, nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+		// Only set if the property doesn't already exist (to not shadow script-defined properties)
+		if window.Get(id) == nil || goja.IsUndefined(window.Get(id)) {
+			window.Set(id, boundEl)
+		}
+		if globalObj.Get(id) == nil || goja.IsUndefined(globalObj.Get(id)) {
+			globalObj.Set(id, boundEl)
+		}
 	}
 }
 

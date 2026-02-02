@@ -654,6 +654,22 @@ func HTMLDOMDocumentTreeAccessorsPassingTests() []string {
 	}
 }
 
+// HTMLDOMGetElementsByNamePassingTests returns the list of getElementsByName tests that pass.
+// This list is based on actual passing tests as of 2026-02-02.
+func HTMLDOMGetElementsByNamePassingTests() []string {
+	return []string{
+		"document.getElementsByName-case.html",
+		"document.getElementsByName-id.html",
+		"document.getElementsByName-liveness.html",
+		"document.getElementsByName-same.html",
+		"document.getElementsByName-null-undef.html",
+		"document.getElementsByName-param.html",
+		"document.getElementsByName-interface.html",
+		"document.getElementsByName-newelements.html",
+		"document.getElementsByName-namespace.html",
+	}
+}
+
 // TestWPT_HTMLDOMGlobalAttributes runs all passing HTML/dom/elements/global-attributes tests.
 func TestWPT_HTMLDOMGlobalAttributes(t *testing.T) {
 	if testing.Short() {
@@ -690,6 +706,27 @@ func TestWPT_HTMLDOMDocumentTreeAccessors(t *testing.T) {
 
 	for _, testFile := range tests {
 		testPath := "/html/dom/documents/dom-tree-accessors/" + testFile
+		t.Run(testFile, func(t *testing.T) {
+			runWPTTest(t, runner, testPath)
+		})
+	}
+}
+
+// TestWPT_HTMLDOMGetElementsByName runs all passing getElementsByName tests.
+func TestWPT_HTMLDOMGetElementsByName(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping WPT tests in short mode")
+	}
+
+	wptPath := getWPTPath(t)
+	runner := NewRunner(wptPath)
+	runner.Timeout = 30 * time.Second
+
+	tests := HTMLDOMGetElementsByNamePassingTests()
+	t.Logf("Running %d getElementsByName tests", len(tests))
+
+	for _, testFile := range tests {
+		testPath := "/html/dom/documents/dom-tree-accessors/document.getElementsByName/" + testFile
 		t.Run(testFile, func(t *testing.T) {
 			runWPTTest(t, runner, testPath)
 		})
