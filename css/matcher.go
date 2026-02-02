@@ -150,8 +150,12 @@ func (c *CompoundSelector) MatchElementWithContext(el *dom.Element, ctx *MatchCo
 		}
 	}
 
-	// Pseudo-element (for matching purposes, we just check it's valid)
-	// Actual rendering is handled elsewhere
+	// Pseudo-element: selectors with pseudo-elements should NOT match any elements
+	// via querySelector/querySelectorAll. Pseudo-elements are not actual DOM elements.
+	// The pseudo-element part of a selector is only for CSS styling purposes.
+	if c.PseudoElement != nil {
+		return false
+	}
 
 	return true
 }
@@ -445,6 +449,11 @@ func matchPseudoClassWithContext(pc *PseudoClassSelector, el *dom.Element, ctx *
 
 	case "valid":
 		return isValid(el)
+
+	// Legacy pseudo-element syntax (single colon) - these should not match elements
+	// They are pseudo-elements, not pseudo-classes
+	case "before", "after", "first-line", "first-letter":
+		return false
 
 	default:
 		// Unknown pseudo-class - don't match

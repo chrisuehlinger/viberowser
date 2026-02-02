@@ -2293,12 +2293,12 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 
 	jsDoc.Set("querySelector", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
-			return goja.Null()
+			panic(vm.NewTypeError("Failed to execute 'querySelector' on 'Document': 1 argument required, but only 0 present."))
 		}
 		selectorStr := call.Arguments[0].String()
 		parsed, err := css.ParseSelector(selectorStr)
 		if err != nil {
-			return goja.Null()
+			panic(b.createDOMException("SyntaxError", "Failed to execute 'querySelector' on 'Document': '"+selectorStr+"' is not a valid selector."))
 		}
 		// For document queries, :scope matches the document root
 		ctx := &css.MatchContext{ScopeElement: nil}
@@ -2320,12 +2320,12 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 
 	jsDoc.Set("querySelectorAll", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
-			return b.createEmptyNodeList()
+			panic(vm.NewTypeError("Failed to execute 'querySelectorAll' on 'Document': 1 argument required, but only 0 present."))
 		}
 		selectorStr := call.Arguments[0].String()
 		parsed, err := css.ParseSelector(selectorStr)
 		if err != nil {
-			return b.createEmptyNodeList()
+			panic(b.createDOMException("SyntaxError", "Failed to execute 'querySelectorAll' on 'Document': '"+selectorStr+"' is not a valid selector."))
 		}
 		// For document queries, :scope matches the document root
 		ctx := &css.MatchContext{ScopeElement: nil}
@@ -2996,12 +2996,12 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 
 	jsDoc.Set("querySelector", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
-			return goja.Null()
+			panic(vm.NewTypeError("Failed to execute 'querySelector' on 'Document': 1 argument required, but only 0 present."))
 		}
 		selectorStr := call.Arguments[0].String()
 		parsed, err := css.ParseSelector(selectorStr)
 		if err != nil {
-			return goja.Null()
+			panic(b.createDOMException("SyntaxError", "Failed to execute 'querySelector' on 'Document': '"+selectorStr+"' is not a valid selector."))
 		}
 		// For document queries, :scope matches the document root
 		ctx := &css.MatchContext{ScopeElement: nil}
@@ -3023,12 +3023,12 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 
 	jsDoc.Set("querySelectorAll", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
-			return b.createEmptyNodeList()
+			panic(vm.NewTypeError("Failed to execute 'querySelectorAll' on 'Document': 1 argument required, but only 0 present."))
 		}
 		selectorStr := call.Arguments[0].String()
 		parsed, err := css.ParseSelector(selectorStr)
 		if err != nil {
-			return b.createEmptyNodeList()
+			panic(b.createDOMException("SyntaxError", "Failed to execute 'querySelectorAll' on 'Document': '"+selectorStr+"' is not a valid selector."))
 		}
 		// For document queries, :scope matches the document root
 		ctx := &css.MatchContext{ScopeElement: nil}
@@ -4037,12 +4037,12 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 	// Query methods - use CSS matcher with scope context for proper :scope support
 	jsEl.Set("querySelector", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
-			return goja.Null()
+			panic(vm.NewTypeError("Failed to execute 'querySelector' on 'Element': 1 argument required, but only 0 present."))
 		}
 		selectorStr := call.Arguments[0].String()
 		parsed, err := css.ParseSelector(selectorStr)
 		if err != nil {
-			return goja.Null()
+			panic(b.createDOMException("SyntaxError", "Failed to execute 'querySelector' on 'Element': '"+selectorStr+"' is not a valid selector."))
 		}
 		// Create scope context pointing to the element querySelector was called on
 		ctx := &css.MatchContext{ScopeElement: el}
@@ -4055,12 +4055,12 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 
 	jsEl.Set("querySelectorAll", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
-			return b.createEmptyNodeList()
+			panic(vm.NewTypeError("Failed to execute 'querySelectorAll' on 'Element': 1 argument required, but only 0 present."))
 		}
 		selectorStr := call.Arguments[0].String()
 		parsed, err := css.ParseSelector(selectorStr)
 		if err != nil {
-			return b.createEmptyNodeList()
+			panic(b.createDOMException("SyntaxError", "Failed to execute 'querySelectorAll' on 'Element': '"+selectorStr+"' is not a valid selector."))
 		}
 		// Create scope context pointing to the element querySelectorAll was called on
 		ctx := &css.MatchContext{ScopeElement: el}
@@ -6569,9 +6569,14 @@ func (b *DOMBinder) BindDocumentFragment(frag *dom.DocumentFragment) *goja.Objec
 	// Query methods
 	jsFrag.Set("querySelector", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
-			return goja.Null()
+			panic(vm.NewTypeError("Failed to execute 'querySelector' on 'DocumentFragment': 1 argument required, but only 0 present."))
 		}
 		selector := call.Arguments[0].String()
+		// Validate selector first
+		_, err := css.ParseSelector(selector)
+		if err != nil {
+			panic(b.createDOMException("SyntaxError", "Failed to execute 'querySelector' on 'DocumentFragment': '"+selector+"' is not a valid selector."))
+		}
 		// Search through children
 		for child := node.FirstChild(); child != nil; child = child.NextSibling() {
 			if child.NodeType() == dom.ElementNode {
@@ -6590,9 +6595,14 @@ func (b *DOMBinder) BindDocumentFragment(frag *dom.DocumentFragment) *goja.Objec
 
 	jsFrag.Set("querySelectorAll", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
-			return b.createEmptyNodeList()
+			panic(vm.NewTypeError("Failed to execute 'querySelectorAll' on 'DocumentFragment': 1 argument required, but only 0 present."))
 		}
 		selector := call.Arguments[0].String()
+		// Validate selector first
+		_, err := css.ParseSelector(selector)
+		if err != nil {
+			panic(b.createDOMException("SyntaxError", "Failed to execute 'querySelectorAll' on 'DocumentFragment': '"+selector+"' is not a valid selector."))
+		}
 		var results []*dom.Node
 		for child := node.FirstChild(); child != nil; child = child.NextSibling() {
 			if child.NodeType() == dom.ElementNode {

@@ -125,16 +125,18 @@ func (r *Runner) RunTestFile(testPath string) TestSuiteResult {
 	// Create script executor and bind document
 	executor := js.NewScriptExecutor(runtime)
 
-	// Set up iframe content loader for loading iframe src content
-	// Use file:// URL if loading from local WPT path, otherwise use HTTP base URL
-	var iframeBaseURL string
+	// Calculate the base URL for the test file (used for resolving relative URLs in iframes and scripts)
+	var testBaseURL string
 	if r.WPTPath != "" {
-		iframeBaseURL = "file://" + r.WPTPath
+		testBaseURL = "file://" + filepath.Join(r.WPTPath, testPath)
 	} else {
-		iframeBaseURL = r.BaseURL
+		testBaseURL = r.BaseURL + "/" + strings.TrimPrefix(testPath, "/")
 	}
+
+	// Set up iframe content loader for loading iframe src content
+	// The base URL must be the test file's URL so relative iframe src URLs resolve correctly
 	executor.SetIframeContentLoader(func(src string) (*dom.Document, string) {
-		return r.loadIframeContent(ctx, src, iframeBaseURL)
+		return r.loadIframeContent(ctx, src, testBaseURL)
 	})
 
 	executor.SetupDocument(doc)
@@ -365,7 +367,13 @@ func (r *Runner) loadIframeContent(ctx context.Context, src, baseURL string) (*d
 	// Load the content
 	var content string
 	if strings.HasPrefix(fullURL, "file://") {
-		filePath := strings.TrimPrefix(fullURL, "file://")
+		// Parse the URL to strip any fragment identifier (#target, etc.)
+		// The fragment is part of the URL but not part of the file path
+		parsedURL, parseErr := url.Parse(fullURL)
+		if parseErr != nil {
+			return nil, ""
+		}
+		filePath := parsedURL.Path
 		data, readErr := os.ReadFile(filePath)
 		if readErr != nil {
 			return nil, ""

@@ -4,6 +4,15 @@ import (
 	"strings"
 )
 
+// SelectorParseError represents an error that occurred while parsing a CSS selector.
+type SelectorParseError struct {
+	Message string
+}
+
+func (e *SelectorParseError) Error() string {
+	return e.Message
+}
+
 // CSSSelector represents a parsed CSS selector.
 type CSSSelector struct {
 	// A selector is a list of complex selectors separated by commas
@@ -138,13 +147,25 @@ func (p *SelectorParser) parseSelector() (*CSSSelector, error) {
 
 	p.skipWhitespace()
 
+	// Check for empty input or input with only whitespace
+	if p.current().Type == TokenEOF {
+		return nil, &SelectorParseError{Message: "empty selector"}
+	}
+
 	for {
+		startPos := p.pos
 		complex, err := p.parseComplexSelector()
 		if err != nil {
 			return nil, err
 		}
 		if complex != nil {
 			selector.ComplexSelectors = append(selector.ComplexSelectors, complex)
+		} else if p.pos == startPos {
+			// No progress was made - we hit an invalid token
+			tok := p.current()
+			if tok.Type != TokenEOF && tok.Type != TokenComma {
+				return nil, &SelectorParseError{Message: "invalid selector"}
+			}
 		}
 
 		p.skipWhitespace()
@@ -152,10 +173,25 @@ func (p *SelectorParser) parseSelector() (*CSSSelector, error) {
 		if p.current().Type == TokenComma {
 			p.consume()
 			p.skipWhitespace()
+			// Check for trailing comma with nothing after
+			if p.current().Type == TokenEOF {
+				return nil, &SelectorParseError{Message: "unexpected end of selector after comma"}
+			}
 			continue
 		}
 
 		break
+	}
+
+	// Check for unparsed tokens - if there are remaining non-EOF tokens, it's invalid
+	p.skipWhitespace()
+	if p.current().Type != TokenEOF {
+		return nil, &SelectorParseError{Message: "invalid selector"}
+	}
+
+	// Check that we parsed at least one selector
+	if len(selector.ComplexSelectors) == 0 {
+		return nil, &SelectorParseError{Message: "invalid selector"}
 	}
 
 	return selector, nil
@@ -389,6 +425,9 @@ func (p *SelectorParser) parseCompoundSelector() (*CompoundSelector, error) {
 				if p.current().Type == TokenIdent {
 					compound.ClassSelectors = append(compound.ClassSelectors, p.consume().Value)
 					hasContent = true
+				} else {
+					// '.' must be followed by an identifier
+					return nil, &SelectorParseError{Message: "invalid class selector: '.' must be followed by an identifier"}
 				}
 			case '*':
 				if compound.TypeSelector == nil && !hasContent {
@@ -551,6 +590,9 @@ func (p *SelectorParser) parseAttributeSelector() (*AttributeMatcher, error) {
 	// based on whether we're matching against an HTML element or not
 	if p.current().Type == TokenIdent {
 		attr.Name = p.consume().Value
+	} else {
+		// No valid attribute name - invalid selector
+		return nil, &SelectorParseError{Message: "invalid attribute selector: missing attribute name"}
 	}
 
 	p.skipWhitespace()
@@ -622,9 +664,11 @@ func (p *SelectorParser) parseAttributeSelector() (*AttributeMatcher, error) {
 		p.skipWhitespace()
 	}
 
-	// Consume closing bracket
+	// Consume closing bracket - required
 	if p.current().Type == TokenCloseSquare {
 		p.consume()
+	} else {
+		return nil, &SelectorParseError{Message: "invalid attribute selector: missing closing bracket"}
 	}
 
 	return attr, nil
@@ -727,7 +771,116 @@ func (p *SelectorParser) parsePseudoClass() (*PseudoClassSelector, error) {
 		}
 	}
 
+	// Validate that the pseudo-class is known
+	// Note: legacy pseudo-elements (:before, :after, :first-line, :first-letter)
+	// can be written with single-colon syntax
+	if !validPseudoClasses[pc.Name] && !legacyPseudoElements[pc.Name] {
+		return nil, &SelectorParseError{Message: "unknown pseudo-class: :" + pc.Name}
+	}
+
 	return pc, nil
+}
+
+// legacyPseudoElements are pseudo-elements that can be written with single-colon syntax.
+// Per CSS spec, :before, :after, :first-line, :first-letter are valid with single colon.
+var legacyPseudoElements = map[string]bool{
+	"before":       true,
+	"after":        true,
+	"first-line":   true,
+	"first-letter": true,
+}
+
+// validPseudoClasses is the set of known CSS pseudo-classes.
+// Unknown pseudo-classes should cause a syntax error per the CSS spec.
+var validPseudoClasses = map[string]bool{
+	// Tree-structural pseudo-classes
+	"root":              true,
+	"empty":             true,
+	"first-child":       true,
+	"last-child":        true,
+	"only-child":        true,
+	"first-of-type":     true,
+	"last-of-type":      true,
+	"only-of-type":      true,
+	"nth-child":         true,
+	"nth-last-child":    true,
+	"nth-of-type":       true,
+	"nth-last-of-type":  true,
+	// User action pseudo-classes
+	"hover":             true,
+	"active":            true,
+	"focus":             true,
+	"focus-within":      true,
+	"focus-visible":     true,
+	// Link pseudo-classes
+	"link":              true,
+	"visited":           true,
+	"any-link":          true,
+	"local-link":        true,
+	// Target pseudo-class
+	"target":            true,
+	"target-within":     true,
+	// Language pseudo-class
+	"lang":              true,
+	"dir":               true,
+	// UI element states
+	"enabled":           true,
+	"disabled":          true,
+	"read-only":         true,
+	"read-write":        true,
+	"placeholder-shown": true,
+	"default":           true,
+	"checked":           true,
+	"indeterminate":     true,
+	"valid":             true,
+	"invalid":           true,
+	"in-range":          true,
+	"out-of-range":      true,
+	"required":          true,
+	"optional":          true,
+	"user-invalid":      true,
+	// Logical combinators
+	"not":               true,
+	"is":                true,
+	"where":             true,
+	"has":               true,
+	"matches":           true, // Old name for :is()
+	// Scope
+	"scope":             true,
+	// :defined for custom elements
+	"defined":           true,
+	// CSS Selectors Level 4
+	"blank":             true,
+	"current":           true,
+	"past":              true,
+	"future":            true,
+	// Form-related
+	"autofill":          true,
+	// Host and slotted (for Shadow DOM)
+	"host":              true,
+	"host-context":      true,
+	// Part
+	"part":              true,
+	// State
+	"state":             true,
+	// Contains pseudo-class (non-standard but used in some contexts)
+	"contains":          true,
+}
+
+// validPseudoElements is the set of known CSS pseudo-elements.
+var validPseudoElements = map[string]bool{
+	"before":       true,
+	"after":        true,
+	"first-line":   true,
+	"first-letter": true,
+	"selection":    true,
+	"placeholder":  true,
+	"marker":       true,
+	"backdrop":     true,
+	"cue":          true,
+	"file-selector-button": true,
+	"slotted":      true,
+	"part":         true,
 }
 
 // parsePseudoElement parses a pseudo-element selector.
@@ -760,6 +913,11 @@ func (p *SelectorParser) parsePseudoElement() (*PseudoElementSelector, error) {
 			p.consume()
 		}
 		pe.Argument = arg.String()
+	}
+
+	// Validate that the pseudo-element is known
+	if !validPseudoElements[pe.Name] {
+		return nil, &SelectorParseError{Message: "unknown pseudo-element: ::" + pe.Name}
 	}
 
 	return pe, nil
