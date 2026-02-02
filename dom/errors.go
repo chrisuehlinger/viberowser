@@ -63,3 +63,8 @@ func ErrInUseAttribute(message string) *DOMError {
 func ErrSyntax(message string) *DOMError {
 	return &DOMError{Name: "SyntaxError", Message: message}
 }
+
+// ErrNoModificationAllowed creates a NoModificationAllowedError.
+func ErrNoModificationAllowed(message string) *DOMError {
+	return &DOMError{Name: "NoModificationAllowedError", Message: message}
+}

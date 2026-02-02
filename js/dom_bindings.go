@@ -3396,6 +3396,61 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
 
+	// innerText - returns rendered text content, respecting CSS
+	jsEl.DefineAccessorProperty("innerText", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Per spec: SVG and MathML elements return undefined
+		ns := el.NamespaceURI()
+		if ns == dom.SVGNamespace || ns == dom.MathMLNamespace {
+			return goja.Undefined()
+		}
+		return vm.ToValue(el.InnerText())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			arg := call.Arguments[0]
+			// Per spec (LegacyNullToEmptyString), null converts to empty string
+			var value string
+			if goja.IsNull(arg) {
+				value = ""
+			} else if goja.IsUndefined(arg) {
+				// undefined becomes the string "undefined"
+				value = "undefined"
+			} else {
+				value = arg.String()
+			}
+			el.SetInnerText(value)
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// outerText - getter same as innerText, setter replaces the element
+	jsEl.DefineAccessorProperty("outerText", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Per spec: SVG and MathML elements return undefined
+		ns := el.NamespaceURI()
+		if ns == dom.SVGNamespace || ns == dom.MathMLNamespace {
+			return goja.Undefined()
+		}
+		return vm.ToValue(el.OuterText())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			arg := call.Arguments[0]
+			// Per spec (LegacyNullToEmptyString), null converts to empty string
+			var value string
+			if goja.IsNull(arg) {
+				value = ""
+			} else if goja.IsUndefined(arg) {
+				// undefined becomes the string "undefined"
+				value = "undefined"
+			} else {
+				value = arg.String()
+			}
+			err := el.SetOuterText(value)
+			if err != nil {
+				panic(b.createDOMException("NoModificationAllowedError", err.Error()))
+			}
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
 	// Attribute methods
 	jsEl.Set("getAttribute", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
