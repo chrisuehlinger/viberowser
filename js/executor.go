@@ -32,6 +32,7 @@ type ScriptExecutor struct {
 	iframeContentLoader      IframeContentLoader             // Callback for loading iframe content
 	currentDocument          *dom.Document                   // Currently bound document
 	xhrManager               *XHRManager                     // XMLHttpRequest manager
+	fetchManager             *FetchManager                   // Fetch API manager
 }
 
 // NewScriptExecutor creates a new script executor.
@@ -449,6 +450,9 @@ func (se *ScriptExecutor) SetupDocument(doc *dom.Document) {
 
 	// Setup XMLHttpRequest with the document's URL as the base
 	se.setupXMLHttpRequest(doc)
+
+	// Setup fetch API with the document's URL as the base
+	se.setupFetch(doc)
 }
 
 // setupXMLHttpRequest sets up the XMLHttpRequest constructor with the document's URL.
@@ -467,6 +471,24 @@ func (se *ScriptExecutor) setupXMLHttpRequest(doc *dom.Document) {
 
 	se.xhrManager = NewXHRManager(se.runtime, baseURL, documentURL)
 	se.xhrManager.SetupXMLHttpRequest()
+}
+
+// setupFetch sets up the fetch API with the document's URL.
+func (se *ScriptExecutor) setupFetch(doc *dom.Document) {
+	docURL := doc.URL()
+	var baseURL, documentURL *url.URL
+	var err error
+
+	if docURL != "" && docURL != "about:blank" {
+		baseURL, err = url.Parse(docURL)
+		if err != nil {
+			baseURL = nil
+		}
+		documentURL = baseURL
+	}
+
+	se.fetchManager = NewFetchManager(se.runtime, baseURL, documentURL)
+	se.fetchManager.SetupFetch()
 }
 
 // setupWindowFrames sets up the window.frames property to provide access to iframe content windows.
