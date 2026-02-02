@@ -33,6 +33,7 @@ type ScriptExecutor struct {
 	currentDocument          *dom.Document                   // Currently bound document
 	xhrManager               *XHRManager                     // XMLHttpRequest manager
 	fetchManager             *FetchManager                   // Fetch API manager
+	historyManager           *HistoryManager                 // History API manager
 }
 
 // NewScriptExecutor creates a new script executor.
@@ -454,6 +455,9 @@ func (se *ScriptExecutor) SetupDocument(doc *dom.Document) {
 	// Setup fetch API with the document's URL as the base
 	se.setupFetch(doc)
 
+	// Setup History API with the document's URL as the base
+	se.setupHistory(doc)
+
 	// Set up named iframe access so iframes with name attributes are accessible as globals
 	se.setupNamedIframeAccess()
 }
@@ -492,6 +496,24 @@ func (se *ScriptExecutor) setupFetch(doc *dom.Document) {
 
 	se.fetchManager = NewFetchManager(se.runtime, baseURL, documentURL)
 	se.fetchManager.SetupFetch()
+}
+
+// setupHistory sets up the History API with the document's URL.
+func (se *ScriptExecutor) setupHistory(doc *dom.Document) {
+	docURL := doc.URL()
+	var baseURL, documentURL *url.URL
+	var err error
+
+	if docURL != "" && docURL != "about:blank" {
+		baseURL, err = url.Parse(docURL)
+		if err != nil {
+			baseURL = nil
+		}
+		documentURL = baseURL
+	}
+
+	se.historyManager = NewHistoryManager(se.runtime, baseURL, documentURL, se.eventBinder)
+	se.historyManager.SetupHistory()
 }
 
 // setupWindowFrames sets up the window.frames property to provide access to iframe content windows.
