@@ -622,8 +622,36 @@ func (b *BrowserUI) loadIframeContent(ctx context.Context, src, baseURL string) 
 		return nil, ""
 	}
 
-	// Parse as HTML
-	doc, err := dom.ParseHTML(string(resp.Content))
+	// Parse based on content type from the response
+	content := string(resp.Content)
+	contentType := resp.ContentType
+
+	// Determine document type based on content type or URL extension
+	lowerURL := strings.ToLower(fullURL)
+	if contentType == "image/svg+xml" || strings.HasSuffix(lowerURL, ".svg") {
+		// SVG documents are XML with contentType "image/svg+xml"
+		doc, err := dom.ParseXML(content)
+		if err != nil {
+			return nil, ""
+		}
+		doc.SetContentType("image/svg+xml")
+		return doc, fullURL
+	} else if contentType == "application/xhtml+xml" || strings.HasSuffix(lowerURL, ".xhtml") {
+		doc, err := dom.ParseXHTML(content)
+		if err != nil {
+			return nil, ""
+		}
+		return doc, fullURL
+	} else if contentType == "text/xml" || contentType == "application/xml" || strings.HasSuffix(lowerURL, ".xml") {
+		doc, err := dom.ParseXML(content)
+		if err != nil {
+			return nil, ""
+		}
+		return doc, fullURL
+	}
+
+	// Default to HTML parsing
+	doc, err := dom.ParseHTML(content)
 	if err != nil {
 		return nil, ""
 	}

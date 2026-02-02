@@ -422,6 +422,14 @@ func (r *Runner) loadIframeContent(ctx context.Context, src, baseURL string) (*d
 			return nil, ""
 		}
 		return doc, finalURL
+	} else if strings.HasSuffix(lowerFinalURL, ".svg") {
+		// SVG documents are XML with contentType "image/svg+xml"
+		doc, err := dom.ParseXML(content)
+		if err != nil {
+			return nil, ""
+		}
+		doc.SetContentType("image/svg+xml")
+		return doc, finalURL
 	} else {
 		// Default to HTML parsing
 		doc, err := dom.ParseHTML(content)
