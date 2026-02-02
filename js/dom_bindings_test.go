@@ -73,6 +73,100 @@ func TestDocumentURL(t *testing.T) {
 	}
 }
 
+func TestDocumentCompatMode(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	// Test 1: Document without doctype should be in quirks mode
+	docNoDoctype, _ := dom.ParseHTML(`<html><body>Hello</body></html>`)
+	binder.BindDocument(docNoDoctype)
+	result, err := r.Execute("document.compatMode")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "BackCompat" {
+		t.Errorf("Expected 'BackCompat' for no doctype, got %v", result.String())
+	}
+
+	// Test 2: Document with HTML5 doctype should be in standards mode
+	r2 := NewRuntime()
+	binder2 := NewDOMBinder(r2)
+	docHTML5, _ := dom.ParseHTML(`<!DOCTYPE html><html><body>Hello</body></html>`)
+	binder2.BindDocument(docHTML5)
+	result, err = r2.Execute("document.compatMode")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "CSS1Compat" {
+		t.Errorf("Expected 'CSS1Compat' for HTML5 doctype, got %v", result.String())
+	}
+}
+
+func TestDocumentReadyState(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html><html><body></body></html>`)
+	binder.BindDocument(doc)
+
+	result, err := r.Execute("document.readyState")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	// Default should be "complete"
+	if result.String() != "complete" {
+		t.Errorf("Expected 'complete', got %v", result.String())
+	}
+}
+
+func TestDocumentLastModified(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html><html><body></body></html>`)
+	binder.BindDocument(doc)
+
+	result, err := r.Execute("document.lastModified")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	// Should return a date string in format MM/DD/YYYY hh:mm:ss
+	lastMod := result.String()
+	if len(lastMod) != 19 {
+		t.Errorf("Expected lastModified in format MM/DD/YYYY hh:mm:ss, got %v", lastMod)
+	}
+}
+
+func TestDocumentCookie(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html><html><body></body></html>`)
+	binder.BindDocument(doc)
+
+	// Default should be empty string
+	result, err := r.Execute("document.cookie")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.String() != "" {
+		t.Errorf("Expected empty cookie, got %v", result.String())
+	}
+
+	// Set and get cookie
+	_, err = r.Execute("document.cookie = 'test=value'")
+	if err != nil {
+		t.Fatalf("Setting cookie failed: %v", err)
+	}
+	result, err = r.Execute("document.cookie")
+	if err != nil {
+		t.Fatalf("Getting cookie failed: %v", err)
+	}
+	if result.String() != "test=value" {
+		t.Errorf("Expected 'test=value', got %v", result.String())
+	}
+}
+
 func TestDOMBinderQuerySelector(t *testing.T) {
 	r := NewRuntime()
 	binder := NewDOMBinder(r)

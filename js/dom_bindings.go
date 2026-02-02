@@ -1967,6 +1967,29 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 		return vm.ToValue(doc.ContentType())
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 
+	// readyState returns the document loading state
+	jsDoc.DefineAccessorProperty("readyState", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(string(doc.ReadyState()))
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// lastModified returns the last modification date of the document
+	jsDoc.DefineAccessorProperty("lastModified", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(doc.LastModified())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// cookie gets/sets document cookies
+	jsDoc.DefineAccessorProperty("cookie",
+		vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			return vm.ToValue(doc.Cookie())
+		}),
+		vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			if len(call.Arguments) > 0 {
+				doc.SetCookie(call.Arguments[0].String())
+			}
+			return goja.Undefined()
+		}),
+		goja.FLAG_FALSE, goja.FLAG_TRUE)
+
 	// location is null for documents without a browsing context (per spec)
 	jsDoc.DefineAccessorProperty("location", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		return goja.Null()
@@ -2629,6 +2652,29 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 	jsDoc.DefineAccessorProperty("contentType", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		return vm.ToValue(doc.ContentType())
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// readyState returns the document loading state
+	jsDoc.DefineAccessorProperty("readyState", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(string(doc.ReadyState()))
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// lastModified returns the last modification date of the document
+	jsDoc.DefineAccessorProperty("lastModified", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(doc.LastModified())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// cookie gets/sets document cookies
+	jsDoc.DefineAccessorProperty("cookie",
+		vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			return vm.ToValue(doc.Cookie())
+		}),
+		vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			if len(call.Arguments) > 0 {
+				doc.SetCookie(call.Arguments[0].String())
+			}
+			return goja.Undefined()
+		}),
+		goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	// location is null for documents without a browsing context (per spec)
 	jsDoc.DefineAccessorProperty("location", vm.ToValue(func(call goja.FunctionCall) goja.Value {

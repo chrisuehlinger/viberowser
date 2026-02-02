@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"io"
 	"strings"
+	"time"
 
 	"golang.org/x/net/html"
 )
@@ -141,12 +142,79 @@ func (d *Document) CharacterSet() string {
 }
 
 // CompatMode returns the document's compatibility mode.
-// Returns "CSS1Compat" for standards mode (always for XML documents).
+// Returns "CSS1Compat" for standards mode or limited-quirks mode.
+// Returns "BackCompat" for quirks mode.
 func (d *Document) CompatMode() string {
 	// For XML documents, always return CSS1Compat
-	// For HTML documents, this would depend on the doctype
-	// For now, we return CSS1Compat (standards mode) as default
+	if !d.IsHTML() {
+		return "CSS1Compat"
+	}
+	// For HTML documents, check the document mode
+	if d.AsNode().documentData.mode == QuirksMode {
+		return "BackCompat"
+	}
 	return "CSS1Compat"
+}
+
+// Mode returns the document's rendering mode.
+func (d *Document) Mode() DocumentMode {
+	return d.AsNode().documentData.mode
+}
+
+// SetMode sets the document's rendering mode.
+func (d *Document) SetMode(mode DocumentMode) {
+	d.AsNode().documentData.mode = mode
+}
+
+// ReadyState returns the document's ready state.
+// Returns "loading", "interactive", or "complete".
+func (d *Document) ReadyState() DocumentReadyState {
+	state := d.AsNode().documentData.readyState
+	if state == "" {
+		// Default to "complete" for documents without explicit state
+		return ReadyStateComplete
+	}
+	return state
+}
+
+// SetReadyState sets the document's ready state.
+func (d *Document) SetReadyState(state DocumentReadyState) {
+	d.AsNode().documentData.readyState = state
+}
+
+// LastModified returns the document's last modification date.
+// Returns a string in the format "MM/DD/YYYY hh:mm:ss" in the user's local timezone.
+func (d *Document) LastModified() string {
+	if d.AsNode().documentData.lastModified != "" {
+		return d.AsNode().documentData.lastModified
+	}
+	// If not set, return current time
+	return formatLastModified(time.Now())
+}
+
+// SetLastModified sets the document's last modification date.
+func (d *Document) SetLastModified(lastMod string) {
+	d.AsNode().documentData.lastModified = lastMod
+}
+
+// formatLastModified formats a time as "MM/DD/YYYY hh:mm:ss".
+func formatLastModified(t time.Time) string {
+	return t.Format("01/02/2006 15:04:05")
+}
+
+// Cookie returns the document's cookies.
+// Returns an empty string for cookie-averse documents (those without a browsing context
+// or with a non-HTTP(S) URL scheme).
+func (d *Document) Cookie() string {
+	// Per HTML spec, documents without a browsing context or with non-HTTP(S) URLs
+	// are "cookie-averse" and should return empty string.
+	// For now, we return the stored cookie value (empty by default).
+	return d.AsNode().documentData.cookie
+}
+
+// SetCookie sets the document's cookie.
+func (d *Document) SetCookie(cookie string) {
+	d.AsNode().documentData.cookie = cookie
 }
 
 // AsNode returns the underlying Node.
@@ -1259,10 +1327,175 @@ func ParseHTML(htmlContent string) (*Document, error) {
 		return nil, err
 	}
 
+	// Determine document mode from doctype before converting tree
+	doc.SetMode(determineDocumentMode(netDoc))
+
 	// Convert the parsed tree to our DOM structure
 	convertHTMLTree(netDoc, doc.AsNode(), doc)
 
 	return doc, nil
+}
+
+// determineDocumentMode determines the document mode (quirks, limited-quirks, or no-quirks)
+// based on the doctype per the HTML spec.
+// See: https://html.spec.whatwg.org/multipage/parsing.html#the-initial-insertion-mode
+func determineDocumentMode(doc *html.Node) DocumentMode {
+	// Find the doctype node
+	var doctype *html.Node
+	for c := doc.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == html.DoctypeNode {
+			doctype = c
+			break
+		}
+	}
+
+	// No doctype = quirks mode
+	if doctype == nil {
+		return QuirksMode
+	}
+
+	// Get doctype properties
+	name := strings.ToLower(doctype.Data)
+	var publicId, systemId string
+	for _, attr := range doctype.Attr {
+		if attr.Key == "public" {
+			publicId = attr.Val
+		} else if attr.Key == "system" {
+			systemId = attr.Val
+		}
+	}
+
+	publicIdLower := strings.ToLower(publicId)
+	systemIdLower := strings.ToLower(systemId)
+
+	// Per HTML spec, these conditions trigger quirks mode:
+	// 1. Force-quirks flag is set (not applicable for golang.org/x/net/html)
+	// 2. Name is not "html" (case-insensitive)
+	if name != "html" {
+		return QuirksMode
+	}
+
+	// 3. Public identifier is set to specific values (case-insensitive)
+	quirksPublicIds := []string{
+		"-//w3o//dtd w3 html strict 3.0//en//",
+		"-/w3c/dtd html 4.0 transitional/en",
+		"html",
+	}
+	for _, qid := range quirksPublicIds {
+		if publicIdLower == qid {
+			return QuirksMode
+		}
+	}
+
+	// 4. Public identifier starts with specific prefixes
+	quirksPublicIdPrefixes := []string{
+		"+//silmaril//dtd html pro v0r11 19970101//",
+		"-//as//dtd html 3.0 aswedit + extensions//",
+		"-//advasoft ltd//dtd html 3.0 aswedit + extensions//",
+		"-//ietf//dtd html 2.0 level 1//",
+		"-//ietf//dtd html 2.0 level 2//",
+		"-//ietf//dtd html 2.0 strict level 1//",
+		"-//ietf//dtd html 2.0 strict level 2//",
+		"-//ietf//dtd html 2.0 strict//",
+		"-//ietf//dtd html 2.0//",
+		"-//ietf//dtd html 2.1e//",
+		"-//ietf//dtd html 3.0//",
+		"-//ietf//dtd html 3.2 final//",
+		"-//ietf//dtd html 3.2//",
+		"-//ietf//dtd html 3//",
+		"-//ietf//dtd html level 0//",
+		"-//ietf//dtd html level 1//",
+		"-//ietf//dtd html level 2//",
+		"-//ietf//dtd html level 3//",
+		"-//ietf//dtd html strict level 0//",
+		"-//ietf//dtd html strict level 1//",
+		"-//ietf//dtd html strict level 2//",
+		"-//ietf//dtd html strict level 3//",
+		"-//ietf//dtd html strict//",
+		"-//ietf//dtd html//",
+		"-//metrius//dtd metrius presentational//",
+		"-//microsoft//dtd internet explorer 2.0 html strict//",
+		"-//microsoft//dtd internet explorer 2.0 html//",
+		"-//microsoft//dtd internet explorer 2.0 tables//",
+		"-//microsoft//dtd internet explorer 3.0 html strict//",
+		"-//microsoft//dtd internet explorer 3.0 html//",
+		"-//microsoft//dtd internet explorer 3.0 tables//",
+		"-//netscape comm. corp.//dtd html//",
+		"-//netscape comm. corp.//dtd strict html//",
+		"-//o'reilly and associates//dtd html 2.0//",
+		"-//o'reilly and associates//dtd html extended 1.0//",
+		"-//o'reilly and associates//dtd html extended relaxed 1.0//",
+		"-//sq//dtd html 2.0 hotmetal + extensions//",
+		"-//softquad software//dtd hotmetal pro 6.0::19990601::extensions to html 4.0//",
+		"-//softquad//dtd hotmetal pro 4.0::19971010::extensions to html 4.0//",
+		"-//spyglass//dtd html 2.0 extended//",
+		"-//sun microsystems corp.//dtd hotjava html//",
+		"-//sun microsystems corp.//dtd hotjava strict html//",
+		"-//w3c//dtd html 3 1995-03-24//",
+		"-//w3c//dtd html 3.2 draft//",
+		"-//w3c//dtd html 3.2 final//",
+		"-//w3c//dtd html 3.2//",
+		"-//w3c//dtd html 3.2s draft//",
+		"-//w3c//dtd html 4.0 frameset//",
+		"-//w3c//dtd html 4.0 transitional//",
+		"-//w3c//dtd html experimental 19960712//",
+		"-//w3c//dtd html experimental 970421//",
+		"-//w3c//dtd w3 html//",
+		"-//w3o//dtd w3 html 3.0//",
+		"-//webtechs//dtd mozilla html 2.0//",
+		"-//webtechs//dtd mozilla html//",
+	}
+	for _, prefix := range quirksPublicIdPrefixes {
+		if strings.HasPrefix(publicIdLower, prefix) {
+			return QuirksMode
+		}
+	}
+
+	// 5. System identifier is missing and public identifier starts with specific prefixes
+	if systemId == "" {
+		missingSysIdQuirksPrefixes := []string{
+			"-//w3c//dtd html 4.01 frameset//",
+			"-//w3c//dtd html 4.01 transitional//",
+		}
+		for _, prefix := range missingSysIdQuirksPrefixes {
+			if strings.HasPrefix(publicIdLower, prefix) {
+				return QuirksMode
+			}
+		}
+	}
+
+	// 6. System identifier is specific value
+	if systemIdLower == "http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd" {
+		return QuirksMode
+	}
+
+	// Check for limited-quirks mode
+	// Public identifier starts with specific prefixes
+	limitedQuirksPrefixes := []string{
+		"-//w3c//dtd xhtml 1.0 frameset//",
+		"-//w3c//dtd xhtml 1.0 transitional//",
+	}
+	for _, prefix := range limitedQuirksPrefixes {
+		if strings.HasPrefix(publicIdLower, prefix) {
+			return LimitedQuirksMode
+		}
+	}
+
+	// System identifier is not missing and public identifier starts with specific prefixes
+	if systemId != "" {
+		sysIdLimitedQuirksPrefixes := []string{
+			"-//w3c//dtd html 4.01 frameset//",
+			"-//w3c//dtd html 4.01 transitional//",
+		}
+		for _, prefix := range sysIdLimitedQuirksPrefixes {
+			if strings.HasPrefix(publicIdLower, prefix) {
+				return LimitedQuirksMode
+			}
+		}
+	}
+
+	// Default: no-quirks mode
+	return NoQuirksMode
 }
 
 // SVG and MathML namespace URIs

@@ -105,6 +105,30 @@ type InputData struct {
 	value string
 }
 
+// DocumentMode represents the document rendering mode (quirks, limited-quirks, or no-quirks).
+type DocumentMode int
+
+const (
+	// NoQuirksMode is the standard rendering mode (CSS1Compat).
+	NoQuirksMode DocumentMode = iota
+	// LimitedQuirksMode is almost-standards mode (CSS1Compat).
+	LimitedQuirksMode
+	// QuirksMode is backwards-compatible rendering mode (BackCompat).
+	QuirksMode
+)
+
+// DocumentReadyState represents the document loading state.
+type DocumentReadyState string
+
+const (
+	// ReadyStateLoading means the document is still loading.
+	ReadyStateLoading DocumentReadyState = "loading"
+	// ReadyStateInteractive means parsing is done but subresources are loading.
+	ReadyStateInteractive DocumentReadyState = "interactive"
+	// ReadyStateComplete means the document has fully loaded.
+	ReadyStateComplete DocumentReadyState = "complete"
+)
+
 // documentData holds data specific to Document nodes.
 type documentData struct {
 	doctype         *Node              // DocumentType node
@@ -115,6 +139,12 @@ type documentData struct {
 	characterSet    string             // The document's character encoding (defaults to "UTF-8")
 	selection       *Selection         // The document's Selection object
 	nodeIterators   []*NodeIterator    // Active NodeIterators for pre-removal steps
+
+	// Document metadata
+	mode         DocumentMode       // The document's rendering mode (quirks/limited-quirks/no-quirks)
+	readyState   DocumentReadyState // The document's ready state
+	lastModified string             // Last modified timestamp (MM/DD/YYYY hh:mm:ss format)
+	cookie       string             // Document cookies
 
 	// Cached HTMLCollections for document properties
 	// These must be cached to ensure document.forms === document.forms, etc.
