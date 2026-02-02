@@ -78,6 +78,10 @@ type elementData struct {
 	id               string
 	className        string
 
+	// CSSStyleSheet for <style> and <link rel="stylesheet"> elements
+	// Stored as interface{} to avoid circular dependency with css package
+	sheet interface{}
+
 	// Layout geometry - set during layout computation
 	geometry *ElementGeometry
 

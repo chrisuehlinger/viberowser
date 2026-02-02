@@ -4479,9 +4479,14 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		b.bindAreaProperties(jsEl, el)
 	}
 
-	// Add link-specific properties (relList)
+	// Add link-specific properties (relList, sheet)
 	if el.LocalName() == "link" && ns == dom.HTMLNamespace {
 		b.bindLinkProperties(jsEl, el)
+	}
+
+	// Add style-specific properties (sheet)
+	if el.LocalName() == "style" && ns == dom.HTMLNamespace {
+		b.bindStyleElementProperties(jsEl, el)
 	}
 
 	// Add input-specific properties (type, checked, disabled, value, etc.)
@@ -4670,6 +4675,94 @@ func (b *DOMBinder) bindLinkProperties(jsEl *goja.Object, el *dom.Element) {
 		// Per spec, assigning to sizes sets the sizes attribute value
 		if len(call.Arguments) > 0 {
 			el.SetAttribute("sizes", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// sheet property - CSSStyleSheet for the linked stylesheet
+	jsEl.DefineAccessorProperty("sheet", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		sheet := el.Sheet()
+		if sheet == nil {
+			// Check if this is a stylesheet link and create the sheet
+			rel := el.GetAttribute("rel")
+			if strings.Contains(strings.ToLower(rel), "stylesheet") {
+				// Sheet should be created when the stylesheet is loaded
+				// For now, return null if not loaded
+				return goja.Null()
+			}
+			return goja.Null()
+		}
+		if cssSheet, ok := sheet.(*css.CSSStyleSheet); ok {
+			return b.BindCSSStyleSheet(cssSheet)
+		}
+		return goja.Null()
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+}
+
+// bindStyleElementProperties adds HTMLStyleElement-specific properties.
+func (b *DOMBinder) bindStyleElementProperties(jsEl *goja.Object, el *dom.Element) {
+	vm := b.runtime.vm
+
+	// sheet property - CSSStyleSheet for the style element
+	jsEl.DefineAccessorProperty("sheet", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Get or create the stylesheet
+		sheet := el.Sheet()
+		if sheet == nil {
+			// Create the stylesheet from the element's text content
+			cssText := el.TextContent()
+			newSheet := css.NewCSSStyleSheet(cssText, el)
+			el.SetSheet(newSheet)
+			return b.BindCSSStyleSheet(newSheet)
+		}
+		if cssSheet, ok := sheet.(*css.CSSStyleSheet); ok {
+			return b.BindCSSStyleSheet(cssSheet)
+		}
+		return goja.Null()
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// media property - reflects the media attribute
+	jsEl.DefineAccessorProperty("media", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.GetAttribute("media"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("media", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// type property - reflects the type attribute
+	jsEl.DefineAccessorProperty("type", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.GetAttribute("type"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("type", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// disabled property
+	jsEl.DefineAccessorProperty("disabled", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		sheet := el.Sheet()
+		if sheet == nil {
+			return vm.ToValue(false)
+		}
+		if cssSheet, ok := sheet.(*css.CSSStyleSheet); ok {
+			return vm.ToValue(cssSheet.Disabled())
+		}
+		return vm.ToValue(false)
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			disabled := call.Arguments[0].ToBoolean()
+			sheet := el.Sheet()
+			if sheet == nil {
+				// Create the sheet first
+				cssText := el.TextContent()
+				newSheet := css.NewCSSStyleSheet(cssText, el)
+				el.SetSheet(newSheet)
+				newSheet.SetDisabled(disabled)
+			} else if cssSheet, ok := sheet.(*css.CSSStyleSheet); ok {
+				cssSheet.SetDisabled(disabled)
+			}
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
@@ -11882,4 +11975,827 @@ func (b *DOMBinder) getGoElement(obj *goja.Object) *dom.Element {
 		return el
 	}
 	return nil
+}
+
+// BindCSSStyleSheet creates a JavaScript CSSStyleSheet object.
+func (b *DOMBinder) BindCSSStyleSheet(sheet *css.CSSStyleSheet) *goja.Object {
+	if sheet == nil {
+		return nil
+	}
+
+	vm := b.runtime.vm
+	jsSheet := vm.NewObject()
+
+	// Store reference to the Go object
+	jsSheet.Set("_goStyleSheet", sheet)
+
+	// type property (always "text/css")
+	jsSheet.DefineAccessorProperty("type", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(sheet.Type())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// href property
+	jsSheet.DefineAccessorProperty("href", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		href := sheet.Href()
+		if href == "" {
+			return goja.Null()
+		}
+		return vm.ToValue(href)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// ownerNode property
+	jsSheet.DefineAccessorProperty("ownerNode", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		ownerNode := sheet.OwnerNode()
+		if ownerNode == nil {
+			return goja.Null()
+		}
+		if el, ok := ownerNode.(*dom.Element); ok {
+			return b.BindElement(el)
+		}
+		return goja.Null()
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// parentStyleSheet property
+	jsSheet.DefineAccessorProperty("parentStyleSheet", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		parent := sheet.ParentStyleSheet()
+		if parent == nil {
+			return goja.Null()
+		}
+		return b.BindCSSStyleSheet(parent)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// title property
+	jsSheet.DefineAccessorProperty("title", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		title := sheet.Title()
+		if title == "" {
+			return goja.Null()
+		}
+		return vm.ToValue(title)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// media property (MediaList)
+	jsSheet.DefineAccessorProperty("media", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindMediaList(sheet.Media())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// disabled property
+	jsSheet.DefineAccessorProperty("disabled", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(sheet.Disabled())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			sheet.SetDisabled(call.Arguments[0].ToBoolean())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// ownerRule property
+	jsSheet.DefineAccessorProperty("ownerRule", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		ownerRule := sheet.OwnerRule()
+		if ownerRule == nil {
+			return goja.Null()
+		}
+		return b.BindCSSRule(ownerRule)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// cssRules property (CSSRuleList)
+	jsSheet.DefineAccessorProperty("cssRules", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindCSSRuleList(sheet.CSSRules())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// rules property (legacy alias for cssRules)
+	jsSheet.DefineAccessorProperty("rules", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindCSSRuleList(sheet.CSSRules())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// insertRule(rule, index) method
+	jsSheet.Set("insertRule", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'insertRule' on 'CSSStyleSheet': 1 argument required"))
+		}
+		ruleText := call.Arguments[0].String()
+		index := 0
+		if len(call.Arguments) > 1 {
+			index = int(call.Arguments[1].ToInteger())
+		}
+		idx, err := sheet.InsertRule(ruleText, index)
+		if err != nil {
+			if strings.Contains(err.Error(), "SyntaxError") {
+				panic(vm.NewGoError(err))
+			}
+			if strings.Contains(err.Error(), "IndexSizeError") {
+				panic(vm.NewGoError(err))
+			}
+			panic(vm.NewGoError(err))
+		}
+		return vm.ToValue(idx)
+	})
+
+	// deleteRule(index) method
+	jsSheet.Set("deleteRule", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'deleteRule' on 'CSSStyleSheet': 1 argument required"))
+		}
+		index := int(call.Arguments[0].ToInteger())
+		err := sheet.DeleteRule(index)
+		if err != nil {
+			panic(vm.NewGoError(err))
+		}
+		return goja.Undefined()
+	})
+
+	// addRule(selector, style, index) method (legacy)
+	jsSheet.Set("addRule", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return vm.ToValue(-1)
+		}
+		selector := call.Arguments[0].String()
+		style := ""
+		if len(call.Arguments) > 1 {
+			style = call.Arguments[1].String()
+		}
+		index := sheet.CSSRules().Length()
+		if len(call.Arguments) > 2 {
+			index = int(call.Arguments[2].ToInteger())
+		}
+		ruleText := selector + " { " + style + " }"
+		idx, err := sheet.InsertRule(ruleText, index)
+		if err != nil {
+			return vm.ToValue(-1)
+		}
+		return vm.ToValue(idx)
+	})
+
+	// removeRule(index) method (legacy)
+	jsSheet.Set("removeRule", func(call goja.FunctionCall) goja.Value {
+		index := 0
+		if len(call.Arguments) > 0 {
+			index = int(call.Arguments[0].ToInteger())
+		}
+		sheet.DeleteRule(index)
+		return goja.Undefined()
+	})
+
+	return jsSheet
+}
+
+// BindCSSRuleList creates a JavaScript CSSRuleList object.
+func (b *DOMBinder) BindCSSRuleList(list *css.CSSRuleList) *goja.Object {
+	if list == nil {
+		return nil
+	}
+
+	vm := b.runtime.vm
+	jsRuleList := vm.NewObject()
+
+	// Store reference to the Go object
+	jsRuleList.Set("_goCSSRuleList", list)
+
+	// length property
+	jsRuleList.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(list.Length())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// item(index) method
+	jsRuleList.Set("item", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		index := int(call.Arguments[0].ToInteger())
+		rule := list.Item(index)
+		if rule == nil {
+			return goja.Null()
+		}
+		return b.BindCSSRule(rule)
+	})
+
+	// Array-like indexed access
+	for i := 0; i < list.Length(); i++ {
+		index := i
+		jsRuleList.DefineAccessorProperty(fmt.Sprintf("%d", i), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			rule := list.Item(index)
+			if rule == nil {
+				return goja.Undefined()
+			}
+			return b.BindCSSRule(rule)
+		}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	}
+
+	return jsRuleList
+}
+
+// BindCSSRule creates a JavaScript CSSRule object for any rule type.
+func (b *DOMBinder) BindCSSRule(rule css.CSSRuleInterface) *goja.Object {
+	if rule == nil {
+		return nil
+	}
+
+	vm := b.runtime.vm
+
+	// Create type-specific binding
+	switch r := rule.(type) {
+	case *css.CSSStyleRule:
+		return b.BindCSSStyleRule(r)
+	case *css.CSSMediaRule:
+		return b.BindCSSMediaRule(r)
+	case *css.CSSKeyframesRule:
+		return b.BindCSSKeyframesRule(r)
+	case *css.CSSKeyframeRule:
+		return b.BindCSSKeyframeRule(r)
+	case *css.CSSFontFaceRule:
+		return b.BindCSSFontFaceRule(r)
+	case *css.CSSImportRule:
+		return b.BindCSSImportRule(r)
+	case *css.CSSNamespaceRule:
+		return b.BindCSSNamespaceRule(r)
+	case *css.CSSSupportsRule:
+		return b.BindCSSSupportsRule(r)
+	default:
+		// Generic rule binding
+		jsRule := vm.NewObject()
+		jsRule.Set("_goCSSRule", rule)
+		b.bindBaseCSSRuleProperties(jsRule, rule)
+		return jsRule
+	}
+}
+
+// bindBaseCSSRuleProperties adds common CSSRule properties to a JavaScript object.
+func (b *DOMBinder) bindBaseCSSRuleProperties(jsRule *goja.Object, rule css.CSSRuleInterface) {
+	vm := b.runtime.vm
+
+	// type property
+	jsRule.DefineAccessorProperty("type", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(int(rule.Type()))
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// cssText property
+	jsRule.DefineAccessorProperty("cssText", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(rule.CSSText())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Setting cssText is generally read-only for most rule types
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// parentStyleSheet property
+	jsRule.DefineAccessorProperty("parentStyleSheet", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		parent := rule.ParentStyleSheet()
+		if parent == nil {
+			return goja.Null()
+		}
+		return b.BindCSSStyleSheet(parent)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// parentRule property
+	jsRule.DefineAccessorProperty("parentRule", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		parent := rule.ParentRule()
+		if parent == nil {
+			return goja.Null()
+		}
+		return b.BindCSSRule(parent)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// Constants for rule types
+	jsRule.Set("STYLE_RULE", int(css.StyleRule))
+	jsRule.Set("CHARSET_RULE", int(css.CharsetRule))
+	jsRule.Set("IMPORT_RULE", int(css.ImportRule))
+	jsRule.Set("MEDIA_RULE", int(css.MediaRule))
+	jsRule.Set("FONT_FACE_RULE", int(css.FontFaceRule))
+	jsRule.Set("PAGE_RULE", int(css.PageRule))
+	jsRule.Set("KEYFRAMES_RULE", int(css.KeyframesRule))
+	jsRule.Set("KEYFRAME_RULE", int(css.KeyframeRule))
+	jsRule.Set("NAMESPACE_RULE", int(css.NamespaceRule))
+	jsRule.Set("SUPPORTS_RULE", int(css.SupportsRule))
+}
+
+// BindCSSStyleRule creates a JavaScript CSSStyleRule object.
+func (b *DOMBinder) BindCSSStyleRule(rule *css.CSSStyleRule) *goja.Object {
+	if rule == nil {
+		return nil
+	}
+
+	vm := b.runtime.vm
+	jsRule := vm.NewObject()
+	jsRule.Set("_goCSSRule", rule)
+
+	b.bindBaseCSSRuleProperties(jsRule, rule)
+
+	// selectorText property
+	jsRule.DefineAccessorProperty("selectorText", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(rule.SelectorText())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			rule.SetSelectorText(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// style property (CSSStyleDeclaration)
+	jsRule.DefineAccessorProperty("style", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindCSSRuleStyleDeclaration(rule.Style())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	return jsRule
+}
+
+// BindCSSRuleStyleDeclaration creates a JavaScript CSSStyleDeclaration for a rule.
+func (b *DOMBinder) BindCSSRuleStyleDeclaration(sd *css.CSSRuleStyleDeclaration) *goja.Object {
+	if sd == nil {
+		return nil
+	}
+
+	vm := b.runtime.vm
+	jsSD := vm.NewObject()
+
+	// cssText property
+	jsSD.DefineAccessorProperty("cssText", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(sd.CSSText())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			sd.SetCSSText(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// length property
+	jsSD.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(sd.Length())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// parentRule property
+	jsSD.DefineAccessorProperty("parentRule", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		parent := sd.ParentRule()
+		if parent == nil {
+			return goja.Null()
+		}
+		return b.BindCSSRule(parent)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// item(index) method
+	jsSD.Set("item", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return vm.ToValue("")
+		}
+		index := int(call.Arguments[0].ToInteger())
+		return vm.ToValue(sd.Item(index))
+	})
+
+	// getPropertyValue(property) method
+	jsSD.Set("getPropertyValue", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return vm.ToValue("")
+		}
+		property := call.Arguments[0].String()
+		return vm.ToValue(sd.GetPropertyValue(property))
+	})
+
+	// getPropertyPriority(property) method
+	jsSD.Set("getPropertyPriority", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return vm.ToValue("")
+		}
+		property := call.Arguments[0].String()
+		return vm.ToValue(sd.GetPropertyPriority(property))
+	})
+
+	// setProperty(property, value, priority) method
+	jsSD.Set("setProperty", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			return goja.Undefined()
+		}
+		property := call.Arguments[0].String()
+		value := call.Arguments[1].String()
+		priority := ""
+		if len(call.Arguments) > 2 {
+			priority = call.Arguments[2].String()
+		}
+		sd.SetProperty(property, value, priority)
+		return goja.Undefined()
+	})
+
+	// removeProperty(property) method
+	jsSD.Set("removeProperty", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return vm.ToValue("")
+		}
+		property := call.Arguments[0].String()
+		return vm.ToValue(sd.RemoveProperty(property))
+	})
+
+	// Set up camelCase property access
+	b.setupRuleStylePropertyProxy(jsSD, sd)
+
+	return jsSD
+}
+
+// setupRuleStylePropertyProxy sets up dynamic property access for CSS rule style declarations.
+func (b *DOMBinder) setupRuleStylePropertyProxy(jsSD *goja.Object, sd *css.CSSRuleStyleDeclaration) {
+	vm := b.runtime.vm
+
+	// Common CSS properties to expose as camelCase
+	cssProperties := []string{
+		"alignContent", "alignItems", "alignSelf", "animation", "animationDelay",
+		"animationDirection", "animationDuration", "animationFillMode", "animationIterationCount",
+		"animationName", "animationPlayState", "animationTimingFunction",
+		"background", "backgroundAttachment", "backgroundClip", "backgroundColor",
+		"backgroundImage", "backgroundOrigin", "backgroundPosition", "backgroundRepeat",
+		"backgroundSize", "border", "borderBottom", "borderBottomColor", "borderBottomLeftRadius",
+		"borderBottomRightRadius", "borderBottomStyle", "borderBottomWidth", "borderCollapse",
+		"borderColor", "borderImage", "borderLeft", "borderLeftColor", "borderLeftStyle",
+		"borderLeftWidth", "borderRadius", "borderRight", "borderRightColor", "borderRightStyle",
+		"borderRightWidth", "borderSpacing", "borderStyle", "borderTop", "borderTopColor",
+		"borderTopLeftRadius", "borderTopRightRadius", "borderTopStyle", "borderTopWidth",
+		"borderWidth", "bottom", "boxShadow", "boxSizing", "captionSide", "clear",
+		"clip", "color", "columnCount", "columnFill", "columnGap", "columnRule",
+		"columnRuleColor", "columnRuleStyle", "columnRuleWidth", "columns", "columnSpan",
+		"columnWidth", "content", "counterIncrement", "counterReset", "cursor", "direction",
+		"display", "emptyCells", "flex", "flexBasis", "flexDirection", "flexFlow",
+		"flexGrow", "flexShrink", "flexWrap", "float", "font", "fontFamily",
+		"fontSize", "fontSizeAdjust", "fontStretch", "fontStyle", "fontVariant",
+		"fontWeight", "height", "justifyContent", "left", "letterSpacing", "lineHeight",
+		"listStyle", "listStyleImage", "listStylePosition", "listStyleType", "margin",
+		"marginBottom", "marginLeft", "marginRight", "marginTop", "maxHeight", "maxWidth",
+		"minHeight", "minWidth", "opacity", "order", "orphans", "outline", "outlineColor",
+		"outlineOffset", "outlineStyle", "outlineWidth", "overflow", "overflowX", "overflowY",
+		"padding", "paddingBottom", "paddingLeft", "paddingRight", "paddingTop",
+		"position", "right", "textAlign", "textDecoration", "textIndent", "textTransform",
+		"top", "transform", "transformOrigin", "transition", "transitionDelay",
+		"transitionDuration", "transitionProperty", "transitionTimingFunction",
+		"verticalAlign", "visibility", "whiteSpace", "width", "wordSpacing", "zIndex",
+	}
+
+	camelToKebab := func(name string) string {
+		var result strings.Builder
+		for i, r := range name {
+			if r >= 'A' && r <= 'Z' {
+				if i > 0 {
+					result.WriteByte('-')
+				}
+				result.WriteByte(byte(r - 'A' + 'a'))
+			} else {
+				result.WriteRune(r)
+			}
+		}
+		return result.String()
+	}
+
+	for _, prop := range cssProperties {
+		kebabProp := camelToKebab(prop)
+		localProp := prop
+		localKebab := kebabProp
+
+		jsSD.DefineAccessorProperty(localProp, vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			return vm.ToValue(sd.GetPropertyValue(localKebab))
+		}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			if len(call.Arguments) > 0 {
+				sd.SetProperty(localKebab, call.Arguments[0].String())
+			}
+			return goja.Undefined()
+		}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+	}
+}
+
+// BindCSSMediaRule creates a JavaScript CSSMediaRule object.
+func (b *DOMBinder) BindCSSMediaRule(rule *css.CSSMediaRule) *goja.Object {
+	if rule == nil {
+		return nil
+	}
+
+	vm := b.runtime.vm
+	jsRule := vm.NewObject()
+	jsRule.Set("_goCSSRule", rule)
+
+	b.bindBaseCSSRuleProperties(jsRule, rule)
+
+	// media property (MediaList)
+	jsRule.DefineAccessorProperty("media", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindMediaList(rule.Media())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// cssRules property (CSSRuleList)
+	jsRule.DefineAccessorProperty("cssRules", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindCSSRuleList(rule.CSSRules())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// conditionText property
+	jsRule.DefineAccessorProperty("conditionText", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(rule.ConditionText())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// insertRule method
+	jsRule.Set("insertRule", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Undefined()
+		}
+		ruleText := call.Arguments[0].String()
+		index := rule.CSSRules().Length()
+		if len(call.Arguments) > 1 {
+			index = int(call.Arguments[1].ToInteger())
+		}
+		idx, _ := rule.InsertRule(ruleText, index)
+		return vm.ToValue(idx)
+	})
+
+	// deleteRule method
+	jsRule.Set("deleteRule", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Undefined()
+		}
+		index := int(call.Arguments[0].ToInteger())
+		rule.DeleteRule(index)
+		return goja.Undefined()
+	})
+
+	return jsRule
+}
+
+// BindCSSKeyframesRule creates a JavaScript CSSKeyframesRule object.
+func (b *DOMBinder) BindCSSKeyframesRule(rule *css.CSSKeyframesRule) *goja.Object {
+	if rule == nil {
+		return nil
+	}
+
+	vm := b.runtime.vm
+	jsRule := vm.NewObject()
+	jsRule.Set("_goCSSRule", rule)
+
+	b.bindBaseCSSRuleProperties(jsRule, rule)
+
+	// name property
+	jsRule.DefineAccessorProperty("name", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(rule.Name())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			rule.SetName(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// cssRules property
+	jsRule.DefineAccessorProperty("cssRules", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindCSSRuleList(rule.CSSRules())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// appendRule method
+	jsRule.Set("appendRule", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Undefined()
+		}
+		ruleText := call.Arguments[0].String()
+		rule.AppendRule(ruleText)
+		return goja.Undefined()
+	})
+
+	// deleteRule method
+	jsRule.Set("deleteRule", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Undefined()
+		}
+		key := call.Arguments[0].String()
+		rule.DeleteRule(key)
+		return goja.Undefined()
+	})
+
+	// findRule method
+	jsRule.Set("findRule", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		key := call.Arguments[0].String()
+		kf := rule.FindRule(key)
+		if kf == nil {
+			return goja.Null()
+		}
+		return b.BindCSSKeyframeRule(kf)
+	})
+
+	return jsRule
+}
+
+// BindCSSKeyframeRule creates a JavaScript CSSKeyframeRule object.
+func (b *DOMBinder) BindCSSKeyframeRule(rule *css.CSSKeyframeRule) *goja.Object {
+	if rule == nil {
+		return nil
+	}
+
+	vm := b.runtime.vm
+	jsRule := vm.NewObject()
+	jsRule.Set("_goCSSRule", rule)
+
+	b.bindBaseCSSRuleProperties(jsRule, rule)
+
+	// keyText property
+	jsRule.DefineAccessorProperty("keyText", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(rule.KeyText())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			rule.SetKeyText(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// style property
+	jsRule.DefineAccessorProperty("style", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindCSSRuleStyleDeclaration(rule.Style())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	return jsRule
+}
+
+// BindCSSFontFaceRule creates a JavaScript CSSFontFaceRule object.
+func (b *DOMBinder) BindCSSFontFaceRule(rule *css.CSSFontFaceRule) *goja.Object {
+	if rule == nil {
+		return nil
+	}
+
+	vm := b.runtime.vm
+	jsRule := vm.NewObject()
+	jsRule.Set("_goCSSRule", rule)
+
+	b.bindBaseCSSRuleProperties(jsRule, rule)
+
+	// style property
+	jsRule.DefineAccessorProperty("style", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindCSSRuleStyleDeclaration(rule.Style())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	return jsRule
+}
+
+// BindCSSImportRule creates a JavaScript CSSImportRule object.
+func (b *DOMBinder) BindCSSImportRule(rule *css.CSSImportRule) *goja.Object {
+	if rule == nil {
+		return nil
+	}
+
+	vm := b.runtime.vm
+	jsRule := vm.NewObject()
+	jsRule.Set("_goCSSRule", rule)
+
+	b.bindBaseCSSRuleProperties(jsRule, rule)
+
+	// href property
+	jsRule.DefineAccessorProperty("href", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(rule.Href())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// media property
+	jsRule.DefineAccessorProperty("media", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindMediaList(rule.Media())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// styleSheet property
+	jsRule.DefineAccessorProperty("styleSheet", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		sheet := rule.StyleSheet()
+		if sheet == nil {
+			return goja.Null()
+		}
+		return b.BindCSSStyleSheet(sheet)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	return jsRule
+}
+
+// BindCSSNamespaceRule creates a JavaScript CSSNamespaceRule object.
+func (b *DOMBinder) BindCSSNamespaceRule(rule *css.CSSNamespaceRule) *goja.Object {
+	if rule == nil {
+		return nil
+	}
+
+	vm := b.runtime.vm
+	jsRule := vm.NewObject()
+	jsRule.Set("_goCSSRule", rule)
+
+	b.bindBaseCSSRuleProperties(jsRule, rule)
+
+	// namespaceURI property
+	jsRule.DefineAccessorProperty("namespaceURI", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(rule.NamespaceURI())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// prefix property
+	jsRule.DefineAccessorProperty("prefix", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(rule.Prefix())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	return jsRule
+}
+
+// BindCSSSupportsRule creates a JavaScript CSSSupportsRule object.
+func (b *DOMBinder) BindCSSSupportsRule(rule *css.CSSSupportsRule) *goja.Object {
+	if rule == nil {
+		return nil
+	}
+
+	vm := b.runtime.vm
+	jsRule := vm.NewObject()
+	jsRule.Set("_goCSSRule", rule)
+
+	b.bindBaseCSSRuleProperties(jsRule, rule)
+
+	// conditionText property
+	jsRule.DefineAccessorProperty("conditionText", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(rule.ConditionText())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// cssRules property
+	jsRule.DefineAccessorProperty("cssRules", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindCSSRuleList(rule.CSSRules())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// insertRule method
+	jsRule.Set("insertRule", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Undefined()
+		}
+		ruleText := call.Arguments[0].String()
+		index := rule.CSSRules().Length()
+		if len(call.Arguments) > 1 {
+			index = int(call.Arguments[1].ToInteger())
+		}
+		idx, _ := rule.InsertRule(ruleText, index)
+		return vm.ToValue(idx)
+	})
+
+	// deleteRule method
+	jsRule.Set("deleteRule", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Undefined()
+		}
+		index := int(call.Arguments[0].ToInteger())
+		rule.DeleteRule(index)
+		return goja.Undefined()
+	})
+
+	return jsRule
+}
+
+// BindMediaList creates a JavaScript MediaList object.
+func (b *DOMBinder) BindMediaList(ml *css.MediaList) *goja.Object {
+	if ml == nil {
+		return nil
+	}
+
+	vm := b.runtime.vm
+	jsMl := vm.NewObject()
+
+	// mediaText property
+	jsMl.DefineAccessorProperty("mediaText", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(ml.MediaText())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			ml.SetMediaText(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// length property
+	jsMl.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(ml.Length())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// item(index) method
+	jsMl.Set("item", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Null()
+		}
+		index := int(call.Arguments[0].ToInteger())
+		item := ml.Item(index)
+		if item == "" {
+			return goja.Null()
+		}
+		return vm.ToValue(item)
+	})
+
+	// appendMedium(medium) method
+	jsMl.Set("appendMedium", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Undefined()
+		}
+		medium := call.Arguments[0].String()
+		ml.AppendMedium(medium)
+		return goja.Undefined()
+	})
+
+	// deleteMedium(medium) method
+	jsMl.Set("deleteMedium", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Undefined()
+		}
+		medium := call.Arguments[0].String()
+		ml.DeleteMedium(medium)
+		return goja.Undefined()
+	})
+
+	// Array-like indexed access
+	for i := 0; i < ml.Length(); i++ {
+		index := i
+		jsMl.DefineAccessorProperty(fmt.Sprintf("%d", i), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			item := ml.Item(index)
+			if item == "" {
+				return goja.Undefined()
+			}
+			return vm.ToValue(item)
+		}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	}
+
+	return jsMl
 }

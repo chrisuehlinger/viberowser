@@ -169,6 +169,25 @@ func (e *Element) HtmlFor() *DOMTokenList {
 	return e.AsNode().elementData.htmlFor
 }
 
+// Sheet returns the CSSStyleSheet associated with this element.
+// This is used for HTMLStyleElement and HTMLLinkElement.
+// Returns nil if no stylesheet is associated.
+func (e *Element) Sheet() interface{} {
+	if e.AsNode().elementData == nil {
+		return nil
+	}
+	return e.AsNode().elementData.sheet
+}
+
+// SetSheet sets the CSSStyleSheet associated with this element.
+// This is used for HTMLStyleElement and HTMLLinkElement.
+func (e *Element) SetSheet(sheet interface{}) {
+	if e.AsNode().elementData == nil {
+		e.AsNode().elementData = &elementData{}
+	}
+	e.AsNode().elementData.sheet = sheet
+}
+
 // Attributes returns the NamedNodeMap of attributes.
 func (e *Element) Attributes() *NamedNodeMap {
 	if e.AsNode().elementData == nil {
