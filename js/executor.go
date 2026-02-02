@@ -122,6 +122,89 @@ func NewScriptExecutor(runtime *Runtime) *ScriptExecutor {
 		return nil
 	})
 
+	// Set the related target retargeter for events like focus/blur.
+	// This implements the DOM spec "retarget" algorithm:
+	// https://dom.spec.whatwg.org/#retarget
+	// To retarget object A against object B:
+	// 1. Let rootA be A's root
+	// 2. If rootA is not a shadow root, or rootA is a shadow-including inclusive ancestor of B, return A
+	// 3. Set A to rootA's host
+	// 4. Repeat from step 1
+	eventBinder.SetRelatedTargetRetargeter(func(a *goja.Object, b *goja.Object) *goja.Object {
+		if a == nil || b == nil {
+			return a
+		}
+
+		// Get the Go nodes for A and B
+		goNodeA := domBinder.getGoNode(a)
+		goNodeB := domBinder.getGoNode(b)
+
+		if goNodeA == nil {
+			return a
+		}
+
+		// If B is not a DOM node (e.g., it's the window object), then B is in the
+		// "light DOM" scope and we need to retarget A all the way out of any shadow trees.
+		// This means we keep walking up through shadow hosts until we're in the light DOM.
+		if goNodeB == nil {
+			currentA := goNodeA
+			currentJsA := a
+			for {
+				rootA := currentA.GetRootNode()
+				if rootA == nil || !rootA.IsShadowRoot() {
+					return currentJsA
+				}
+				sr := rootA.GetShadowRoot()
+				if sr == nil {
+					return currentJsA
+				}
+				host := sr.Host()
+				if host == nil {
+					return currentJsA
+				}
+				currentA = host.AsNode()
+				currentJsA = domBinder.BindElement(host)
+			}
+		}
+
+		// Retarget algorithm: loop until we find the right target
+		currentA := goNodeA
+		currentJsA := a
+		for {
+			// Step 1: Get A's root
+			rootA := currentA.GetRootNode()
+			if rootA == nil {
+				return currentJsA
+			}
+
+			// Step 2: If rootA is not a shadow root, return A
+			if !rootA.IsShadowRoot() {
+				return currentJsA
+			}
+
+			// Check if rootA is a shadow-including inclusive ancestor of B
+			// This means we check if B or any of its shadow-including ancestors
+			// is inside the same shadow tree as rootA
+			if rootA.IsShadowIncludingAncestorOf(goNodeB) {
+				return currentJsA
+			}
+
+			// Step 3: Set A to rootA's host and repeat
+			sr := rootA.GetShadowRoot()
+			if sr == nil {
+				return currentJsA
+			}
+			host := sr.Host()
+			if host == nil {
+				return currentJsA
+			}
+
+			// Update A to be the host
+			currentA = host.AsNode()
+			currentJsA = domBinder.BindElement(host)
+		}
+	})
+
 	// Set activation handlers for click events on checkbox/radio inputs
 	// Per HTML spec, activation behavior runs BEFORE onclick fires
 	eventBinder.SetActivationHandlers(

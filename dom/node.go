@@ -1300,6 +1300,50 @@ func (n *Node) GetShadowRoot() *ShadowRoot {
 	return n.shadowRoot
 }
 
+// IsShadowIncludingAncestorOf checks if this node is a shadow-including ancestor of the given node.
+// A node A is a shadow-including ancestor of a node B if A is an ancestor of B,
+// or A's root is a shadow root and A's root's host is a shadow-including inclusive ancestor of B.
+// (Note: "shadow-including inclusive ancestor" includes the node itself.)
+// This is used for the DOM spec "retarget" algorithm.
+func (n *Node) IsShadowIncludingAncestorOf(other *Node) bool {
+	if other == nil {
+		return false
+	}
+	if n == other {
+		return true // inclusive ancestor
+	}
+
+	// First check if n is a direct ancestor of other in the same tree
+	current := other.parentNode
+	for current != nil {
+		if current == n {
+			return true
+		}
+		current = current.parentNode
+	}
+
+	// If not a direct ancestor, check shadow-including:
+	// Get other's root
+	otherRoot := other.GetRootNode()
+	if otherRoot == nil || !otherRoot.IsShadowRoot() {
+		// other is not in a shadow tree, so n can't be a shadow-including ancestor
+		return false
+	}
+
+	// Get the shadow root's host and recursively check
+	sr := otherRoot.GetShadowRoot()
+	if sr == nil {
+		return false
+	}
+	host := sr.Host()
+	if host == nil {
+		return false
+	}
+
+	// Check if n is a shadow-including inclusive ancestor of the host
+	return n.IsShadowIncludingAncestorOf(host.AsNode())
+}
+
 // CompareDocumentPosition returns a bitmask indicating the position of the given node relative to this node.
 func (n *Node) CompareDocumentPosition(other *Node) uint16 {
 	const (

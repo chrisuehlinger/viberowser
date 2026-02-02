@@ -417,6 +417,14 @@ type ShadowRootChecker func(obj *goja.Object) bool
 // Returns nil if the object is not a shadow root.
 type ShadowHostResolver func(obj *goja.Object) *goja.Object
 
+// RelatedTargetRetargeter is a function type that retargets an object against another object.
+// This implements the DOM spec "retarget" algorithm:
+// https://dom.spec.whatwg.org/#retarget
+// Given objects A and B, it returns the retargeted A against B.
+// If A is in a shadow tree that is a shadow-including ancestor of B, it returns A.
+// Otherwise, it returns the shadow host (walking up shadow boundaries as needed).
+type RelatedTargetRetargeter func(a *goja.Object, b *goja.Object) *goja.Object
+
 // ActivationResult holds the result of a pre-activation step.
 type ActivationResult struct {
 	Element          *goja.Object // The element with activation behavior
@@ -448,6 +456,7 @@ type EventBinder struct {
 	nodeResolver                NodeResolver            // Function to resolve parent nodes for event propagation
 	shadowRootChecker           ShadowRootChecker       // Function to check if a node is inside a shadow tree
 	shadowHostResolver          ShadowHostResolver      // Function to get shadow host from shadow root
+	relatedTargetRetargeter     RelatedTargetRetargeter // Function to retarget relatedTarget against currentTarget
 	activationHandler           ActivationHandler       // Handler for pre-click activation behavior
 	activationCancelHandler     ActivationCancelHandler // Handler for canceled activation
 	activationCompleteHandler   ActivationCompleteHandler // Handler for successful activation
@@ -479,6 +488,13 @@ func (eb *EventBinder) SetShadowRootChecker(checker ShadowRootChecker) {
 // This is used for composed events to propagate across shadow boundaries.
 func (eb *EventBinder) SetShadowHostResolver(resolver ShadowHostResolver) {
 	eb.shadowHostResolver = resolver
+}
+
+// SetRelatedTargetRetargeter sets the function used to retarget relatedTarget.
+// This implements the DOM spec "retarget" algorithm for events like focus/blur
+// that have a relatedTarget which should not leak shadow DOM internals.
+func (eb *EventBinder) SetRelatedTargetRetargeter(retargeter RelatedTargetRetargeter) {
+	eb.relatedTargetRetargeter = retargeter
 }
 
 // SetActivationHandlers sets the handlers for activation behavior.
@@ -765,6 +781,33 @@ func (eb *EventBinder) BindEventTarget(obj *goja.Object) {
 			activationResult = eb.activationHandler(eventPath, event)
 		}
 
+		// Get the original relatedTarget (if any) for retargeting during dispatch
+		// Per DOM spec, relatedTarget must be retargeted against each currentTarget
+		// to prevent leaking shadow DOM internals.
+		originalRelatedTarget := event.Get("relatedTarget")
+		hasRelatedTarget := originalRelatedTarget != nil && !goja.IsUndefined(originalRelatedTarget) && !goja.IsNull(originalRelatedTarget)
+		var originalRelatedTargetObj *goja.Object
+		if hasRelatedTarget {
+			originalRelatedTargetObj = originalRelatedTarget.ToObject(vm)
+		}
+
+
+		// Helper to set retargeted relatedTarget for a given currentTarget
+		setRetargetedRelatedTarget := func(currentTarget *goja.Object) {
+			if !hasRelatedTarget {
+				return
+			}
+			if eb.relatedTargetRetargeter == nil {
+				return
+			}
+			retargeted := eb.relatedTargetRetargeter(originalRelatedTargetObj, currentTarget)
+			if retargeted != nil {
+				event.Set("relatedTarget", retargeted)
+			} else {
+				event.Set("relatedTarget", goja.Null())
+			}
+		}
+
 		// Phase 1: Capturing phase (root to target, excluding target)
 		// Walk from the end of eventPath (root) to the beginning (target)
 		for i := len(eventPath) - 1; i > 0; i-- {
@@ -775,6 +818,7 @@ func (eb *EventBinder) BindEventTarget(obj *goja.Object) {
 			event.Set("currentTarget", currentTarget)
 			event.Set("eventPhase", int(EventPhaseCapturing))
 			setWindowEvent(currentTarget)
+			setRetargetedRelatedTarget(currentTarget)
 			target := eb.GetOrCreateTarget(currentTarget)
 			target.DispatchEvent(vm, event, EventPhaseCapturing)
 		}
@@ -784,6 +828,7 @@ func (eb *EventBinder) BindEventTarget(obj *goja.Object) {
 			event.Set("currentTarget", obj)
 			event.Set("eventPhase", int(EventPhaseAtTarget))
 			setWindowEvent(obj)
+			setRetargetedRelatedTarget(obj)
 			target := eb.GetOrCreateTarget(obj)
 			target.DispatchEvent(vm, event, EventPhaseAtTarget)
 		}
@@ -798,6 +843,7 @@ func (eb *EventBinder) BindEventTarget(obj *goja.Object) {
 				event.Set("currentTarget", currentTarget)
 				event.Set("eventPhase", int(EventPhaseBubbling))
 				setWindowEvent(currentTarget)
+				setRetargetedRelatedTarget(currentTarget)
 				target := eb.GetOrCreateTarget(currentTarget)
 				target.DispatchEvent(vm, event, EventPhaseBubbling)
 			}
