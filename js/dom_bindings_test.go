@@ -1,6 +1,7 @@
 package js
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/chrisuehlinger/viberowser/dom"
@@ -515,6 +516,71 @@ func TestDOMBinderInnerHTML(t *testing.T) {
 	}
 	if result.ToInteger() != 2 {
 		t.Errorf("Expected 2, got %v", result.ToInteger())
+	}
+}
+
+func TestDOMBinderInsertAdjacentHTML(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body><div id="test">Content</div></body>
+</html>`)
+
+	binder.BindDocument(doc)
+
+	// Test insertAdjacentHTML with all positions
+	_, err := r.Execute(`
+		var div = document.getElementById('test');
+		div.insertAdjacentHTML('afterbegin', '<span>Start</span>');
+		div.insertAdjacentHTML('beforeend', '<em>End</em>');
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Check the resulting innerHTML
+	result, err := r.Execute("document.getElementById('test').innerHTML")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	expected := "<span>Start</span>Content<em>End</em>"
+	if result.String() != expected {
+		t.Errorf("Expected '%s', got '%s'", expected, result.String())
+	}
+
+	// Test beforebegin and afterend
+	_, err = r.Execute(`
+		var div = document.getElementById('test');
+		div.insertAdjacentHTML('beforebegin', '<p>Before</p>');
+		div.insertAdjacentHTML('afterend', '<b>After</b>');
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Check body innerHTML
+	result, err = r.Execute("document.body.innerHTML")
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	// Should have: <p>Before</p><div id="test">...</div><b>After</b>
+	bodyHTML := result.String()
+	if !strings.Contains(bodyHTML, "<p>Before</p>") {
+		t.Errorf("Expected <p>Before</p> in body, got: %s", bodyHTML)
+	}
+	if !strings.Contains(bodyHTML, "<b>After</b>") {
+		t.Errorf("Expected <b>After</b> in body, got: %s", bodyHTML)
+	}
+
+	// Test invalid position should throw error
+	_, err = r.Execute(`
+		document.getElementById('test').insertAdjacentHTML('invalid', '<span>Test</span>');
+	`)
+	if err == nil {
+		t.Error("Expected error for invalid position")
 	}
 }
 

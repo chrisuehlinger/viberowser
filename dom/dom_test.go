@@ -711,6 +711,61 @@ func TestElement_OuterHTML(t *testing.T) {
 	}
 }
 
+func TestElement_InsertAdjacentHTML(t *testing.T) {
+	doc := NewDocument()
+	body := doc.CreateElement("body")
+	doc.AsNode().AppendChild(body.AsNode())
+
+	// Create initial structure: <body><div id="target">Content</div></body>
+	div := doc.CreateElement("div")
+	div.SetAttribute("id", "target")
+	text := doc.CreateTextNode("Content")
+	div.AsNode().AppendChild(text)
+	body.AsNode().AppendChild(div.AsNode())
+
+	// Test beforebegin
+	err := div.InsertAdjacentHTML("beforebegin", "<p>Before</p>")
+	if err != nil {
+		t.Fatalf("InsertAdjacentHTML beforebegin failed: %v", err)
+	}
+	if body.AsNode().FirstChild().NodeName() != "P" {
+		t.Errorf("Expected P element before div, got %s", body.AsNode().FirstChild().NodeName())
+	}
+
+	// Test afterbegin
+	err = div.InsertAdjacentHTML("afterbegin", "<span>Start</span>")
+	if err != nil {
+		t.Fatalf("InsertAdjacentHTML afterbegin failed: %v", err)
+	}
+	if div.AsNode().FirstChild().NodeName() != "SPAN" {
+		t.Errorf("Expected SPAN element at start of div, got %s", div.AsNode().FirstChild().NodeName())
+	}
+
+	// Test beforeend
+	err = div.InsertAdjacentHTML("beforeend", "<em>End</em>")
+	if err != nil {
+		t.Fatalf("InsertAdjacentHTML beforeend failed: %v", err)
+	}
+	if div.AsNode().LastChild().NodeName() != "EM" {
+		t.Errorf("Expected EM element at end of div, got %s", div.AsNode().LastChild().NodeName())
+	}
+
+	// Test afterend
+	err = div.InsertAdjacentHTML("afterend", "<b>After</b>")
+	if err != nil {
+		t.Fatalf("InsertAdjacentHTML afterend failed: %v", err)
+	}
+	if div.AsNode().NextSibling().NodeName() != "B" {
+		t.Errorf("Expected B element after div, got %s", div.AsNode().NextSibling().NodeName())
+	}
+
+	// Test invalid position
+	err = div.InsertAdjacentHTML("invalid", "<span>Test</span>")
+	if err == nil {
+		t.Error("Expected error for invalid position")
+	}
+}
+
 func TestText_SplitText(t *testing.T) {
 	doc := NewDocument()
 	div := doc.CreateElement("div")

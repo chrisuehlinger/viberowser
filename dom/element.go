@@ -1162,6 +1162,80 @@ func (e *Element) InsertAdjacentText(position string, data string) error {
 	return err
 }
 
+// InsertAdjacentHTML parses the text as HTML and inserts the resulting nodes at the specified position.
+// Position can be: "beforebegin", "afterbegin", "beforeend", "afterend"
+// Reference: https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#dom-element-insertadjacenthtml
+func (e *Element) InsertAdjacentHTML(position string, text string) error {
+	// Normalize position to lowercase for case-insensitive comparison
+	pos := strings.ToLower(position)
+
+	// Validate position first
+	if pos != "beforebegin" && pos != "afterbegin" && pos != "beforeend" && pos != "afterend" {
+		return ErrSyntax("The value provided ('" + position + "') is not one of 'beforebegin', 'afterbegin', 'beforeend', or 'afterend'.")
+	}
+
+	// Determine the context element for parsing
+	var context *Element
+	switch pos {
+	case "beforebegin", "afterend":
+		// Use this element's parent as context
+		parent := e.AsNode().parentNode
+		if parent == nil {
+			// Per spec: throw NoModificationAllowedError if context is null
+			return ErrNoModificationAllowed("The element has no parent.")
+		}
+		// If parent is a document, use document element as context
+		if parent.nodeType == DocumentNode {
+			context = (*Element)(parent.firstChild) // document element
+			if context == nil {
+				// Fallback to body if no document element
+				context = e
+			}
+		} else {
+			context = (*Element)(parent)
+		}
+	case "afterbegin", "beforeend":
+		// Use this element as context
+		context = e
+	}
+
+	// Parse the HTML fragment
+	nodes, err := parseHTMLFragment(text, context)
+	if err != nil {
+		return err
+	}
+
+	// Insert each node at the appropriate position
+	switch pos {
+	case "beforebegin":
+		// Insert before this element
+		parent := e.AsNode().parentNode
+		for _, node := range nodes {
+			parent.InsertBeforeWithError(node, e.AsNode())
+		}
+	case "afterbegin":
+		// Insert as first children (in order)
+		firstChild := e.AsNode().firstChild
+		for _, node := range nodes {
+			e.AsNode().InsertBeforeWithError(node, firstChild)
+		}
+	case "beforeend":
+		// Insert as last children
+		for _, node := range nodes {
+			e.AsNode().AppendChildWithError(node)
+		}
+	case "afterend":
+		// Insert after this element
+		parent := e.AsNode().parentNode
+		nextSibling := e.AsNode().nextSibling
+		for _, node := range nodes {
+			parent.InsertBeforeWithError(node, nextSibling)
+		}
+	}
+
+	return nil
+}
+
 // insertAdjacentNode is the internal implementation for insertAdjacent* methods.
 // Returns (true, nil) if insertion happened, (false, nil) if insertion was skipped
 // (e.g., no parent for beforebegin/afterend), or (false, error) if an error occurred.

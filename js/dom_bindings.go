@@ -4193,6 +4193,23 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		return goja.Undefined()
 	})
 
+	// insertAdjacentHTML
+	jsEl.Set("insertAdjacentHTML", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			return goja.Undefined()
+		}
+		position := call.Arguments[0].String()
+		text := call.Arguments[1].String()
+		err := el.InsertAdjacentHTML(position, text)
+		if err != nil {
+			if domErr, ok := err.(*dom.DOMError); ok {
+				b.throwDOMError(b.runtime.vm, domErr)
+			}
+			panic(b.runtime.vm.NewGoError(err))
+		}
+		return goja.Undefined()
+	})
+
 	// Geometry methods
 	jsEl.Set("getBoundingClientRect", func(call goja.FunctionCall) goja.Value {
 		rect := el.GetBoundingClientRect()
