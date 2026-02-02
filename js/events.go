@@ -840,6 +840,150 @@ func (eb *EventBinder) BindEventTarget(obj *goja.Object) {
 	})
 }
 
+// InitEventObject initializes an existing object with Event properties and methods.
+// This is used by constructors to support ES6 class inheritance where call.This must be used.
+func (eb *EventBinder) InitEventObject(event *goja.Object, eventType string) {
+	vm := eb.runtime.vm
+
+	event.Set("type", eventType)
+	event.Set("target", goja.Null())
+	event.Set("currentTarget", goja.Null())
+	event.Set("eventPhase", int(EventPhaseNone))
+	event.Set("bubbles", false)
+	event.Set("cancelable", false)
+	event.Set("composed", false)
+	event.Set("defaultPrevented", false)
+	event.Set("isTrusted", false)
+	event.Set("timeStamp", float64(0))
+
+	// Internal flags
+	event.Set("_stopPropagation", false)
+	event.Set("_stopImmediate", false)
+	// Events created via constructor are initialized
+	event.Set("_initialized", true)
+	event.Set("_dispatch", false)
+
+	// Methods
+	event.Set("preventDefault", func(call goja.FunctionCall) goja.Value {
+		if event.Get("cancelable").ToBoolean() {
+			event.Set("defaultPrevented", true)
+		}
+		return goja.Undefined()
+	})
+
+	event.Set("stopPropagation", func(call goja.FunctionCall) goja.Value {
+		event.Set("_stopPropagation", true)
+		return goja.Undefined()
+	})
+
+	event.Set("stopImmediatePropagation", func(call goja.FunctionCall) goja.Value {
+		event.Set("_stopPropagation", true)
+		event.Set("_stopImmediate", true)
+		return goja.Undefined()
+	})
+
+	event.Set("composedPath", func(call goja.FunctionCall) goja.Value {
+		// Return the path of targets
+		return vm.ToValue([]interface{}{})
+	})
+
+	// cancelBubble - legacy property that maps to stop propagation flag
+	// Per DOM spec: getter returns stop propagation flag, setter can only set it to true
+	event.DefineAccessorProperty("cancelBubble",
+		vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			stopProp := event.Get("_stopPropagation")
+			if stopProp != nil {
+				return vm.ToValue(stopProp.ToBoolean())
+			}
+			return vm.ToValue(false)
+		}),
+		vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			if len(call.Arguments) > 0 && call.Arguments[0].ToBoolean() {
+				event.Set("_stopPropagation", true)
+			}
+			return goja.Undefined()
+		}),
+		goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// returnValue - legacy property that is the inverse of defaultPrevented
+	// Per DOM spec: getter returns !defaultPrevented, setter calls preventDefault() when set to false
+	event.DefineAccessorProperty("returnValue",
+		vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			defaultPrevented := event.Get("defaultPrevented")
+			if defaultPrevented != nil {
+				return vm.ToValue(!defaultPrevented.ToBoolean())
+			}
+			return vm.ToValue(true)
+		}),
+		vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			if len(call.Arguments) > 0 && !call.Arguments[0].ToBoolean() {
+				// Setting returnValue to false is equivalent to calling preventDefault()
+				if event.Get("cancelable").ToBoolean() {
+					event.Set("defaultPrevented", true)
+				}
+			}
+			return goja.Undefined()
+		}),
+		goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// srcElement - legacy alias for target per DOM spec
+	// getter returns event.target, setter is a no-op (read-only)
+	event.DefineAccessorProperty("srcElement",
+		vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			return event.Get("target")
+		}),
+		vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			return goja.Undefined()
+		}),
+		goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// initEvent(type, bubbles, cancelable) - legacy method
+	event.Set("initEvent", func(call goja.FunctionCall) goja.Value {
+		// Per DOM spec: If event's dispatch flag is set, terminate these steps
+		dispatchFlag := event.Get("_dispatch")
+		if dispatchFlag != nil && dispatchFlag.ToBoolean() {
+			return goja.Undefined()
+		}
+
+		// Per DOM spec, the type argument is required
+		if len(call.Arguments) < 1 {
+			panic(vm.NewTypeError("Failed to execute 'initEvent' on 'Event': 1 argument required, but only 0 present."))
+		}
+
+		// Get type argument
+		newType := call.Arguments[0].String()
+
+		// Get bubbles argument
+		bubbles := false
+		if len(call.Arguments) > 1 {
+			bubbles = call.Arguments[1].ToBoolean()
+		}
+
+		// Get cancelable argument
+		cancelable := false
+		if len(call.Arguments) > 2 {
+			cancelable = call.Arguments[2].ToBoolean()
+		}
+
+		// Set the initialized flag
+		event.Set("_initialized", true)
+		event.Set("_stopPropagation", false)
+		event.Set("_stopImmediate", false)
+		event.Set("defaultPrevented", false)
+		event.Set("type", newType)
+		event.Set("bubbles", bubbles)
+		event.Set("cancelable", cancelable)
+
+		return goja.Undefined()
+	})
+
+	// Constants
+	event.Set("NONE", int(EventPhaseNone))
+	event.Set("CAPTURING_PHASE", int(EventPhaseCapturing))
+	event.Set("AT_TARGET", int(EventPhaseAtTarget))
+	event.Set("BUBBLING_PHASE", int(EventPhaseBubbling))
+}
+
 // CreateEvent creates a new Event object with the given prototype.
 // Events created via the Event constructor (new Event(type)) are initialized by default.
 func (eb *EventBinder) CreateEvent(eventType string, options map[string]interface{}) *goja.Object {
@@ -1011,6 +1155,7 @@ func (eb *EventBinder) GetEventProto(name string) *goja.Object {
 }
 
 // createEventConstructor creates an event constructor with proper prototype chain.
+// This supports ES6 class inheritance by using call.This and conditionally setting prototype.
 func (eb *EventBinder) createEventConstructor(name string, parentProto *goja.Object, initFunc func(event *goja.Object, call goja.ConstructorCall)) {
 	vm := eb.runtime.vm
 
@@ -1024,6 +1169,9 @@ func (eb *EventBinder) createEventConstructor(name string, parentProto *goja.Obj
 	proto.Set("AT_TARGET", int(EventPhaseAtTarget))
 	proto.Set("BUBBLING_PHASE", int(EventPhaseBubbling))
 
+	// Get the Object.prototype for comparison
+	objectProto := vm.GlobalObject().Get("Object").ToObject(vm).Get("prototype").ToObject(vm)
+
 	// Create constructor
 	ctor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
 		eventType := ""
@@ -1031,8 +1179,20 @@ func (eb *EventBinder) createEventConstructor(name string, parentProto *goja.Obj
 			eventType = call.Arguments[0].String()
 		}
 
-		event := eb.CreateEvent(eventType, nil)
-		event.SetPrototype(proto)
+		// Use call.This to support ES6 class inheritance
+		// When called via super() from a subclass, goja sets up the prototype chain on call.This
+		event := call.This
+
+		// Initialize event properties and methods on the object
+		eb.InitEventObject(event, eventType)
+
+		// Only set prototype if this is a direct construction (not from a subclass).
+		// When called from a subclass via super(), the prototype is already set by goja.
+		// We check if the prototype is Object.prototype (default for new objects) or nil.
+		currentProto := event.Prototype()
+		if currentProto == nil || currentProto == objectProto {
+			event.SetPrototype(proto)
+		}
 
 		// Apply bubbles/cancelable from options
 		if len(call.Arguments) > 1 && !goja.IsUndefined(call.Arguments[1]) && !goja.IsNull(call.Arguments[1]) {
@@ -1171,6 +1331,16 @@ func (eb *EventBinder) SetupEventConstructors() {
 			optObj := call.Arguments[1].ToObject(vm)
 			if optObj != nil {
 				if v := optObj.Get("view"); v != nil && !goja.IsUndefined(v) {
+					// view must be null or a Window object (the global object)
+					// Per UIEvents spec, view should be null, undefined, or a Window
+					if !goja.IsNull(v) && !goja.IsUndefined(v) {
+						// Check if it's a Window (global object)
+						viewObj := v.ToObject(vm)
+						globalObj := vm.GlobalObject()
+						if viewObj == nil || viewObj != globalObj {
+							panic(vm.NewTypeError("Failed to construct 'UIEvent': member view is not of type Window."))
+						}
+					}
 					event.Set("view", v)
 				}
 				if v := optObj.Get("detail"); v != nil && !goja.IsUndefined(v) {

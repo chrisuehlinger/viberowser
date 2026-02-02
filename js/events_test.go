@@ -1167,3 +1167,81 @@ func TestWindowEventLegacy(t *testing.T) {
 		t.Error("window.event should be correctly restored after nested dispatch")
 	}
 }
+
+func TestEventSubclassConstructors(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+	eventBinder := NewEventBinder(r)
+	eventBinder.SetupEventConstructors()
+
+	doc := dom.NewDocument()
+	binder.BindDocument(doc)
+
+	// Test that class extending Event works
+	result, err := r.Execute(`
+		class SubclassedEvent extends Event {
+			constructor(name, props) {
+				super(name, props);
+				if (props && typeof(props) == "object" && "customProp" in props) {
+					this.customProp = props.customProp;
+				} else {
+					this.customProp = 5;
+				}
+			}
+
+			get fixedProp() {
+				return 17;
+			}
+		}
+
+		var e = new SubclassedEvent('test');
+		e instanceof Event && e instanceof SubclassedEvent && e.type === 'test' && e.customProp === 5 && e.fixedProp === 17;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Class extending Event should work correctly")
+	}
+
+	// Test with custom props
+	result, err = r.Execute(`
+		var e2 = new SubclassedEvent('test', { customProp: 8, bubbles: true });
+		e2.customProp === 8 && e2.fixedProp === 17 && e2.bubbles === true;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("SubclassedEvent with custom props should work correctly")
+	}
+}
+
+func TestUIEventViewTypeValidation(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+	eventBinder := NewEventBinder(r)
+	eventBinder.SetupEventConstructors()
+
+	doc := dom.NewDocument()
+	binder.BindDocument(doc)
+
+	// Test that passing wrong type for view throws TypeError
+	result, err := r.Execute(`
+		var threw = false;
+		var errorType = "";
+		try {
+			new UIEvent("x", { view: 7 });
+		} catch (e) {
+			threw = true;
+			errorType = e.name || e.constructor.name;
+		}
+		threw && errorType === "TypeError";
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("UIEvent with wrong view type should throw TypeError")
+	}
+}
