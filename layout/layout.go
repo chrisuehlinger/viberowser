@@ -37,7 +37,9 @@ const (
 	InlineBlockBox
 	AnonymousBlockBox
 	AnonymousInlineBox
-	NoneBox // display: none
+	NoneBox      // display: none
+	FlexBox      // display: flex
+	InlineFlexBox // display: inline-flex
 )
 
 // PositionType represents the CSS position property values.
@@ -304,6 +306,10 @@ func determineBoxType(display string) BoxType {
 		return InlineBlockBox
 	case "none":
 		return NoneBox
+	case "flex":
+		return FlexBox
+	case "inline-flex":
+		return InlineFlexBox
 	default:
 		return InlineBox
 	}
@@ -408,7 +414,13 @@ func parsePositionOffsets(box *LayoutBox, style *css.ComputedStyle) {
 
 // normalizeBoxTree creates anonymous boxes as needed per CSS spec.
 // Block boxes cannot have inline children mixed with block children.
+// Flex containers do not need this normalization - all children are flex items.
 func normalizeBoxTree(box *LayoutBox) {
+	// Flex containers don't need anonymous box normalization
+	if box.BoxType == FlexBox || box.BoxType == InlineFlexBox {
+		return
+	}
+
 	if box.BoxType != BlockBox || len(box.Children) == 0 {
 		return
 	}
@@ -537,6 +549,8 @@ func (box *LayoutBox) Layout(ctx *LayoutContext) {
 		box.layoutBlock(ctx, containingBlock)
 	case InlineBox, InlineBlockBox:
 		box.layoutInline(ctx, containingBlock)
+	case FlexBox, InlineFlexBox:
+		box.layoutFlex(ctx, containingBlock)
 	}
 }
 

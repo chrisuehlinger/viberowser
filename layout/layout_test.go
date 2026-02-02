@@ -119,8 +119,9 @@ func TestDetermineBoxType(t *testing.T) {
 		{"inline", InlineBox},
 		{"inline-block", InlineBlockBox},
 		{"none", NoneBox},
-		{"flex", InlineBox}, // Flex falls back to inline for now
-		{"", InlineBox},     // Empty falls back to inline
+		{"flex", FlexBox},
+		{"inline-flex", InlineFlexBox},
+		{"", InlineBox}, // Empty falls back to inline
 	}
 
 	for _, tt := range tests {
