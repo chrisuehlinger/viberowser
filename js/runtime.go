@@ -78,8 +78,17 @@ func (r *Runtime) TimeOrigin() time.Time {
 
 // Now returns a DOMHighResTimeStamp (milliseconds since time origin).
 // This is equivalent to performance.now() in JavaScript.
+// The result is coarsened to 5 microsecond resolution as per the High Resolution Time spec
+// to mitigate timing attacks and fingerprinting.
 func (r *Runtime) Now() float64 {
-	return float64(time.Since(r.timeOrigin).Nanoseconds()) / 1e6
+	// Get time in nanoseconds
+	ns := time.Since(r.timeOrigin).Nanoseconds()
+	// Coarsen to 5 microseconds (5000 nanoseconds) resolution
+	// This is the minimum resolution for cross-origin isolated contexts
+	const coarsenResolutionNs = 5000
+	coarsenedNs := (ns / coarsenResolutionNs) * coarsenResolutionNs
+	// Convert to milliseconds
+	return float64(coarsenedNs) / 1e6
 }
 
 // Execute runs JavaScript code and returns the result.

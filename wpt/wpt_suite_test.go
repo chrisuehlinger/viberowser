@@ -336,7 +336,7 @@ func DOMCollectionsPassingTests() []string {
 }
 
 // DOMEventsPassingTests returns the list of DOM event tests that are expected to pass.
-// This list is based on actual passing tests as of 2026-02-01.
+// This list is based on actual passing tests as of 2026-02-02.
 func DOMEventsPassingTests() []string {
 	return []string{
 		"CustomEvent.html",
@@ -369,6 +369,8 @@ func DOMEventsPassingTests() []string {
 		"Event-returnValue.html",
 		"Event-stopImmediatePropagation.html",
 		"Event-stopPropagation-cancel-bubbling.html",
+		"Event-timestamp-high-resolution.html",
+		"Event-timestamp-safe-resolution.html",
 		"EventListener-handleEvent.html",
 		"EventTarget-dispatchEvent.html",
 		"EventTarget-dispatchEvent-returnvalue.html",
