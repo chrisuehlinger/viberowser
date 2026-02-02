@@ -940,3 +940,142 @@ func TestWPTRangeSet(t *testing.T) {
 
 	t.Logf("Summary: %d passed, %d failed", passed, failed)
 }
+
+// TestWPTRangeMutationsAppendChild runs the Range appendChild mutation WPT test.
+func TestWPTRangeMutationsAppendChild(t *testing.T) {
+	runRangeMutationTest(t, "/dom/ranges/Range-mutations-appendChild.html")
+}
+
+// TestWPTRangeMutationsRemoveChild runs the Range removeChild mutation WPT test.
+func TestWPTRangeMutationsRemoveChild(t *testing.T) {
+	runRangeMutationTest(t, "/dom/ranges/Range-mutations-removeChild.html")
+}
+
+// TestWPTRangeMutationsInsertBefore runs the Range insertBefore mutation WPT test.
+func TestWPTRangeMutationsInsertBefore(t *testing.T) {
+	runRangeMutationTest(t, "/dom/ranges/Range-mutations-insertBefore.html")
+}
+
+// TestWPTRangeMutationsReplaceChild runs the Range replaceChild mutation WPT test.
+func TestWPTRangeMutationsReplaceChild(t *testing.T) {
+	runRangeMutationTest(t, "/dom/ranges/Range-mutations-replaceChild.html")
+}
+
+// TestWPTRangeMutationsSplitText runs the Range splitText mutation WPT test.
+func TestWPTRangeMutationsSplitText(t *testing.T) {
+	runRangeMutationTest(t, "/dom/ranges/Range-mutations-splitText.html")
+}
+
+// TestWPTRangeMutationsAppendData runs the Range appendData mutation WPT test.
+func TestWPTRangeMutationsAppendData(t *testing.T) {
+	runRangeMutationTest(t, "/dom/ranges/Range-mutations-appendData.html")
+}
+
+// TestWPTRangeMutationsDeleteData runs the Range deleteData mutation WPT test.
+func TestWPTRangeMutationsDeleteData(t *testing.T) {
+	runRangeMutationTest(t, "/dom/ranges/Range-mutations-deleteData.html")
+}
+
+// TestWPTRangeMutationsInsertData runs the Range insertData mutation WPT test.
+// This test is slow due to the large number of test cases.
+func TestWPTRangeMutationsInsertData(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping slow test in short mode")
+	}
+	runRangeMutationTestWithTimeout(t, "/dom/ranges/Range-mutations-insertData.html", 180*time.Second)
+}
+
+// TestWPTRangeMutationsReplaceData runs the Range replaceData mutation WPT test.
+// This test is slow due to the large number of test cases.
+func TestWPTRangeMutationsReplaceData(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping slow test in short mode")
+	}
+	runRangeMutationTestWithTimeout(t, "/dom/ranges/Range-mutations-replaceData.html", 180*time.Second)
+}
+
+// TestWPTRangeMutationsDataChange runs the Range dataChange mutation WPT test.
+// This test is slow due to the large number of test cases.
+func TestWPTRangeMutationsDataChange(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping slow test in short mode")
+	}
+	runRangeMutationTestWithTimeout(t, "/dom/ranges/Range-mutations-dataChange.html", 180*time.Second)
+}
+
+func runRangeMutationTestWithTimeout(t *testing.T, testPath string, timeout time.Duration) {
+	wptPath := "/workspaces/wpt"
+
+	// Check if WPT exists
+	if _, err := os.Stat(wptPath); os.IsNotExist(err) {
+		t.Skip("WPT not available")
+	}
+
+	runner := NewRunner(wptPath)
+	runner.Timeout = timeout
+
+	result := runner.RunTestFile(testPath)
+
+	t.Logf("HarnessStatus: %s", result.HarnessStatus)
+	t.Logf("Duration: %v", result.Duration)
+	t.Logf("Tests: %d", len(result.Tests))
+
+	passed := 0
+	failed := 0
+	for _, test := range result.Tests {
+		if test.Status == StatusPass {
+			passed++
+		} else {
+			failed++
+			if failed <= 10 {
+				t.Logf("  [FAIL] %s: %s", test.Name, test.Message)
+			}
+		}
+	}
+
+	t.Logf("Summary: %d passed, %d failed", passed, failed)
+	if failed > 10 {
+		t.Logf("  ... and %d more failures", failed-10)
+	}
+
+	// Log if test timed out but still had all tests pass
+	if result.HarnessStatus == "TIMEOUT" && failed == 0 {
+		t.Logf("Note: Test harness timed out but all individual tests passed")
+	}
+}
+
+func runRangeMutationTest(t *testing.T, testPath string) {
+	wptPath := "/workspaces/wpt"
+
+	// Check if WPT exists
+	if _, err := os.Stat(wptPath); os.IsNotExist(err) {
+		t.Skip("WPT not available")
+	}
+
+	runner := NewRunner(wptPath)
+	runner.Timeout = 60 * time.Second
+
+	result := runner.RunTestFile(testPath)
+
+	t.Logf("HarnessStatus: %s", result.HarnessStatus)
+	t.Logf("Duration: %v", result.Duration)
+	t.Logf("Tests: %d", len(result.Tests))
+
+	passed := 0
+	failed := 0
+	for _, test := range result.Tests {
+		if test.Status == StatusPass {
+			passed++
+		} else {
+			failed++
+			if failed <= 10 {
+				t.Logf("  [FAIL] %s: %s", test.Name, test.Message)
+			}
+		}
+	}
+
+	t.Logf("Summary: %d passed, %d failed", passed, failed)
+	if failed > 10 {
+		t.Logf("  ... and %d more failures", failed-10)
+	}
+}
