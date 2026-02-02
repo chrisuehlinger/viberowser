@@ -13,16 +13,17 @@ import (
 
 // Runtime wraps a goja JavaScript runtime with browser-specific functionality.
 type Runtime struct {
-	vm         *goja.Runtime
-	document   *goja.Object
-	window     *goja.Object
-	console    *goja.Object
-	timers     *timerManager
-	eventLoop  *eventLoop
-	mu         sync.Mutex
-	errors     []error
-	onError    func(error)
-	timeOrigin time.Time // Time origin for performance.now() and event timestamps
+	vm              *goja.Runtime
+	document        *goja.Object
+	window          *goja.Object
+	console         *goja.Object
+	timers          *timerManager
+	eventLoop       *eventLoop
+	locationManager *LocationManager
+	mu              sync.Mutex
+	errors          []error
+	onError         func(error)
+	timeOrigin      time.Time // Time origin for performance.now() and event timestamps
 }
 
 // NewRuntime creates a new JavaScript runtime.
@@ -36,6 +37,9 @@ func NewRuntime() *Runtime {
 		errors:     make([]error, 0),
 		timeOrigin: time.Now(), // Set time origin when runtime is created
 	}
+
+	// Create location manager (must be before setupWindow)
+	r.locationManager = NewLocationManager(r)
 
 	// Set up global objects
 	r.setupConsole()
@@ -74,6 +78,11 @@ func (r *Runtime) SetOnError(handler func(error)) {
 // TimeOrigin returns the time origin for this runtime.
 func (r *Runtime) TimeOrigin() time.Time {
 	return r.timeOrigin
+}
+
+// LocationManager returns the location manager for this runtime.
+func (r *Runtime) LocationManager() *LocationManager {
+	return r.locationManager
 }
 
 // Now returns a DOMHighResTimeStamp (milliseconds since time origin).
@@ -434,35 +443,8 @@ func (r *Runtime) setupWindow() {
 	r.vm.Set("self", window)
 	r.vm.Set("globalThis", window)
 
-	// window.location (basic stub)
-	location := r.vm.NewObject()
-	location.Set("href", "about:blank")
-	location.Set("protocol", "about:")
-	location.Set("host", "")
-	location.Set("hostname", "")
-	location.Set("port", "")
-	location.Set("pathname", "blank")
-	location.Set("search", "")
-	location.Set("hash", "")
-	location.Set("origin", "null")
-	// toString returns href (per Location spec)
-	location.Set("toString", func(call goja.FunctionCall) goja.Value {
-		href := location.Get("href")
-		if href == nil {
-			return r.vm.ToValue("about:blank")
-		}
-		return href
-	})
-	// valueOf also returns the href string for coercion
-	location.Set("valueOf", func(call goja.FunctionCall) goja.Value {
-		href := location.Get("href")
-		if href == nil {
-			return r.vm.ToValue("about:blank")
-		}
-		return href
-	})
-	window.Set("location", location)
-	r.vm.Set("location", location)
+	// window.location (full implementation via LocationManager)
+	r.locationManager.SetupLocation()
 
 	// window.navigator (basic stub)
 	navigator := r.vm.NewObject()

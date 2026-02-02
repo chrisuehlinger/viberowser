@@ -368,60 +368,18 @@ func (m *HistoryManager) firePopStateEvent(state interface{}) {
 func (m *HistoryManager) updateLocation(urlStr string) {
 	vm := m.runtime.VM()
 
-	// Parse the URL for location components
-	parsedURL, err := url.Parse(urlStr)
-	if err != nil {
-		return
+	// Update the LocationManager's internal URL state (without triggering navigation)
+	if lm := m.runtime.LocationManager(); lm != nil {
+		lm.UpdateFromURL(urlStr)
 	}
-
-	// Update document URL if we have a way to do so
-	// (The document would need a SetURL method exposed to JS)
-
-	// Update window.location properties
-	location := vm.Get("location")
-	if location == nil || goja.IsUndefined(location) {
-		return
-	}
-	locationObj := location.ToObject(vm)
-	if locationObj == nil {
-		return
-	}
-
-	// Update location properties
-	locationObj.Set("href", urlStr)
-	locationObj.Set("protocol", parsedURL.Scheme+":")
-	locationObj.Set("host", parsedURL.Host)
-	locationObj.Set("hostname", parsedURL.Hostname())
-	locationObj.Set("port", parsedURL.Port())
-	locationObj.Set("pathname", parsedURL.Path)
-	if parsedURL.Path == "" {
-		locationObj.Set("pathname", "/")
-	}
-	locationObj.Set("search", "")
-	if parsedURL.RawQuery != "" {
-		locationObj.Set("search", "?"+parsedURL.RawQuery)
-	}
-	locationObj.Set("hash", "")
-	if parsedURL.Fragment != "" {
-		locationObj.Set("hash", "#"+parsedURL.Fragment)
-	}
-
-	// Update origin
-	origin := parsedURL.Scheme + "://" + parsedURL.Host
-	locationObj.Set("origin", origin)
 
 	// Also update document.URL if accessible
 	doc := vm.Get("document")
 	if doc != nil && !goja.IsUndefined(doc) {
 		docObj := doc.ToObject(vm)
 		if docObj != nil {
-			// Check if there's a way to update the URL
-			// The Go Document should have a SetURL method
-			if goDoc := docObj.Get("_goDocument"); goDoc != nil && !goja.IsUndefined(goDoc) {
-				// We can't directly call SetURL here, but we can set properties
-				docObj.Set("URL", urlStr)
-				docObj.Set("documentURI", urlStr)
-			}
+			docObj.Set("URL", urlStr)
+			docObj.Set("documentURI", urlStr)
 		}
 	}
 }

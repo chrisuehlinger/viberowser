@@ -2038,10 +2038,23 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 		}),
 		goja.FLAG_FALSE, goja.FLAG_TRUE)
 
-	// location is null for documents without a browsing context (per spec)
+	// location returns the same object as window.location for the main document
 	jsDoc.DefineAccessorProperty("location", vm.ToValue(func(call goja.FunctionCall) goja.Value {
-		return goja.Null()
-	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+		// Return the window.location object
+		return vm.Get("location")
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Setting document.location navigates (same as setting window.location.href)
+		if len(call.Arguments) >= 1 {
+			loc := vm.Get("location")
+			if loc != nil && !goja.IsUndefined(loc) && !goja.IsNull(loc) {
+				locObj := loc.ToObject(vm)
+				if locObj != nil {
+					locObj.Set("href", call.Arguments[0])
+				}
+			}
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	// defaultView returns the window object for documents with a browsing context
 	// For the main document, this is the global window object
