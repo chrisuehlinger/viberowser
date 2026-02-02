@@ -2076,6 +2076,54 @@ func (eb *EventBinder) SetupEventConstructors() {
 		}
 	})
 
+	// AnimationEvent - extends Event
+	// Per CSS Animations spec: https://drafts.csswg.org/css-animations/#interface-animationevent
+	// Properties: animationName (string), elapsedTime (float), pseudoElement (string)
+	eb.createEventConstructor("AnimationEvent", eventProto, func(event *goja.Object, call goja.ConstructorCall) {
+		// Set AnimationEvent defaults
+		event.Set("animationName", "")
+		event.Set("elapsedTime", 0.0)
+		event.Set("pseudoElement", "")
+		if len(call.Arguments) > 1 && !goja.IsUndefined(call.Arguments[1]) && !goja.IsNull(call.Arguments[1]) {
+			optObj := call.Arguments[1].ToObject(vm)
+			if optObj != nil {
+				if v := optObj.Get("animationName"); v != nil && !goja.IsUndefined(v) {
+					event.Set("animationName", v.String())
+				}
+				if v := optObj.Get("elapsedTime"); v != nil && !goja.IsUndefined(v) {
+					event.Set("elapsedTime", v.ToFloat())
+				}
+				if v := optObj.Get("pseudoElement"); v != nil && !goja.IsUndefined(v) {
+					event.Set("pseudoElement", v.String())
+				}
+			}
+		}
+	})
+
+	// TransitionEvent - extends Event
+	// Per CSS Transitions spec: https://drafts.csswg.org/css-transitions/#interface-transitionevent
+	// Properties: propertyName (string), elapsedTime (float), pseudoElement (string)
+	eb.createEventConstructor("TransitionEvent", eventProto, func(event *goja.Object, call goja.ConstructorCall) {
+		// Set TransitionEvent defaults
+		event.Set("propertyName", "")
+		event.Set("elapsedTime", 0.0)
+		event.Set("pseudoElement", "")
+		if len(call.Arguments) > 1 && !goja.IsUndefined(call.Arguments[1]) && !goja.IsNull(call.Arguments[1]) {
+			optObj := call.Arguments[1].ToObject(vm)
+			if optObj != nil {
+				if v := optObj.Get("propertyName"); v != nil && !goja.IsUndefined(v) {
+					event.Set("propertyName", v.String())
+				}
+				if v := optObj.Get("elapsedTime"); v != nil && !goja.IsUndefined(v) {
+					event.Set("elapsedTime", v.ToFloat())
+				}
+				if v := optObj.Get("pseudoElement"); v != nil && !goja.IsUndefined(v) {
+					event.Set("pseudoElement", v.String())
+				}
+			}
+		}
+	})
+
 	// Set up AbortController and AbortSignal
 	eb.setupAbortController()
 }

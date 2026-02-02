@@ -1341,3 +1341,103 @@ func TestWPTNamedItem08(t *testing.T) {
 	}
 	t.Logf("Summary: %d passed, %d failed", passed, failed)
 }
+
+// TestWPTWebkitAnimationEndEvent tests the webkit animation end event test
+func TestWPTWebkitAnimationEndEvent(t *testing.T) {
+	wptPath := "/workspaces/wpt"
+	if _, err := os.Stat(wptPath); os.IsNotExist(err) {
+		t.Skip("WPT not available")
+	}
+	runner := NewRunner(wptPath)
+	runner.Timeout = 30 * time.Second
+	result := runner.RunTestFile("/dom/events/webkit-animation-end-event.html")
+	t.Logf("HarnessStatus: %s, Error: %s, Tests: %d", result.HarnessStatus, result.Error, len(result.Tests))
+	passed := 0
+	failed := 0
+	for _, test := range result.Tests {
+		if test.Status != StatusPass {
+			failed++
+			t.Logf("  [FAIL] %s: %s", test.Name, test.Message)
+		} else {
+			passed++
+			t.Logf("  [PASS] %s", test.Name)
+		}
+	}
+	t.Logf("Summary: %d passed, %d failed", passed, failed)
+}
+
+// TestAnimationEventConstructor tests that AnimationEvent constructor works
+func TestAnimationEventConstructor(t *testing.T) {
+	runtime := js.NewRuntime()
+	eventBinder := js.NewEventBinder(runtime)
+	eventBinder.SetupEventConstructors()
+
+	result, err := runtime.Execute(`
+		var results = [];
+
+		// Test 1: AnimationEvent exists
+		results.push('AnimationEvent exists: ' + (typeof AnimationEvent === 'function'));
+
+		// Test 2: Can construct basic event
+		try {
+			var e = new AnimationEvent('animationend');
+			results.push('Basic construction works: true');
+			results.push('type: ' + e.type);
+			results.push('animationName: ' + e.animationName);
+			results.push('elapsedTime: ' + e.elapsedTime);
+		} catch (ex) {
+			results.push('Basic construction works: false - ' + ex.message);
+		}
+
+		// Test 3: Can construct with options
+		try {
+			var e2 = new AnimationEvent('animationstart', {
+				animationName: 'fadeIn',
+				elapsedTime: 1.5,
+				bubbles: true
+			});
+			results.push('Options construction works: true');
+			results.push('animationName: ' + e2.animationName);
+			results.push('elapsedTime: ' + e2.elapsedTime);
+			results.push('bubbles: ' + e2.bubbles);
+		} catch (ex) {
+			results.push('Options construction works: false - ' + ex.message);
+		}
+
+		// Test 4: TransitionEvent exists
+		results.push('TransitionEvent exists: ' + (typeof TransitionEvent === 'function'));
+
+		// Test 5: Can dispatch AnimationEvent
+		try {
+			var div = {};
+			div.listeners = [];
+			div.addEventListener = function(type, cb) {
+				this.listeners.push({type: type, cb: cb});
+			};
+			div.dispatchEvent = function(e) {
+				for (var i = 0; i < this.listeners.length; i++) {
+					if (this.listeners[i].type === e.type) {
+						this.listeners[i].cb(e);
+					}
+				}
+			};
+
+			var received = false;
+			div.addEventListener('animationend', function(e) {
+				received = true;
+			});
+			div.dispatchEvent(new AnimationEvent('animationend'));
+			results.push('Can dispatch: ' + received);
+		} catch (ex) {
+			results.push('Dispatch error: ' + ex.message);
+		}
+
+		results.join('\\n');
+	`)
+
+	if err != nil {
+		t.Fatalf("JS error: %v", err)
+	}
+
+	t.Logf("Results:\n%s", result.String())
+}

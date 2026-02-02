@@ -11421,8 +11421,12 @@ var eventHandlerAttributes = []string{
 	"onpointerout", "onpointerover", "onpointerup", "onprogress", "onratechange", "onreset",
 	"onresize", "onscroll", "onscrollend", "onsecuritypolicyviolation", "onseeked",
 	"onseeking", "onselect", "onslotchange", "onstalled", "onsubmit", "onsuspend",
-	"ontimeupdate", "ontoggle", "onvolumechange", "onwaiting", "onwebkitanimationend",
-	"onwebkitanimationiteration", "onwebkitanimationstart", "onwebkittransitionend",
+	"ontimeupdate", "ontoggle", "onvolumechange", "onwaiting",
+	// Animation and transition events (standard and webkit-prefixed)
+	"onanimationcancel", "onanimationend", "onanimationiteration", "onanimationstart",
+	"ontransitioncancel", "ontransitionend", "ontransitionrun", "ontransitionstart",
+	"onwebkitanimationend", "onwebkitanimationiteration", "onwebkitanimationstart",
+	"onwebkittransitionend",
 	"onwheel",
 	// WindowEventHandlers (subset that applies to elements via body/frameset)
 	"onafterprint", "onbeforeprint", "onbeforeunload", "onhashchange", "onlanguagechange",
