@@ -1836,16 +1836,177 @@ func (b *DOMBinder) setupHTMLElementPrototypeMethods() {
 	// focus() - Gives focus to the element
 	// Per HTML spec: https://html.spec.whatwg.org/multipage/interaction.html#dom-focus
 	b.htmlElementProto.Set("focus", func(call goja.FunctionCall) goja.Value {
-		// For now, this is a stub - focus handling requires more infrastructure
+		thisObj := call.This.ToObject(vm)
+		if thisObj == nil {
+			return goja.Undefined()
+		}
+
+		goNode := b.getGoNode(thisObj)
+		if goNode == nil || goNode.NodeType() != dom.ElementNode {
+			return goja.Undefined()
+		}
+
+		el := (*dom.Element)(goNode)
+
+		// Check if the element is focusable
+		if !el.IsFocusable() {
+			return goja.Undefined()
+		}
+
+		// Get the owning document
+		ownerDoc := el.AsNode().OwnerDocument()
+		if ownerDoc == nil {
+			return goja.Undefined()
+		}
+
+		// Get the currently focused element
+		oldFocused := ownerDoc.GetFocusedElement()
+
+		// If this element is already focused, do nothing
+		if oldFocused == el {
+			return goja.Undefined()
+		}
+
+		// Fire focus events
+		b.fireFocusEvents(thisObj, oldFocused, el, ownerDoc)
+
 		return goja.Undefined()
 	})
 
 	// blur() - Removes focus from the element
 	// Per HTML spec: https://html.spec.whatwg.org/multipage/interaction.html#dom-blur
 	b.htmlElementProto.Set("blur", func(call goja.FunctionCall) goja.Value {
-		// For now, this is a stub - blur handling requires more infrastructure
+		thisObj := call.This.ToObject(vm)
+		if thisObj == nil {
+			return goja.Undefined()
+		}
+
+		goNode := b.getGoNode(thisObj)
+		if goNode == nil || goNode.NodeType() != dom.ElementNode {
+			return goja.Undefined()
+		}
+
+		el := (*dom.Element)(goNode)
+
+		// Get the owning document
+		ownerDoc := el.AsNode().OwnerDocument()
+		if ownerDoc == nil {
+			return goja.Undefined()
+		}
+
+		// Get the currently focused element
+		oldFocused := ownerDoc.GetFocusedElement()
+
+		// If this element is not focused, do nothing
+		if oldFocused != el {
+			return goja.Undefined()
+		}
+
+		// Fire blur events (focus moves to body)
+		b.fireFocusEvents(thisObj, el, nil, ownerDoc)
+
 		return goja.Undefined()
 	})
+}
+
+// fireFocusEvents dispatches focus-related events when focus changes.
+// Per HTML spec, the event order is:
+// 1. focusout on old element (bubbles)
+// 2. focusin on new element (bubbles)
+// 3. blur on old element (doesn't bubble)
+// 4. focus on new element (doesn't bubble)
+func (b *DOMBinder) fireFocusEvents(trigger *goja.Object, oldFocused, newFocused *dom.Element, doc *dom.Document) {
+	vm := b.runtime.vm
+
+	// Get FocusEvent constructor
+	focusEventCtor := vm.Get("FocusEvent")
+	if focusEventCtor == nil || goja.IsUndefined(focusEventCtor) {
+		// Can't create events, just update state
+		doc.SetFocusedElement(newFocused)
+		return
+	}
+
+	ctor, ok := goja.AssertConstructor(focusEventCtor)
+	if !ok {
+		doc.SetFocusedElement(newFocused)
+		return
+	}
+
+	// Get JS objects for old and new focused elements
+	var oldFocusedJS, newFocusedJS goja.Value = goja.Null(), goja.Null()
+	if oldFocused != nil {
+		oldFocusedJS = b.BindElement(oldFocused)
+	}
+	if newFocused != nil {
+		newFocusedJS = b.BindElement(newFocused)
+	}
+
+	// Helper to dispatch a focus event
+	dispatchFocusEvent := func(target goja.Value, eventType string, bubbles bool, relatedTarget goja.Value) {
+		if target == nil || goja.IsNull(target) || goja.IsUndefined(target) {
+			return
+		}
+
+		targetObj := target.ToObject(vm)
+		if targetObj == nil {
+			return
+		}
+
+		dispatchEvent := targetObj.Get("dispatchEvent")
+		if dispatchEvent == nil || goja.IsUndefined(dispatchEvent) {
+			return
+		}
+
+		dispatchFn, ok := goja.AssertFunction(dispatchEvent)
+		if !ok {
+			return
+		}
+
+		// Create event options
+		options := vm.NewObject()
+		options.Set("bubbles", bubbles)
+		options.Set("cancelable", false) // Focus events are not cancelable
+		options.Set("view", goja.Null())
+		options.Set("detail", 0)
+		options.Set("relatedTarget", relatedTarget)
+
+		// Create the event
+		event, err := ctor(nil, vm.ToValue(eventType), options)
+		if err != nil {
+			return
+		}
+
+		// isTrusted should be true for user-agent generated events
+		event.Set("isTrusted", true)
+
+		// Dispatch
+		dispatchFn(targetObj, event)
+	}
+
+	// Per HTML spec, the event order when focus changes:
+	// 1. Fire "focusout" at old focused element (bubbles, relatedTarget = new)
+	if oldFocused != nil {
+		dispatchFocusEvent(oldFocusedJS, "focusout", true, newFocusedJS)
+	}
+
+	// 2. Fire "focusin" at new focused element (bubbles, relatedTarget = old)
+	if newFocused != nil {
+		dispatchFocusEvent(newFocusedJS, "focusin", true, oldFocusedJS)
+	}
+
+	// Update the focused element in the document AFTER focusout/focusin
+	// but BEFORE blur/focus (per spec)
+	doc.SetFocusedElement(newFocused)
+
+	// 3. Fire "blur" at old focused element (doesn't bubble, relatedTarget = new)
+	if oldFocused != nil {
+		dispatchFocusEvent(oldFocusedJS, "blur", false, newFocusedJS)
+	}
+
+	// 4. Fire "focus" at new focused element (doesn't bubble, relatedTarget = old)
+	if newFocused != nil {
+		dispatchFocusEvent(newFocusedJS, "focus", false, oldFocusedJS)
+	}
 }
 
 // getHTMLElementPrototype returns the appropriate prototype for a given tag name.
@@ -1941,6 +2102,16 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 
 	jsDoc.DefineAccessorProperty("anchors", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		return b.BindHTMLCollection(doc.Anchors())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// activeElement - returns the currently focused element
+	// Per HTML spec: returns body if no element has focus, null if no body
+	jsDoc.DefineAccessorProperty("activeElement", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		el := doc.ActiveElement()
+		if el == nil {
+			return goja.Null()
+		}
+		return b.BindElement(el)
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	// Document accessors
@@ -2640,6 +2811,16 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 
 	jsDoc.DefineAccessorProperty("anchors", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		return b.BindHTMLCollection(doc.Anchors())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// activeElement - returns the currently focused element
+	// Per HTML spec: returns body if no element has focus, null if no body
+	jsDoc.DefineAccessorProperty("activeElement", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		el := doc.ActiveElement()
+		if el == nil {
+			return goja.Null()
+		}
+		return b.BindElement(el)
 	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	// Document accessors

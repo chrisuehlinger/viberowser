@@ -1735,3 +1735,64 @@ func (e *Element) SetDisabled(disabled bool) {
 		e.RemoveAttribute("disabled")
 	}
 }
+
+// IsFocusable returns whether the element can receive focus.
+// Per HTML spec, elements are focusable if they:
+// 1. Have a tabindex attribute
+// 2. Are an interactive element (a, button, input, select, textarea, etc.)
+// 3. Are not disabled
+// 4. Are not inert
+func (e *Element) IsFocusable() bool {
+	// Check if element has tabindex attribute
+	if e.HasAttribute("tabindex") {
+		// Element with tabindex is focusable (even with negative value)
+		// unless it's disabled
+		return !e.Disabled()
+	}
+
+	// Check intrinsically focusable elements
+	tagName := strings.ToLower(e.LocalName())
+	switch tagName {
+	case "a", "area":
+		// Links are focusable if they have an href
+		return e.HasAttribute("href")
+	case "input":
+		// Inputs are focusable unless disabled or hidden type
+		if e.Disabled() {
+			return false
+		}
+		inputType := strings.ToLower(e.GetAttribute("type"))
+		return inputType != "hidden"
+	case "button", "select", "textarea":
+		// These are focusable unless disabled
+		return !e.Disabled()
+	case "iframe", "embed", "object":
+		// These are focusable
+		return true
+	case "summary":
+		// summary is focusable if it's the first summary child of a details element
+		parent := e.AsNode().ParentElement()
+		if parent != nil && strings.ToLower(parent.LocalName()) == "details" {
+			// Check if this is the first summary
+			for child := parent.AsNode().FirstChild(); child != nil; child = child.NextSibling() {
+				if child.NodeType() == ElementNode {
+					childEl := (*Element)(child)
+					if strings.ToLower(childEl.LocalName()) == "summary" {
+						return childEl == e
+					}
+				}
+			}
+		}
+		return false
+	case "audio", "video":
+		// Media elements are focusable if they have controls
+		return e.HasAttribute("controls")
+	default:
+		// Content editable elements are focusable
+		contentEditable := e.GetAttribute("contenteditable")
+		if contentEditable == "true" || contentEditable == "" && e.HasAttribute("contenteditable") {
+			return true
+		}
+		return false
+	}
+}

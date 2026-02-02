@@ -154,6 +154,9 @@ type documentData struct {
 	scriptsCollection *HTMLCollection
 	embedsCollection  *HTMLCollection // Also used for plugins
 	anchorsCollection *HTMLCollection
+
+	// Focus tracking
+	focusedElement *Node // The currently focused element (or nil if body/document is focused)
 }
 
 // docTypeData holds data specific to DocumentType nodes.

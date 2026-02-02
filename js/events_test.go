@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/chrisuehlinger/viberowser/dom"
+	"github.com/dop251/goja"
 )
 
 func TestEventBasic(t *testing.T) {
@@ -1292,5 +1293,267 @@ func TestEventTimeStamp(t *testing.T) {
 	}
 	if !result.ToBoolean() {
 		t.Error("Events created via createEvent should have non-negative timeStamp")
+	}
+}
+
+// TestFocusEvents tests that focus/blur events are dispatched correctly
+func TestFocusEvents(t *testing.T) {
+	// Create runtime and set up bindings
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+	eventBinder := NewEventBinder(r)
+	eventBinder.SetupEventConstructors()
+	binder.SetEventBinder(eventBinder)
+
+	doc := dom.NewDocument()
+	binder.BindDocument(doc)
+
+	// Create a simple document structure
+	_, err := r.Execute(`
+		var html = document.createElement('html');
+		document.appendChild(html);
+		var body = document.createElement('body');
+		html.appendChild(body);
+		var input = document.createElement('input');
+		input.type = 'text';
+		body.appendChild(input);
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Test activeElement defaults to body
+	_, err = r.Execute(`
+		var result = document.activeElement === document.body;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	result, _ := r.Execute("result")
+	if !result.ToBoolean() {
+		t.Error("activeElement should default to body")
+	}
+
+	// Test that focus() changes activeElement
+	_, err = r.Execute(`
+		input.focus();
+		var focusResult = document.activeElement === input;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	result, _ = r.Execute("focusResult")
+	if !result.ToBoolean() {
+		t.Error("focus() should change activeElement to the input")
+	}
+
+	// Test that blur() resets activeElement to body
+	_, err = r.Execute(`
+		input.blur();
+		var blurResult = document.activeElement === document.body;
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	result, _ = r.Execute("blurResult")
+	if !result.ToBoolean() {
+		t.Error("blur() should reset activeElement to body")
+	}
+}
+
+// TestFocusEventOrder tests that focus events fire in the correct order
+func TestFocusEventOrder(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+	eventBinder := NewEventBinder(r)
+	eventBinder.SetupEventConstructors()
+	binder.SetEventBinder(eventBinder)
+
+	doc := dom.NewDocument()
+	binder.BindDocument(doc)
+
+	// Create two inputs
+	_, err := r.Execute(`
+		var html = document.createElement('html');
+		document.appendChild(html);
+		var body = document.createElement('body');
+		html.appendChild(body);
+		var input1 = document.createElement('input');
+		var input2 = document.createElement('input');
+		body.appendChild(input1);
+		body.appendChild(input2);
+
+		// Track events
+		var events = [];
+
+		input1.addEventListener('focus', function(e) { events.push('focus:input1'); });
+		input1.addEventListener('blur', function(e) { events.push('blur:input1'); });
+		input1.addEventListener('focusin', function(e) { events.push('focusin:input1'); });
+		input1.addEventListener('focusout', function(e) { events.push('focusout:input1'); });
+
+		input2.addEventListener('focus', function(e) { events.push('focus:input2'); });
+		input2.addEventListener('blur', function(e) { events.push('blur:input2'); });
+		input2.addEventListener('focusin', function(e) { events.push('focusin:input2'); });
+		input2.addEventListener('focusout', function(e) { events.push('focusout:input2'); });
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Focus input1
+	_, err = r.Execute(`
+		events = [];
+		input1.focus();
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Check events for first focus
+	result, _ := r.Execute("events.join(',')")
+	eventsStr := result.String()
+	// Per spec: focusin fires before focus
+	if eventsStr != "focusin:input1,focus:input1" {
+		t.Errorf("Expected 'focusin:input1,focus:input1', got '%s'", eventsStr)
+	}
+
+	// Focus input2 (should trigger blur on input1)
+	_, err = r.Execute(`
+		events = [];
+		input2.focus();
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Check events for focus change
+	result, _ = r.Execute("events.join(',')")
+	eventsStr = result.String()
+	// Per spec: focusout, focusin, blur, focus (focusout/focusin first, then blur/focus)
+	if eventsStr != "focusout:input1,focusin:input2,blur:input1,focus:input2" {
+		t.Errorf("Expected 'focusout:input1,focusin:input2,blur:input1,focus:input2', got '%s'", eventsStr)
+	}
+}
+
+// TestFocusEventRelatedTarget tests that relatedTarget is set correctly
+func TestFocusEventRelatedTarget(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+	eventBinder := NewEventBinder(r)
+	eventBinder.SetupEventConstructors()
+	binder.SetEventBinder(eventBinder)
+
+	doc := dom.NewDocument()
+	binder.BindDocument(doc)
+
+	// Create two inputs
+	_, err := r.Execute(`
+		var html = document.createElement('html');
+		document.appendChild(html);
+		var body = document.createElement('body');
+		html.appendChild(body);
+		var input1 = document.createElement('input');
+		var input2 = document.createElement('input');
+		body.appendChild(input1);
+		body.appendChild(input2);
+
+		// Track relatedTarget
+		var blurRelatedTarget = null;
+		var focusRelatedTarget = null;
+
+		input1.addEventListener('blur', function(e) { blurRelatedTarget = e.relatedTarget; });
+		input2.addEventListener('focus', function(e) { focusRelatedTarget = e.relatedTarget; });
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Focus input1, then input2
+	_, err = r.Execute(`
+		input1.focus();
+		input2.focus();
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Check blur relatedTarget (should be input2 - the element gaining focus)
+	result, _ := r.Execute("blurRelatedTarget === input2")
+	if !result.ToBoolean() {
+		t.Error("blur relatedTarget should be the element gaining focus")
+	}
+
+	// Check focus relatedTarget (should be input1 - the element losing focus)
+	result, _ = r.Execute("focusRelatedTarget === input1")
+	if !result.ToBoolean() {
+		t.Error("focus relatedTarget should be the element losing focus")
+	}
+}
+
+// TestFocusEventBubbling tests that focusin/focusout bubble but focus/blur don't
+func TestFocusEventBubbling(t *testing.T) {
+	r := NewRuntime()
+	binder := NewDOMBinder(r)
+	eventBinder := NewEventBinder(r)
+	eventBinder.SetupEventConstructors()
+	binder.SetEventBinder(eventBinder)
+
+	// Set up node resolver for event bubbling to work
+	eventBinder.SetNodeResolver(func(obj *goja.Object) *goja.Object {
+		if obj == nil {
+			return nil
+		}
+		goNode := binder.getGoNode(obj)
+		if goNode == nil {
+			return nil
+		}
+		parentNode := goNode.ParentNode()
+		if parentNode == nil {
+			return nil
+		}
+		return binder.BindNode(parentNode)
+	})
+
+	doc := dom.NewDocument()
+	binder.BindDocument(doc)
+
+	// Create structure with parent container
+	_, err := r.Execute(`
+		var html = document.createElement('html');
+		document.appendChild(html);
+		var body = document.createElement('body');
+		html.appendChild(body);
+		var container = document.createElement('div');
+		var input = document.createElement('input');
+		body.appendChild(container);
+		container.appendChild(input);
+
+		// Track events on container
+		var containerEvents = [];
+		container.addEventListener('focus', function(e) { containerEvents.push('focus'); });
+		container.addEventListener('blur', function(e) { containerEvents.push('blur'); });
+		container.addEventListener('focusin', function(e) { containerEvents.push('focusin'); });
+		container.addEventListener('focusout', function(e) { containerEvents.push('focusout'); });
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Focus and blur the input
+	_, err = r.Execute(`
+		containerEvents = [];
+		input.focus();
+		input.blur();
+	`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Check which events bubbled to container
+	result, _ := r.Execute("containerEvents.join(',')")
+	eventsStr := result.String()
+	// Only focusin and focusout should bubble
+	if eventsStr != "focusin,focusout" {
+		t.Errorf("Expected 'focusin,focusout', got '%s'", eventsStr)
 	}
 }

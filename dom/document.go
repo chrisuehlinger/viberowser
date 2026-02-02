@@ -1887,3 +1887,45 @@ func ParseXHTML(xhtmlContent string) (*Document, error) {
 func (d *Document) CreateRange() *Range {
 	return NewRange(d)
 }
+
+// ActiveElement returns the currently focused element in the document.
+// Per HTML spec, returns body element (or null if no body) when no element has focus.
+func (d *Document) ActiveElement() *Element {
+	n := d.AsNode()
+	if n.documentData == nil {
+		return nil
+	}
+	if n.documentData.focusedElement != nil {
+		return (*Element)(n.documentData.focusedElement)
+	}
+	// Default to body when no element is focused
+	return d.Body()
+}
+
+// SetFocusedElement sets the currently focused element.
+// This is called by the JavaScript bindings when focus changes.
+// Pass nil to indicate no element has focus (falls back to body).
+func (d *Document) SetFocusedElement(el *Element) {
+	n := d.AsNode()
+	if n.documentData == nil {
+		return
+	}
+	if el != nil {
+		n.documentData.focusedElement = el.AsNode()
+	} else {
+		n.documentData.focusedElement = nil
+	}
+}
+
+// GetFocusedElement returns the raw focused element pointer (may be nil).
+// This returns nil if focus is on body/document, unlike ActiveElement which returns body.
+func (d *Document) GetFocusedElement() *Element {
+	n := d.AsNode()
+	if n.documentData == nil {
+		return nil
+	}
+	if n.documentData.focusedElement != nil {
+		return (*Element)(n.documentData.focusedElement)
+	}
+	return nil
+}
