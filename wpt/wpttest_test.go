@@ -1114,3 +1114,230 @@ func TestWPTEventDispatchDetachedInputChange(t *testing.T) {
 
 	t.Logf("Summary: %d passed, %d failed", passed, failed)
 }
+
+
+// TestWPTNamedItem01 tests document named item access for img elements
+func TestWPTNamedItem01(t *testing.T) {
+	wptPath := "/workspaces/wpt"
+
+	// Check if WPT exists
+	if _, err := os.Stat(wptPath); os.IsNotExist(err) {
+		t.Skip("WPT not available")
+	}
+
+	runner := NewRunner(wptPath)
+	runner.Timeout = 30 * time.Second
+
+	result := runner.RunTestFile("/html/dom/documents/dom-tree-accessors/nameditem-01.html")
+
+	t.Logf("HarnessStatus: %s", result.HarnessStatus)
+	t.Logf("Error: %s", result.Error)
+	t.Logf("Duration: %v", result.Duration)
+	t.Logf("Tests: %d", len(result.Tests))
+
+	passed := 0
+	failed := 0
+	for _, test := range result.Tests {
+		statusStr := "PASS"
+		if test.Status != StatusPass {
+			statusStr = "FAIL"
+			failed++
+		} else {
+			passed++
+		}
+		t.Logf("  [%s] %s: %s", statusStr, test.Name, test.Message)
+	}
+
+	t.Logf("Summary: %d passed, %d failed", passed, failed)
+}
+
+
+// TestWPTNamedItem02 tests document named item access for iframe elements
+func TestWPTNamedItem02(t *testing.T) {
+	wptPath := "/workspaces/wpt"
+	if _, err := os.Stat(wptPath); os.IsNotExist(err) {
+		t.Skip("WPT not available")
+	}
+	runner := NewRunner(wptPath)
+	runner.Timeout = 30 * time.Second
+	result := runner.RunTestFile("/html/dom/documents/dom-tree-accessors/nameditem-02.html")
+	t.Logf("HarnessStatus: %s", result.HarnessStatus)
+	t.Logf("Tests: %d", len(result.Tests))
+	passed := 0
+	failed := 0
+	for _, test := range result.Tests {
+		if test.Status != StatusPass {
+			failed++
+			t.Logf("  [FAIL] %s: %s", test.Name, test.Message)
+		} else {
+			passed++
+		}
+	}
+	t.Logf("Summary: %d passed, %d failed", passed, failed)
+}
+
+// TestWPTNamedItem03 tests document named item access for applet elements (deprecated)
+func TestWPTNamedItem03(t *testing.T) {
+	wptPath := "/workspaces/wpt"
+	if _, err := os.Stat(wptPath); os.IsNotExist(err) {
+		t.Skip("WPT not available")
+	}
+	runner := NewRunner(wptPath)
+	runner.Timeout = 30 * time.Second
+	result := runner.RunTestFile("/html/dom/documents/dom-tree-accessors/nameditem-03.html")
+	t.Logf("HarnessStatus: %s", result.HarnessStatus)
+	t.Logf("Tests: %d", len(result.Tests))
+	passed := 0
+	failed := 0
+	for _, test := range result.Tests {
+		if test.Status != StatusPass {
+			failed++
+			t.Logf("  [FAIL] %s: %s", test.Name, test.Message)
+		} else {
+			passed++
+		}
+	}
+	t.Logf("Summary: %d passed, %d failed", passed, failed)
+}
+
+// TestWPTNamedItem04 tests document named item access for form elements
+func TestWPTNamedItem04(t *testing.T) {
+	wptPath := "/workspaces/wpt"
+	if _, err := os.Stat(wptPath); os.IsNotExist(err) {
+		t.Skip("WPT not available")
+	}
+	runner := NewRunner(wptPath)
+	runner.Timeout = 30 * time.Second
+	result := runner.RunTestFile("/html/dom/documents/dom-tree-accessors/nameditem-04.html")
+	t.Logf("HarnessStatus: %s", result.HarnessStatus)
+	t.Logf("Tests: %d", len(result.Tests))
+	passed := 0
+	failed := 0
+	for _, test := range result.Tests {
+		if test.Status != StatusPass {
+			failed++
+			t.Logf("  [FAIL] %s: %s", test.Name, test.Message)
+		} else {
+			passed++
+		}
+	}
+	t.Logf("Summary: %d passed, %d failed", passed, failed)
+}
+
+// TestWPTNamedItem05 tests document named item access for embed elements
+func TestWPTNamedItem05(t *testing.T) {
+	wptPath := "/workspaces/wpt"
+	if _, err := os.Stat(wptPath); os.IsNotExist(err) {
+		t.Skip("WPT not available")
+	}
+	runner := NewRunner(wptPath)
+	runner.Timeout = 30 * time.Second
+	result := runner.RunTestFile("/html/dom/documents/dom-tree-accessors/nameditem-05.html")
+	t.Logf("HarnessStatus: %s", result.HarnessStatus)
+	t.Logf("Tests: %d", len(result.Tests))
+	passed := 0
+	failed := 0
+	for _, test := range result.Tests {
+		if test.Status != StatusPass {
+			failed++
+			t.Logf("  [FAIL] %s: %s", test.Name, test.Message)
+		} else {
+			passed++
+		}
+	}
+	t.Logf("Summary: %d passed, %d failed", passed, failed)
+}
+
+// TestWPTNamedItemNames tests document named property enumeration
+func TestWPTNamedItemNames(t *testing.T) {
+	wptPath := "/workspaces/wpt"
+	if _, err := os.Stat(wptPath); os.IsNotExist(err) {
+		t.Skip("WPT not available")
+	}
+	runner := NewRunner(wptPath)
+	runner.Timeout = 30 * time.Second
+	result := runner.RunTestFile("/html/dom/documents/dom-tree-accessors/nameditem-names.html")
+	t.Logf("HarnessStatus: %s", result.HarnessStatus)
+	t.Logf("Tests: %d", len(result.Tests))
+	passed := 0
+	failed := 0
+	for _, test := range result.Tests {
+		if test.Status != StatusPass {
+			failed++
+			t.Logf("  [FAIL] %s: %s", test.Name, test.Message)
+		} else {
+			passed++
+		}
+	}
+	t.Logf("Summary: %d passed, %d failed", passed, failed)
+}
+
+
+// TestWPTNamedItem06 tests document named item access for img elements (different tests)
+func TestWPTNamedItem06(t *testing.T) {
+	wptPath := "/workspaces/wpt"
+	if _, err := os.Stat(wptPath); os.IsNotExist(err) {
+		t.Skip("WPT not available")
+	}
+	runner := NewRunner(wptPath)
+	runner.Timeout = 30 * time.Second
+	result := runner.RunTestFile("/html/dom/documents/dom-tree-accessors/nameditem-06.html")
+	t.Logf("HarnessStatus: %s, Tests: %d", result.HarnessStatus, len(result.Tests))
+	passed := 0
+	failed := 0
+	for _, test := range result.Tests {
+		if test.Status != StatusPass {
+			failed++
+			t.Logf("  [FAIL] %s: %s", test.Name, test.Message)
+		} else {
+			passed++
+		}
+	}
+	t.Logf("Summary: %d passed, %d failed", passed, failed)
+}
+
+// TestWPTNamedItem07 tests document named item access for object elements
+func TestWPTNamedItem07(t *testing.T) {
+	wptPath := "/workspaces/wpt"
+	if _, err := os.Stat(wptPath); os.IsNotExist(err) {
+		t.Skip("WPT not available")
+	}
+	runner := NewRunner(wptPath)
+	runner.Timeout = 30 * time.Second
+	result := runner.RunTestFile("/html/dom/documents/dom-tree-accessors/nameditem-07.html")
+	t.Logf("HarnessStatus: %s, Tests: %d", result.HarnessStatus, len(result.Tests))
+	passed := 0
+	failed := 0
+	for _, test := range result.Tests {
+		if test.Status != StatusPass {
+			failed++
+			t.Logf("  [FAIL] %s: %s", test.Name, test.Message)
+		} else {
+			passed++
+		}
+	}
+	t.Logf("Summary: %d passed, %d failed", passed, failed)
+}
+
+// TestWPTNamedItem08 tests document named item access edge cases
+func TestWPTNamedItem08(t *testing.T) {
+	wptPath := "/workspaces/wpt"
+	if _, err := os.Stat(wptPath); os.IsNotExist(err) {
+		t.Skip("WPT not available")
+	}
+	runner := NewRunner(wptPath)
+	runner.Timeout = 30 * time.Second
+	result := runner.RunTestFile("/html/dom/documents/dom-tree-accessors/nameditem-08.html")
+	t.Logf("HarnessStatus: %s, Tests: %d", result.HarnessStatus, len(result.Tests))
+	passed := 0
+	failed := 0
+	for _, test := range result.Tests {
+		if test.Status != StatusPass {
+			failed++
+			t.Logf("  [FAIL] %s: %s", test.Name, test.Message)
+		} else {
+			passed++
+		}
+	}
+	t.Logf("Summary: %d passed, %d failed", passed, failed)
+}

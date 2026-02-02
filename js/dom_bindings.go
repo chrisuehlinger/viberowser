@@ -2726,15 +2726,21 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 	// Child node properties (document can have children)
 	b.bindNodeProperties(jsDoc, doc.AsNode())
 
+	// Wrap in proxy for named property access (document[name])
+	jsDocProxy := b.wrapDocumentWithNamedPropertyAccess(jsDoc, doc)
+
+	// Update the cache to point to the proxy
+	b.nodeMap[doc.AsNode()] = jsDocProxy
+
 	// Set document on runtime without mutex (we're already in runtime context)
 	// Only set the global document once - the first document bound becomes the global one.
 	// Subsequent documents (e.g., iframe documents accessed via ownerDocument) should not
 	// replace the global document.
 	if !b.globalDocumentSet {
-		b.runtime.setDocumentDirect(jsDoc)
+		b.runtime.setDocumentDirect(jsDocProxy)
 		b.globalDocumentSet = true
 	}
-	return jsDoc
+	return jsDocProxy
 }
 
 // BindIframeDocument binds a document for use in an iframe without setting it as the global document.
@@ -3423,8 +3429,14 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 	// Child node properties (document can have children)
 	b.bindNodeProperties(jsDoc, doc.AsNode())
 
+	// Wrap in proxy for named property access (document[name])
+	jsDocProxy := b.wrapDocumentWithNamedPropertyAccess(jsDoc, doc)
+
+	// Update the cache to point to the proxy
+	b.nodeMap[doc.AsNode()] = jsDocProxy
+
 	// Do NOT set global document here - this is for internal documents
-	return jsDoc
+	return jsDocProxy
 }
 
 // bindXMLDocument creates a JavaScript object for an XMLDocument.
@@ -4520,6 +4532,12 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		b.bindFormControlProperties(jsEl, el)
 	}
 
+	// Add name property for elements that expose it per HTML spec
+	// These are: img, embed, form, iframe, object (and input is handled in bindInputProperties)
+	if ns == dom.HTMLNamespace && (localName == "img" || localName == "embed" || localName == "form" || localName == "iframe" || localName == "object") {
+		b.bindNameProperty(jsEl, el)
+	}
+
 	// Add output-specific properties (htmlFor)
 	if el.LocalName() == "output" && ns == dom.HTMLNamespace {
 		b.bindOutputProperties(jsEl, el)
@@ -4699,6 +4717,22 @@ func (b *DOMBinder) bindRelList(jsEl *goja.Object, el *dom.Element) {
 		// Per spec, assigning to relList sets the rel attribute value
 		if len(call.Arguments) > 0 {
 			el.SetAttribute("rel", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+}
+
+// bindNameProperty adds the name property to elements that expose it.
+// Per HTML spec, img, embed, form, iframe, and object elements have a name property
+// that reflects the name content attribute.
+func (b *DOMBinder) bindNameProperty(jsEl *goja.Object, el *dom.Element) {
+	vm := b.runtime.vm
+
+	jsEl.DefineAccessorProperty("name", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.GetAttribute("name"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("name", call.Arguments[0].String())
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
@@ -10061,6 +10095,145 @@ func (b *DOMBinder) BindDOMTokenList(tokenList *dom.DOMTokenList) *goja.Object {
 	b.domTokenListCache[tokenList] = proxyObj
 
 	return proxyObj
+}
+
+// wrapDocumentWithNamedPropertyAccess wraps a document object with a proxy
+// to support named property access (document[name]) per the HTML spec.
+// Per https://html.spec.whatwg.org/multipage/dom.html#dom-document-nameditem
+func (b *DOMBinder) wrapDocumentWithNamedPropertyAccess(jsDoc *goja.Object, doc *dom.Document) *goja.Object {
+	vm := b.runtime.vm
+
+	// Create a proxy for named property access
+	proxy := vm.NewProxy(jsDoc, &goja.ProxyTrapConfig{
+		// Get property - intercept named property access
+		Get: func(target *goja.Object, property string, receiver goja.Value) goja.Value {
+			// First check if the property exists on the target (built-in properties/methods)
+			val := target.Get(property)
+			if val != nil && !goja.IsUndefined(val) {
+				return val
+			}
+
+			// Check for named item
+			namedItem := doc.NamedItem(property)
+			if namedItem != nil {
+				return b.bindDocumentNamedItem(namedItem, property)
+			}
+
+			return goja.Undefined()
+		},
+
+		// Set property - document named properties cannot be set
+		Set: func(target *goja.Object, property string, value goja.Value, receiver goja.Value) bool {
+			// Check if this would shadow a named property
+			if doc.HasNamedItem(property) {
+				// Named properties cannot be overwritten
+				return false
+			}
+			// Allow setting non-named properties
+			return target.Set(property, value) == nil
+		},
+
+		// Has property - check for named items
+		Has: func(target *goja.Object, property string) bool {
+			// Check target first - use a non-nil AND non-undefined check
+			val := target.Get(property)
+			if val != nil && !goja.IsUndefined(val) {
+				return true
+			}
+			// Check named items
+			return doc.HasNamedItem(property)
+		},
+
+		// OwnKeys - return all property names including named items
+		OwnKeys: func(target *goja.Object) *goja.Object {
+			keys := make([]interface{}, 0)
+
+			// Get target's own keys
+			targetKeys := target.Keys()
+			for _, k := range targetKeys {
+				keys = append(keys, k)
+			}
+
+			// Add named properties
+			for _, name := range doc.NamedProperties() {
+				keys = append(keys, name)
+			}
+
+			return vm.ToValue(keys).ToObject(vm)
+		},
+
+		// GetOwnPropertyDescriptor - return descriptors for named items
+		GetOwnPropertyDescriptor: func(target *goja.Object, prop string) goja.PropertyDescriptor {
+			// Check target first
+			// Note: We can't easily get the descriptor from target, so check if the property exists
+			val := target.Get(prop)
+			if val != nil && !goja.IsUndefined(val) {
+				// Return a standard descriptor for built-in properties
+				return goja.PropertyDescriptor{
+					Value:        val,
+					Writable:     goja.FLAG_TRUE,
+					Enumerable:   goja.FLAG_TRUE,
+					Configurable: goja.FLAG_TRUE,
+				}
+			}
+
+			// Check named items
+			namedItem := doc.NamedItem(prop)
+			if namedItem != nil {
+				return goja.PropertyDescriptor{
+					Value:        b.bindDocumentNamedItem(namedItem, prop),
+					Writable:     goja.FLAG_FALSE,
+					Enumerable:   goja.FLAG_TRUE, // Named properties are enumerable
+					Configurable: goja.FLAG_TRUE,
+				}
+			}
+
+			return goja.PropertyDescriptor{}
+		},
+
+		// Delete property - named properties cannot be deleted
+		DeleteProperty: func(target *goja.Object, property string) bool {
+			if doc.HasNamedItem(property) {
+				return false // Cannot delete named properties
+			}
+			// Allow deleting non-named properties
+			err := target.Delete(property)
+			return err == nil
+		},
+	})
+
+	return vm.ToValue(proxy).ToObject(vm)
+}
+
+// bindDocumentNamedItem binds a DocumentNamedItem result to JavaScript.
+// Per the HTML spec:
+// - If it's a single element, return the element (or contentWindow for iframes)
+// - If it's multiple elements, return an HTMLCollection
+func (b *DOMBinder) bindDocumentNamedItem(item *dom.DocumentNamedItem, name string) goja.Value {
+	if item.Collection != nil {
+		return b.BindHTMLCollection(item.Collection)
+	}
+
+	el := item.Element
+	if el == nil {
+		return goja.Undefined()
+	}
+
+	// Per the HTML spec, iframes return their contentWindow, not the element itself
+	localName := el.LocalName()
+	if localName == "iframe" && el.NamespaceURI() == dom.HTMLNamespace {
+		// Try to get the contentWindow through the iframe content provider
+		if b.iframeContentProvider != nil {
+			contentWindow, _ := b.iframeContentProvider(el)
+			if contentWindow != nil {
+				return contentWindow
+			}
+		}
+		// If no content provider or no contentWindow, return the element
+		return b.BindElement(el)
+	}
+
+	return b.BindElement(el)
 }
 
 // createEmptyNodeList returns an empty NodeList-like object.

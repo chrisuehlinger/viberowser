@@ -1929,3 +1929,209 @@ func (d *Document) GetFocusedElement() *Element {
 	}
 	return nil
 }
+
+// DocumentNamedItem represents the result of a document named item access.
+// It can be a single element or a collection of elements.
+type DocumentNamedItem struct {
+	Element    *Element        // Single element (when only one matches)
+	Collection *HTMLCollection // Collection (when multiple match)
+}
+
+// isNamedAccessibleElement returns true if the element type is one that
+// exposes names to document named item access per the HTML spec.
+// Per https://html.spec.whatwg.org/multipage/dom.html#dom-document-nameditem
+// The exposed elements are: embed, form, iframe, img, object (with name)
+// and object (with id), img (with both name and id).
+func isNamedAccessibleElement(el *Element) bool {
+	if el.NamespaceURI() != HTMLNamespace {
+		return false
+	}
+	localName := strings.ToLower(el.LocalName())
+	switch localName {
+	case "embed", "form", "iframe", "img", "object":
+		return true
+	default:
+		return false
+	}
+}
+
+// shouldExposeNameAttribute returns true if the element exposes its name attribute.
+// Per the HTML spec, embed, form, iframe, img, and object expose their name attribute.
+func shouldExposeNameAttribute(el *Element) bool {
+	localName := strings.ToLower(el.LocalName())
+	switch localName {
+	case "embed", "form", "iframe", "img", "object":
+		return true
+	default:
+		return false
+	}
+}
+
+// shouldExposeIdAttribute returns true if the element exposes its id attribute
+// for document named property access.
+// Per the HTML spec, only object and img (when img has name) expose id.
+// Actually, per closer reading: object always exposes id, but img only exposes
+// id when it also has a name attribute.
+func shouldExposeIdAttribute(el *Element) bool {
+	localName := strings.ToLower(el.LocalName())
+	switch localName {
+	case "object":
+		return true
+	case "img":
+		// img exposes id only if it has a name attribute
+		return el.GetAttribute("name") != ""
+	default:
+		return false
+	}
+}
+
+// isInsideExcludedElement returns true if the element is inside an embed or object element.
+// Elements inside these are not exposed per the HTML spec.
+func isInsideExcludedElement(el *Element) bool {
+	for parent := el.AsNode().parentNode; parent != nil; parent = parent.parentNode {
+		if parent.nodeType == ElementNode {
+			parentEl := (*Element)(parent)
+			if parentEl.NamespaceURI() == HTMLNamespace {
+				localName := strings.ToLower(parentEl.LocalName())
+				if localName == "embed" || localName == "object" {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// NamedItem returns the named item(s) with the given name from the document.
+// This implements the HTML spec's "dom-document-nameditem" algorithm.
+// Returns nil if no matching elements are found.
+// Per the HTML spec:
+// - Returns a single Element if exactly one element matches
+// - Returns an HTMLCollection if multiple elements match
+// - For iframes, the Window (contentWindow) should be returned, but that's
+//   handled at the JavaScript binding level.
+func (d *Document) NamedItem(name string) *DocumentNamedItem {
+	if name == "" {
+		return nil
+	}
+
+	var matches []*Element
+
+	// Traverse the document tree looking for matching elements
+	d.collectNamedElements(d.AsNode(), name, &matches)
+
+	if len(matches) == 0 {
+		return nil
+	}
+
+	if len(matches) == 1 {
+		return &DocumentNamedItem{Element: matches[0]}
+	}
+
+	// Multiple matches - return as a collection
+	collection := newHTMLCollection(d.AsNode(), func(el *Element) bool {
+		// Check if this element matches the name
+		if !isNamedAccessibleElement(el) {
+			return false
+		}
+		if isInsideExcludedElement(el) {
+			return false
+		}
+		// Check name attribute
+		if shouldExposeNameAttribute(el) && el.GetAttribute("name") == name {
+			return true
+		}
+		// Check id attribute
+		if shouldExposeIdAttribute(el) && el.Id() == name {
+			return true
+		}
+		return false
+	})
+
+	return &DocumentNamedItem{Collection: collection}
+}
+
+// collectNamedElements collects elements that match the given name.
+func (d *Document) collectNamedElements(node *Node, name string, matches *[]*Element) {
+	for child := node.firstChild; child != nil; child = child.nextSibling {
+		if child.nodeType == ElementNode {
+			el := (*Element)(child)
+
+			// Skip elements inside excluded containers
+			if isInsideExcludedElement(el) {
+				continue
+			}
+
+			if isNamedAccessibleElement(el) {
+				// Check name attribute
+				if shouldExposeNameAttribute(el) && el.GetAttribute("name") == name {
+					*matches = append(*matches, el)
+				} else if shouldExposeIdAttribute(el) && el.Id() == name {
+					// Check id attribute (only for object, and img with name)
+					*matches = append(*matches, el)
+				}
+			}
+
+			// Recurse into children (but not into embed/object)
+			localName := strings.ToLower(el.LocalName())
+			if el.NamespaceURI() != HTMLNamespace || (localName != "embed" && localName != "object") {
+				d.collectNamedElements(child, name, matches)
+			}
+		}
+	}
+}
+
+// NamedProperties returns all named properties exposed by the document.
+// This returns names in tree order, suitable for Object.getOwnPropertyNames().
+func (d *Document) NamedProperties() []string {
+	seen := make(map[string]bool)
+	var names []string
+
+	d.collectNamedProperties(d.AsNode(), seen, &names)
+
+	return names
+}
+
+// collectNamedProperties collects all exposed named property names.
+func (d *Document) collectNamedProperties(node *Node, seen map[string]bool, names *[]string) {
+	for child := node.firstChild; child != nil; child = child.nextSibling {
+		if child.nodeType == ElementNode {
+			el := (*Element)(child)
+
+			// Skip elements inside excluded containers
+			if isInsideExcludedElement(el) {
+				continue
+			}
+
+			if isNamedAccessibleElement(el) {
+				// Check name attribute
+				if shouldExposeNameAttribute(el) {
+					name := el.GetAttribute("name")
+					if name != "" && !seen[name] {
+						seen[name] = true
+						*names = append(*names, name)
+					}
+				}
+				// Check id attribute (only for object, and img with name)
+				if shouldExposeIdAttribute(el) {
+					id := el.Id()
+					if id != "" && !seen[id] {
+						seen[id] = true
+						*names = append(*names, id)
+					}
+				}
+			}
+
+			// Recurse into children (but not into embed/object)
+			localName := strings.ToLower(el.LocalName())
+			if el.NamespaceURI() != HTMLNamespace || (localName != "embed" && localName != "object") {
+				d.collectNamedProperties(child, seen, names)
+			}
+		}
+	}
+}
+
+// HasNamedItem returns true if the document has a named item with the given name.
+func (d *Document) HasNamedItem(name string) bool {
+	return d.NamedItem(name) != nil
+}

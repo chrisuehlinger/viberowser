@@ -654,6 +654,16 @@ func HTMLDOMDocumentTreeAccessorsPassingTests() []string {
 		"document.title-08.html",
 		"document.title-09.html",
 		"document.title-not-in-html-svg.html",
+		// Document named item tests (document[name] access)
+		"nameditem-01.html",
+		"nameditem-02.html",
+		"nameditem-03.html",
+		"nameditem-04.html",
+		"nameditem-05.html",
+		"nameditem-06.html",
+		"nameditem-07.html",
+		"nameditem-08.html",
+		// Note: nameditem-names.html has 1 failing test due to HTML parsing of void elements
 	}
 }
 
