@@ -500,6 +500,104 @@ func TestRange_IntersectsNode(t *testing.T) {
 	}
 }
 
+func TestRange_IntersectsNode_ShadowDOM(t *testing.T) {
+	// Test that intersectsNode returns false for nodes in different trees (shadow DOM)
+	doc := NewDocument()
+	body := doc.CreateElement("body")
+	doc.AsNode().AppendChild(body.AsNode())
+
+	// Create a host element with a shadow root
+	host := doc.CreateElement("div")
+	body.AsNode().AppendChild(host.AsNode())
+
+	// Attach shadow root
+	shadowRoot, err := host.AttachShadow(ShadowRootModeOpen, nil)
+	if err != nil {
+		t.Fatalf("Failed to attach shadow root: %v", err)
+	}
+
+	// Add a span inside the shadow DOM
+	shadowSpan := doc.CreateElement("span")
+	shadowRoot.AsNode().AppendChild(shadowSpan.AsNode())
+
+	// Create a range that selects the body
+	r := doc.CreateRange()
+	r.SelectNodeContents(body.AsNode())
+
+	// Range should intersect the host element (it's in the light DOM)
+	if !r.IntersectsNode(host.AsNode()) {
+		t.Error("Range should intersect the host element")
+	}
+
+	// Range should NOT intersect the shadow root (different tree)
+	if r.IntersectsNode(shadowRoot.AsNode()) {
+		t.Error("Range should NOT intersect the shadow root (different tree)")
+	}
+
+	// Range should NOT intersect nodes inside the shadow DOM (different tree)
+	if r.IntersectsNode(shadowSpan.AsNode()) {
+		t.Error("Range should NOT intersect nodes inside shadow DOM (different tree)")
+	}
+}
+
+func TestRange_IntersectsNode_AllSpans(t *testing.T) {
+	// Test from WPT Range-intersectsNode-2.html
+	doc := NewDocument()
+	div := doc.CreateElement("div")
+	doc.AsNode().AppendChild(div.AsNode())
+
+	s0 := doc.CreateElement("span")
+	s1 := doc.CreateElement("span")
+	s2 := doc.CreateElement("span")
+	div.AsNode().AppendChild(s0.AsNode())
+	div.AsNode().AppendChild(s1.AsNode())
+	div.AsNode().AppendChild(s2.AsNode())
+
+	r := doc.CreateRange()
+
+	// Test 1: Range enclosing s0 (offset 0 to 1)
+	r.SetStart(div.AsNode(), 0)
+	r.SetEnd(div.AsNode(), 1)
+
+	if !r.IntersectsNode(s0.AsNode()) {
+		t.Error("Range [0,1] should intersect s0")
+	}
+	if r.IntersectsNode(s1.AsNode()) {
+		t.Error("Range [0,1] should NOT intersect s1")
+	}
+	if r.IntersectsNode(s2.AsNode()) {
+		t.Error("Range [0,1] should NOT intersect s2")
+	}
+
+	// Test 2: Range enclosing s1 (offset 1 to 2)
+	r.SetStart(div.AsNode(), 1)
+	r.SetEnd(div.AsNode(), 2)
+
+	if r.IntersectsNode(s0.AsNode()) {
+		t.Error("Range [1,2] should NOT intersect s0")
+	}
+	if !r.IntersectsNode(s1.AsNode()) {
+		t.Error("Range [1,2] should intersect s1")
+	}
+	if r.IntersectsNode(s2.AsNode()) {
+		t.Error("Range [1,2] should NOT intersect s2")
+	}
+
+	// Test 3: Range enclosing s2 (offset 2 to 3)
+	r.SetStart(div.AsNode(), 2)
+	r.SetEnd(div.AsNode(), 3)
+
+	if r.IntersectsNode(s0.AsNode()) {
+		t.Error("Range [2,3] should NOT intersect s0")
+	}
+	if r.IntersectsNode(s1.AsNode()) {
+		t.Error("Range [2,3] should NOT intersect s1")
+	}
+	if !r.IntersectsNode(s2.AsNode()) {
+		t.Error("Range [2,3] should intersect s2")
+	}
+}
+
 // Tests for Range live mutation tracking
 
 func TestRange_MutationAppendChild(t *testing.T) {

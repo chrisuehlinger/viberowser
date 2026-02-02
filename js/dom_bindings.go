@@ -6820,15 +6820,15 @@ func (b *DOMBinder) BindRange(r *dom.Range) *goja.Object {
 
 	jsRange.Set("intersectsNode", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
-			panic(vm.NewTypeError("Failed to execute 'intersectsNode' on 'Range': 1 argument required."))
+			panic(vm.NewTypeError("Failed to execute 'intersectsNode' on 'Range': 1 argument required, but only 0 present."))
 		}
 		nodeArg := call.Arguments[0]
 		if goja.IsNull(nodeArg) || goja.IsUndefined(nodeArg) {
-			return vm.ToValue(false)
+			panic(vm.NewTypeError("Failed to execute 'intersectsNode' on 'Range': parameter 1 is not of type 'Node'."))
 		}
 		node := b.getGoNode(nodeArg.ToObject(vm))
 		if node == nil {
-			return vm.ToValue(false)
+			panic(vm.NewTypeError("Failed to execute 'intersectsNode' on 'Range': parameter 1 is not of type 'Node'."))
 		}
 		return vm.ToValue(r.IntersectsNode(node))
 	})

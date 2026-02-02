@@ -869,38 +869,47 @@ func (r *Range) ComparePoint(node *Node, offset int) (int, error) {
 }
 
 // IntersectsNode returns true if the range intersects the given node.
+// Per DOM spec: https://dom.spec.whatwg.org/#dom-range-intersectsnode
+// 1. If range's root is not the same as node's root, return false
+// 2. Let parent be node's parent
+// 3. If parent is null, return true
+// 4. Let offset be node's index
+// 5. If (parent, offset) is before range's end and (parent, offset + 1) is after range's start, return true
+// 6. Return false
 func (r *Range) IntersectsNode(node *Node) bool {
 	if node == nil {
 		return false
 	}
 
-	// Check same document
-	doc := node.OwnerDocument()
-	if doc == nil {
-		doc = (*Document)(node) // node might be the document
-	}
-	if doc != r.ownerDocument {
+	// Step 1: Check if range's root is the same as node's root
+	// The range's root is the root of the tree containing the start container
+	rangeRoot := r.startContainer.GetRootNode()
+	nodeRoot := node.GetRootNode()
+	if rangeRoot != nodeRoot {
 		return false
 	}
 
+	// Step 2-3: If parent is null, return true
 	parent := node.parentNode
 	if parent == nil {
-		return true // rootNode
+		return true
 	}
 
+	// Step 4: Get node's index within parent
 	offset := indexOfChild(parent, node)
 
-	// Compare node's start to range's end
-	if r.comparePoints(parent, offset, r.endContainer, r.endOffset) > 0 {
-		return false
+	// Step 5: Check if (parent, offset) is before range's end AND (parent, offset+1) is after range's start
+	// "before" means comparePoints returns < 0
+	// "after" means comparePoints returns > 0
+	beforeEnd := r.comparePoints(parent, offset, r.endContainer, r.endOffset) < 0
+	afterStart := r.comparePoints(parent, offset+1, r.startContainer, r.startOffset) > 0
+
+	if beforeEnd && afterStart {
+		return true
 	}
 
-	// Compare node's end to range's start
-	if r.comparePoints(parent, offset+1, r.startContainer, r.startOffset) < 0 {
-		return false
-	}
-
-	return true
+	// Step 6: Return false
+	return false
 }
 
 // Helper functions
