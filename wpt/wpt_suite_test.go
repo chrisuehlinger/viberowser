@@ -349,6 +349,7 @@ func DOMEventsPassingTests() []string {
 		"Event-dispatch-bubbles-true.html",
 		"Event-dispatch-click.tentative.html",
 		"Event-dispatch-detached-click.html",
+		"Event-dispatch-detached-input-and-change.html",
 		"Event-dispatch-multiple-cancelBubble.html",
 		"Event-dispatch-multiple-stopPropagation.html",
 		"Event-dispatch-omitted-capture.html",

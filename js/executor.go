@@ -203,7 +203,15 @@ func NewScriptExecutor(runtime *Runtime) *ScriptExecutor {
 				return
 			}
 
-			vm := runtime.vm
+			// Per HTML spec, input and change events should only fire if the element
+			// is connected to a document. Detached elements should not emit these events.
+			goNode := domBinder.getGoNode(result.Element)
+			if goNode == nil {
+				return
+			}
+			if !goNode.IsConnected() {
+				return
+			}
 
 			// Fire 'input' event on the element
 			// Per HTML spec, input event bubbles but is not cancelable
@@ -229,9 +237,6 @@ func NewScriptExecutor(runtime *Runtime) *ScriptExecutor {
 			if fn, ok := goja.AssertFunction(dispatchEvent); ok {
 				fn(result.Element, changeEvent)
 			}
-
-			// Avoid unused variable warning
-			_ = vm
 		},
 	)
 
