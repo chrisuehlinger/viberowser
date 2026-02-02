@@ -1815,3 +1815,777 @@ func (e *Element) IsFocusable() bool {
 		return false
 	}
 }
+
+// ============================================================================
+// Form-related methods
+// ============================================================================
+
+// isFormAssociatedElement returns true for elements that can be associated with forms.
+// Per HTML spec: button, fieldset, input, object, output, select, textarea, img.
+func (e *Element) isFormAssociatedElement() bool {
+	localName := strings.ToLower(e.LocalName())
+	switch localName {
+	case "button", "fieldset", "input", "object", "output", "select", "textarea", "img":
+		return true
+	default:
+		return false
+	}
+}
+
+// isListedElement returns true for form-associated elements that are listed.
+// Per HTML spec: button, fieldset, input, output, select, textarea (not img, object).
+func (e *Element) isListedElement() bool {
+	localName := strings.ToLower(e.LocalName())
+	switch localName {
+	case "button", "fieldset", "input", "output", "select", "textarea":
+		return true
+	default:
+		return false
+	}
+}
+
+// isSubmittableElement returns true for submittable elements.
+// Per HTML spec: button, input, select, textarea.
+func (e *Element) isSubmittableElement() bool {
+	localName := strings.ToLower(e.LocalName())
+	switch localName {
+	case "button", "input", "select", "textarea":
+		return true
+	default:
+		return false
+	}
+}
+
+// Form returns the form element that owns this form control.
+// Per HTML spec, the form owner is:
+// 1. If the element has a form attribute with an ID, the form element with that ID
+// 2. Otherwise, the nearest ancestor form element
+// Returns nil if no form owner.
+func (e *Element) Form() *Element {
+	if !e.isFormAssociatedElement() {
+		return nil
+	}
+
+	// Check for explicit form attribute (form attribute override)
+	if e.HasAttribute("form") {
+		formId := e.GetAttribute("form")
+		if formId != "" {
+			// Find form element with this ID in the document
+			doc := e.AsNode().OwnerDocument()
+			if doc != nil {
+				formEl := doc.GetElementById(formId)
+				if formEl != nil && strings.ToLower(formEl.LocalName()) == "form" {
+					return formEl
+				}
+			}
+		}
+		// If form attribute is present but doesn't match a form, no form owner
+		return nil
+	}
+
+	// Walk up the tree to find ancestor form
+	for node := e.AsNode().ParentNode(); node != nil; node = node.ParentNode() {
+		if node.NodeType() == ElementNode {
+			el := (*Element)(node)
+			if strings.ToLower(el.LocalName()) == "form" {
+				return el
+			}
+		}
+	}
+
+	return nil
+}
+
+// FormElements returns the HTMLFormControlsCollection for a form element.
+// This collects all form controls owned by this form.
+// Per HTML spec, this includes listed elements whose form owner is this form.
+func (e *Element) FormElements() *HTMLCollection {
+	if strings.ToLower(e.LocalName()) != "form" {
+		return nil
+	}
+
+	doc := e.AsNode().OwnerDocument()
+	if doc == nil {
+		return newHTMLCollection(e.AsNode(), func(el *Element) bool { return false })
+	}
+
+	docEl := doc.DocumentElement()
+	if docEl == nil {
+		return newHTMLCollection(e.AsNode(), func(el *Element) bool { return false })
+	}
+
+	// Return a live collection
+	// Create a filter function that checks if element is a form control owned by this form
+	formEl := e
+	return newHTMLCollection(docEl.AsNode(), func(el *Element) bool {
+		return el.isListedElement() && el.Form() == formEl
+	})
+}
+
+// FormLength returns the number of elements in the form's elements collection.
+func (e *Element) FormLength() int {
+	elements := e.FormElements()
+	if elements == nil {
+		return 0
+	}
+	return elements.Length()
+}
+
+// FormReset resets all form controls to their default values.
+// Per HTML spec: https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#resetting-a-form
+func (e *Element) FormReset() {
+	if strings.ToLower(e.LocalName()) != "form" {
+		return
+	}
+
+	elements := e.FormElements()
+	if elements == nil {
+		return
+	}
+
+	for i := 0; i < elements.Length(); i++ {
+		item := elements.Item(i)
+		if item == nil {
+			continue
+		}
+		el := item
+
+		localName := strings.ToLower(el.LocalName())
+		switch localName {
+		case "input":
+			inputType := strings.ToLower(el.GetAttribute("type"))
+			switch inputType {
+			case "checkbox", "radio":
+				// Reset to default checked state
+				data := el.InputData()
+				data.checkedDirty = false
+				data.checked = el.HasAttribute("checked")
+			case "hidden", "submit", "image", "reset", "button":
+				// These don't have resettable values
+			default:
+				// Text, password, email, url, tel, search, etc.
+				// Reset value to default value (value attribute)
+				data := el.InputData()
+				data.valueDirty = false
+				data.value = el.GetAttribute("value")
+			}
+		case "textarea":
+			// Reset to default value (text content)
+			data := el.InputData()
+			data.valueDirty = false
+			data.value = el.TextContent()
+		case "select":
+			// Reset to default selection
+			// For now, just clear dirty flag
+			data := el.InputData()
+			data.valueDirty = false
+		case "output":
+			// Reset to default value (stored in defaultValue)
+			// For now, no-op
+		}
+	}
+}
+
+// ValidityState represents the validity of a form control.
+type ValidityState struct {
+	ValueMissing    bool
+	TypeMismatch    bool
+	PatternMismatch bool
+	TooLong         bool
+	TooShort        bool
+	RangeUnderflow  bool
+	RangeOverflow   bool
+	StepMismatch    bool
+	BadInput        bool
+	CustomError     bool
+	Valid           bool
+
+	// Custom validation message set via setCustomValidity
+	customMessage string
+}
+
+// Message returns the validation message for the validity state.
+func (v *ValidityState) Message() string {
+	return v.customMessage
+}
+
+// SetCustomValidity sets a custom validation message.
+func (v *ValidityState) SetCustomValidity(message string) {
+	v.customMessage = message
+	v.CustomError = message != ""
+	v.updateValid()
+}
+
+// updateValid updates the Valid flag based on all other flags.
+func (v *ValidityState) updateValid() {
+	v.Valid = !v.ValueMissing && !v.TypeMismatch && !v.PatternMismatch &&
+		!v.TooLong && !v.TooShort && !v.RangeUnderflow && !v.RangeOverflow &&
+		!v.StepMismatch && !v.BadInput && !v.CustomError
+}
+
+// Validity returns the ValidityState for this form control.
+func (e *Element) Validity() *ValidityState {
+	// Create a new validity state based on current element state
+	validity := &ValidityState{Valid: true}
+
+	localName := strings.ToLower(e.LocalName())
+	if localName != "input" && localName != "select" && localName != "textarea" && localName != "button" {
+		return validity
+	}
+
+	// Check required constraint
+	if e.HasAttribute("required") {
+		var isEmpty bool
+		switch localName {
+		case "input":
+			inputType := strings.ToLower(e.GetAttribute("type"))
+			switch inputType {
+			case "checkbox":
+				isEmpty = !e.Checked()
+			case "radio":
+				// For radio, check if any radio in the group is checked
+				isEmpty = !e.Checked()
+				// TODO: check radio group
+			default:
+				isEmpty = e.InputValue() == ""
+			}
+		case "select":
+			isEmpty = e.SelectValue() == ""
+		case "textarea":
+			isEmpty = e.TextAreaValue() == ""
+		}
+		if isEmpty {
+			validity.ValueMissing = true
+		}
+	}
+
+	// TODO: Add more validation checks (pattern, min, max, step, etc.)
+
+	validity.updateValid()
+	return validity
+}
+
+// CheckValidity checks whether the element satisfies its constraints.
+// Returns true if valid, false if invalid.
+// Fires an "invalid" event if invalid.
+func (e *Element) CheckValidity() bool {
+	validity := e.Validity()
+	if !validity.Valid {
+		// TODO: Fire invalid event
+		return false
+	}
+	return true
+}
+
+// ReportValidity checks validity and reports to the user if invalid.
+// Returns true if valid, false if invalid.
+func (e *Element) ReportValidity() bool {
+	return e.CheckValidity()
+	// TODO: Show validation message to user
+}
+
+// SetCustomValidity sets a custom validation message for the element.
+func (e *Element) SetCustomValidity(message string) {
+	// Store custom validity message
+	// For now, we'll need to store this somewhere - perhaps in inputData
+	data := e.InputData()
+	if data != nil {
+		// We need to extend InputData to hold custom validity
+		// For now, this is a no-op
+	}
+}
+
+// ValidationMessage returns the validation message for the element.
+func (e *Element) ValidationMessage() string {
+	validity := e.Validity()
+	if validity.Valid {
+		return ""
+	}
+	if validity.customMessage != "" {
+		return validity.customMessage
+	}
+	if validity.ValueMissing {
+		return "Please fill out this field."
+	}
+	if validity.TypeMismatch {
+		return "Please enter a valid value."
+	}
+	if validity.PatternMismatch {
+		return "Please match the requested format."
+	}
+	if validity.TooLong {
+		return "Please shorten this text."
+	}
+	if validity.TooShort {
+		return "Please lengthen this text."
+	}
+	if validity.RangeUnderflow {
+		return "Value must be greater than or equal to the minimum."
+	}
+	if validity.RangeOverflow {
+		return "Value must be less than or equal to the maximum."
+	}
+	if validity.StepMismatch {
+		return "Please select a valid value."
+	}
+	if validity.BadInput {
+		return "Please enter a valid value."
+	}
+	return ""
+}
+
+// WillValidate returns whether the element will be validated when the form is submitted.
+func (e *Element) WillValidate() bool {
+	localName := strings.ToLower(e.LocalName())
+	if localName != "input" && localName != "select" && localName != "textarea" && localName != "button" {
+		return false
+	}
+
+	// Disabled elements don't validate
+	if e.Disabled() {
+		return false
+	}
+
+	// Certain input types don't validate
+	if localName == "input" {
+		inputType := strings.ToLower(e.GetAttribute("type"))
+		switch inputType {
+		case "hidden", "reset", "button":
+			return false
+		}
+	}
+
+	// Button type="button" doesn't validate
+	if localName == "button" {
+		buttonType := strings.ToLower(e.GetAttribute("type"))
+		if buttonType == "button" {
+			return false
+		}
+	}
+
+	// Elements with datalist ancestor don't validate
+	for node := e.AsNode().ParentNode(); node != nil; node = node.ParentNode() {
+		if node.NodeType() == ElementNode {
+			el := (*Element)(node)
+			if strings.ToLower(el.LocalName()) == "datalist" {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+// ============================================================================
+// HTMLSelectElement methods
+// ============================================================================
+
+// SelectValue returns the value of a select element.
+func (e *Element) SelectValue() string {
+	if strings.ToLower(e.LocalName()) != "select" {
+		return ""
+	}
+
+	// Find the first selected option
+	options := e.SelectOptions()
+	for i := 0; i < options.Length(); i++ {
+		opt := options.Item(i)
+		if opt != nil && opt.HasAttribute("selected") {
+			// Return the value attribute or text content
+			if opt.HasAttribute("value") {
+				return opt.GetAttribute("value")
+			}
+			return opt.TextContent()
+		}
+	}
+
+	// If no option is selected, return first option's value (if any)
+	if options.Length() > 0 {
+		opt := options.Item(0)
+		if opt != nil {
+			if opt.HasAttribute("value") {
+				return opt.GetAttribute("value")
+			}
+			return opt.TextContent()
+		}
+	}
+
+	return ""
+}
+
+// SetSelectValue sets the value of a select element.
+func (e *Element) SetSelectValue(value string) {
+	if strings.ToLower(e.LocalName()) != "select" {
+		return
+	}
+
+	// Find and select the option with matching value
+	options := e.SelectOptions()
+	for i := 0; i < options.Length(); i++ {
+		opt := options.Item(i)
+		if opt == nil {
+			continue
+		}
+		optValue := opt.GetAttribute("value")
+		if !opt.HasAttribute("value") {
+			optValue = opt.TextContent()
+		}
+		if optValue == value {
+			opt.SetAttribute("selected", "")
+		} else {
+			opt.RemoveAttribute("selected")
+		}
+	}
+}
+
+// SelectOptions returns the options collection for a select element.
+func (e *Element) SelectOptions() *HTMLCollection {
+	if strings.ToLower(e.LocalName()) != "select" {
+		return nil
+	}
+
+	return newHTMLCollection(e.AsNode(), func(el *Element) bool {
+		return strings.ToLower(el.LocalName()) == "option"
+	})
+}
+
+// SelectedIndex returns the index of the first selected option, or -1.
+func (e *Element) SelectedIndex() int {
+	if strings.ToLower(e.LocalName()) != "select" {
+		return -1
+	}
+
+	options := e.SelectOptions()
+	for i := 0; i < options.Length(); i++ {
+		opt := options.Item(i)
+		if opt != nil && opt.HasAttribute("selected") {
+			return i
+		}
+	}
+
+	// If no option is selected, return 0 if there are options (first is implicitly selected)
+	if options.Length() > 0 {
+		return 0
+	}
+
+	return -1
+}
+
+// SetSelectedIndex sets the selected option by index.
+func (e *Element) SetSelectedIndex(index int) {
+	if strings.ToLower(e.LocalName()) != "select" {
+		return
+	}
+
+	options := e.SelectOptions()
+	for i := 0; i < options.Length(); i++ {
+		opt := options.Item(i)
+		if opt == nil {
+			continue
+		}
+		if i == index {
+			opt.SetAttribute("selected", "")
+		} else {
+			opt.RemoveAttribute("selected")
+		}
+	}
+}
+
+// SelectLength returns the number of options in a select element.
+func (e *Element) SelectLength() int {
+	options := e.SelectOptions()
+	if options == nil {
+		return 0
+	}
+	return options.Length()
+}
+
+// Multiple returns whether the select allows multiple selections.
+func (e *Element) Multiple() bool {
+	if strings.ToLower(e.LocalName()) != "select" {
+		return false
+	}
+	return e.HasAttribute("multiple")
+}
+
+// SetMultiple sets the multiple attribute.
+func (e *Element) SetMultiple(multiple bool) {
+	if strings.ToLower(e.LocalName()) != "select" {
+		return
+	}
+	if multiple {
+		e.SetAttribute("multiple", "")
+	} else {
+		e.RemoveAttribute("multiple")
+	}
+}
+
+// ============================================================================
+// HTMLTextAreaElement methods
+// ============================================================================
+
+// TextAreaValue returns the value of a textarea element.
+func (e *Element) TextAreaValue() string {
+	if strings.ToLower(e.LocalName()) != "textarea" {
+		return ""
+	}
+	data := e.InputData()
+	if data.valueDirty {
+		return data.value
+	}
+	// Default value is the text content
+	return e.TextContent()
+}
+
+// SetTextAreaValue sets the value of a textarea element.
+func (e *Element) SetTextAreaValue(value string) {
+	if strings.ToLower(e.LocalName()) != "textarea" {
+		return
+	}
+	data := e.InputData()
+	data.valueDirty = true
+	data.value = value
+}
+
+// TextAreaDefaultValue returns the default value (text content) of a textarea.
+func (e *Element) TextAreaDefaultValue() string {
+	if strings.ToLower(e.LocalName()) != "textarea" {
+		return ""
+	}
+	return e.TextContent()
+}
+
+// SetTextAreaDefaultValue sets the default value of a textarea (replaces text content).
+func (e *Element) SetTextAreaDefaultValue(value string) {
+	if strings.ToLower(e.LocalName()) != "textarea" {
+		return
+	}
+	e.SetTextContent(value)
+}
+
+// TextLength returns the length of the textarea value.
+func (e *Element) TextLength() int {
+	return len(e.TextAreaValue())
+}
+
+// Rows returns the rows attribute value for a textarea.
+func (e *Element) Rows() int {
+	if strings.ToLower(e.LocalName()) != "textarea" {
+		return 0
+	}
+	rows := e.GetAttribute("rows")
+	if rows == "" {
+		return 2 // Default per spec
+	}
+	var r int
+	_, err := parseIntFromString(rows, &r)
+	if err != nil || r < 1 {
+		return 2
+	}
+	return r
+}
+
+// SetRows sets the rows attribute for a textarea.
+func (e *Element) SetRows(rows int) {
+	if strings.ToLower(e.LocalName()) != "textarea" {
+		return
+	}
+	if rows < 1 {
+		rows = 2
+	}
+	e.SetAttribute("rows", IntToString(rows))
+}
+
+// Cols returns the cols attribute value for a textarea.
+func (e *Element) Cols() int {
+	if strings.ToLower(e.LocalName()) != "textarea" {
+		return 0
+	}
+	cols := e.GetAttribute("cols")
+	if cols == "" {
+		return 20 // Default per spec
+	}
+	var c int
+	_, err := parseIntFromString(cols, &c)
+	if err != nil || c < 1 {
+		return 20
+	}
+	return c
+}
+
+// SetCols sets the cols attribute for a textarea.
+func (e *Element) SetCols(cols int) {
+	if strings.ToLower(e.LocalName()) != "textarea" {
+		return
+	}
+	if cols < 1 {
+		cols = 20
+	}
+	e.SetAttribute("cols", IntToString(cols))
+}
+
+// ============================================================================
+// HTMLOptionElement methods
+// ============================================================================
+
+// OptionValue returns the value of an option element.
+func (e *Element) OptionValue() string {
+	if strings.ToLower(e.LocalName()) != "option" {
+		return ""
+	}
+	if e.HasAttribute("value") {
+		return e.GetAttribute("value")
+	}
+	// If no value attribute, use text content
+	return e.TextContent()
+}
+
+// SetOptionValue sets the value attribute of an option element.
+func (e *Element) SetOptionValue(value string) {
+	if strings.ToLower(e.LocalName()) != "option" {
+		return
+	}
+	e.SetAttribute("value", value)
+}
+
+// OptionText returns the text content of an option element.
+func (e *Element) OptionText() string {
+	if strings.ToLower(e.LocalName()) != "option" {
+		return ""
+	}
+	return e.TextContent()
+}
+
+// SetOptionText sets the text content of an option element.
+func (e *Element) SetOptionText(text string) {
+	if strings.ToLower(e.LocalName()) != "option" {
+		return
+	}
+	e.SetTextContent(text)
+}
+
+// Selected returns whether the option is selected.
+func (e *Element) Selected() bool {
+	if strings.ToLower(e.LocalName()) != "option" {
+		return false
+	}
+	return e.HasAttribute("selected")
+}
+
+// SetSelected sets whether the option is selected.
+func (e *Element) SetSelected(selected bool) {
+	if strings.ToLower(e.LocalName()) != "option" {
+		return
+	}
+	if selected {
+		e.SetAttribute("selected", "")
+	} else {
+		e.RemoveAttribute("selected")
+	}
+}
+
+// OptionIndex returns the index of this option in its parent select.
+func (e *Element) OptionIndex() int {
+	if strings.ToLower(e.LocalName()) != "option" {
+		return -1
+	}
+
+	// Find parent select
+	var selectEl *Element
+	for node := e.AsNode().ParentNode(); node != nil; node = node.ParentNode() {
+		if node.NodeType() == ElementNode {
+			el := (*Element)(node)
+			if strings.ToLower(el.LocalName()) == "select" {
+				selectEl = el
+				break
+			}
+		}
+	}
+
+	if selectEl == nil {
+		return -1
+	}
+
+	options := selectEl.SelectOptions()
+	for i := 0; i < options.Length(); i++ {
+		if options.Item(i) == e {
+			return i
+		}
+	}
+
+	return -1
+}
+
+// ============================================================================
+// HTMLButtonElement methods
+// ============================================================================
+
+// ButtonType returns the type of a button element.
+func (e *Element) ButtonType() string {
+	if strings.ToLower(e.LocalName()) != "button" {
+		return ""
+	}
+	t := strings.ToLower(e.GetAttribute("type"))
+	switch t {
+	case "submit", "reset", "button":
+		return t
+	default:
+		return "submit" // Default
+	}
+}
+
+// SetButtonType sets the type attribute of a button element.
+func (e *Element) SetButtonType(t string) {
+	if strings.ToLower(e.LocalName()) != "button" {
+		return
+	}
+	e.SetAttribute("type", t)
+}
+
+// ============================================================================
+// Helper functions
+// ============================================================================
+
+// parseIntFromString parses an integer from a string.
+func parseIntFromString(s string, result *int) (bool, error) {
+	var i int
+	_, err := strings.NewReader(s).Read([]byte{})
+	if err != nil {
+		return false, err
+	}
+	n, err := strings.NewReader(strings.TrimSpace(s)).Read([]byte{})
+	if err != nil && n == 0 {
+		return false, err
+	}
+
+	// Simple integer parsing
+	for _, c := range strings.TrimSpace(s) {
+		if c >= '0' && c <= '9' {
+			i = i*10 + int(c-'0')
+		} else {
+			break
+		}
+	}
+	*result = i
+	return true, nil
+}
+
+// IntToString converts an integer to a string.
+func IntToString(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	var result []byte
+	negative := i < 0
+	if negative {
+		i = -i
+	}
+	for i > 0 {
+		result = append([]byte{byte('0' + i%10)}, result...)
+		i /= 10
+	}
+	if negative {
+		result = append([]byte{'-'}, result...)
+	}
+	return string(result)
+}

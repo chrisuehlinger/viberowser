@@ -3,6 +3,7 @@ package js
 import (
 	"fmt"
 	"net/url"
+	"reflect"
 	"strings"
 
 	"github.com/chrisuehlinger/viberowser/css"
@@ -4511,6 +4512,26 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		b.bindOutputProperties(jsEl, el)
 	}
 
+	// Add form-specific properties (elements, length, submit, reset, etc.)
+	if localName == "form" && ns == dom.HTMLNamespace {
+		b.bindFormElementProperties(jsEl, el)
+	}
+
+	// Add select-specific properties (options, selectedIndex, value, etc.)
+	if localName == "select" && ns == dom.HTMLNamespace {
+		b.bindSelectElementProperties(jsEl, el)
+	}
+
+	// Add textarea-specific properties (value, rows, cols, etc.)
+	if localName == "textarea" && ns == dom.HTMLNamespace {
+		b.bindTextAreaElementProperties(jsEl, el)
+	}
+
+	// Add option-specific properties (value, text, selected, index)
+	if localName == "option" && ns == dom.HTMLNamespace {
+		b.bindOptionElementProperties(jsEl, el)
+	}
+
 	// Add canvas-specific properties (width, height, getContext)
 	if el.LocalName() == "canvas" && ns == dom.HTMLNamespace {
 		b.bindCanvasProperties(jsEl, el)
@@ -4865,6 +4886,619 @@ func (b *DOMBinder) bindOutputProperties(jsEl *goja.Object, el *dom.Element) {
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
 }
 
+// bindFormElementProperties adds HTMLFormElement-specific properties.
+// Per HTML spec: https://html.spec.whatwg.org/multipage/forms.html#the-form-element
+func (b *DOMBinder) bindFormElementProperties(jsEl *goja.Object, el *dom.Element) {
+	vm := b.runtime.vm
+
+	// elements property - returns HTMLFormControlsCollection of form controls
+	jsEl.DefineAccessorProperty("elements", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindHTMLCollection(el.FormElements())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// length property - number of form controls
+	jsEl.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.FormLength())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// method property - reflects the method attribute
+	jsEl.DefineAccessorProperty("method", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		method := strings.ToLower(el.GetAttribute("method"))
+		if method == "post" || method == "dialog" {
+			return vm.ToValue(method)
+		}
+		return vm.ToValue("get") // Default
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("method", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// action property - reflects the action attribute
+	jsEl.DefineAccessorProperty("action", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.GetAttribute("action"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("action", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// enctype property - reflects the enctype attribute
+	jsEl.DefineAccessorProperty("enctype", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		enctype := strings.ToLower(el.GetAttribute("enctype"))
+		switch enctype {
+		case "multipart/form-data", "text/plain":
+			return vm.ToValue(enctype)
+		default:
+			return vm.ToValue("application/x-www-form-urlencoded") // Default
+		}
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("enctype", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// encoding property - alias for enctype
+	jsEl.DefineAccessorProperty("encoding", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		enctype := strings.ToLower(el.GetAttribute("enctype"))
+		switch enctype {
+		case "multipart/form-data", "text/plain":
+			return vm.ToValue(enctype)
+		default:
+			return vm.ToValue("application/x-www-form-urlencoded")
+		}
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("enctype", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// target property - reflects the target attribute
+	jsEl.DefineAccessorProperty("target", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.GetAttribute("target"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("target", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// noValidate property - reflects the novalidate attribute
+	jsEl.DefineAccessorProperty("noValidate", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.HasAttribute("novalidate"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			if call.Arguments[0].ToBoolean() {
+				el.SetAttribute("novalidate", "")
+			} else {
+				el.RemoveAttribute("novalidate")
+			}
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// acceptCharset property - reflects the accept-charset attribute
+	jsEl.DefineAccessorProperty("acceptCharset", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.GetAttribute("accept-charset"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("accept-charset", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// autocomplete property - reflects the autocomplete attribute
+	jsEl.DefineAccessorProperty("autocomplete", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		ac := el.GetAttribute("autocomplete")
+		if ac == "off" {
+			return vm.ToValue("off")
+		}
+		return vm.ToValue("on") // Default
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("autocomplete", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// submit() method
+	jsEl.Set("submit", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// TODO: Implement form submission
+		// For now, this is a no-op
+		return goja.Undefined()
+	}))
+
+	// reset() method
+	jsEl.Set("reset", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		el.FormReset()
+		// TODO: Fire reset event
+		return goja.Undefined()
+	}))
+
+	// checkValidity() method
+	jsEl.Set("checkValidity", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Check validity of all form controls
+		elements := el.FormElements()
+		if elements == nil {
+			return vm.ToValue(true)
+		}
+		for i := 0; i < elements.Length(); i++ {
+			item := elements.Item(i)
+			if item != nil && !item.CheckValidity() {
+				return vm.ToValue(false)
+			}
+		}
+		return vm.ToValue(true)
+	}))
+
+	// reportValidity() method
+	jsEl.Set("reportValidity", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Check validity of all form controls and report
+		elements := el.FormElements()
+		if elements == nil {
+			return vm.ToValue(true)
+		}
+		for i := 0; i < elements.Length(); i++ {
+			item := elements.Item(i)
+			if item != nil && !item.ReportValidity() {
+				return vm.ToValue(false)
+			}
+		}
+		return vm.ToValue(true)
+	}))
+
+	// requestSubmit() method
+	jsEl.Set("requestSubmit", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// TODO: Implement form submission with submit event
+		// For now, this is a no-op
+		return goja.Undefined()
+	}))
+}
+
+// bindSelectElementProperties adds HTMLSelectElement-specific properties.
+// Per HTML spec: https://html.spec.whatwg.org/multipage/form-elements.html#the-select-element
+func (b *DOMBinder) bindSelectElementProperties(jsEl *goja.Object, el *dom.Element) {
+	vm := b.runtime.vm
+
+	// options property - returns HTMLOptionsCollection of option elements
+	jsEl.DefineAccessorProperty("options", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindHTMLCollection(el.SelectOptions())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// selectedIndex property
+	jsEl.DefineAccessorProperty("selectedIndex", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.SelectedIndex())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetSelectedIndex(int(call.Arguments[0].ToInteger()))
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// value property
+	jsEl.DefineAccessorProperty("value", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.SelectValue())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetSelectValue(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// length property
+	jsEl.DefineAccessorProperty("length", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.SelectLength())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// multiple property
+	jsEl.DefineAccessorProperty("multiple", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.Multiple())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetMultiple(call.Arguments[0].ToBoolean())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// size property
+	jsEl.DefineAccessorProperty("size", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		sizeAttr := el.GetAttribute("size")
+		if sizeAttr == "" {
+			if el.Multiple() {
+				return vm.ToValue(4) // Default for multiple
+			}
+			return vm.ToValue(1) // Default for single
+		}
+		var size int
+		for _, c := range sizeAttr {
+			if c >= '0' && c <= '9' {
+				size = size*10 + int(c-'0')
+			} else {
+				break
+			}
+		}
+		if size < 1 {
+			size = 1
+		}
+		return vm.ToValue(size)
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			size := call.Arguments[0].ToInteger()
+			if size < 0 {
+				size = 0
+			}
+			el.SetAttribute("size", dom.IntToString(int(size)))
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// form property
+	jsEl.DefineAccessorProperty("form", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		formEl := el.Form()
+		if formEl == nil {
+			return goja.Null()
+		}
+		return b.BindElement(formEl)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// validity property
+	jsEl.DefineAccessorProperty("validity", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.bindValidityState(el.Validity())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// validationMessage property
+	jsEl.DefineAccessorProperty("validationMessage", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.ValidationMessage())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// willValidate property
+	jsEl.DefineAccessorProperty("willValidate", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.WillValidate())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// checkValidity method
+	jsEl.Set("checkValidity", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.CheckValidity())
+	}))
+
+	// reportValidity method
+	jsEl.Set("reportValidity", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.ReportValidity())
+	}))
+
+	// setCustomValidity method
+	jsEl.Set("setCustomValidity", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetCustomValidity(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}))
+
+	// add() method - adds an option element
+	jsEl.Set("add", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Undefined()
+		}
+		// Get the option element from the argument
+		optObj := call.Arguments[0].ToObject(vm)
+		if optObj == nil {
+			return goja.Undefined()
+		}
+		optNode := b.getGoNode(optObj)
+		if optNode == nil || optNode.NodeType() != dom.ElementNode {
+			return goja.Undefined()
+		}
+		optEl := (*dom.Element)(optNode)
+		if strings.ToLower(optEl.LocalName()) != "option" && strings.ToLower(optEl.LocalName()) != "optgroup" {
+			return goja.Undefined()
+		}
+
+		// Handle the before argument
+		var beforeNode *dom.Node
+		if len(call.Arguments) > 1 && !goja.IsNull(call.Arguments[1]) && !goja.IsUndefined(call.Arguments[1]) {
+			// Could be an element or an index
+			if call.Arguments[1].ExportType().Kind() == reflect.Int64 || call.Arguments[1].ExportType().Kind() == reflect.Float64 {
+				// It's an index
+				idx := int(call.Arguments[1].ToInteger())
+				options := el.SelectOptions()
+				if idx >= 0 && idx < options.Length() {
+					beforeNode = options.Item(idx).AsNode()
+				}
+			} else {
+				// It's an element
+				beforeObj := call.Arguments[1].ToObject(vm)
+				if beforeObj != nil {
+					beforeNode = b.getGoNode(beforeObj)
+				}
+			}
+		}
+
+		if beforeNode != nil {
+			el.AsNode().InsertBefore(optEl.AsNode(), beforeNode)
+		} else {
+			el.AsNode().AppendChild(optEl.AsNode())
+		}
+		return goja.Undefined()
+	}))
+
+	// remove() method - removes an option at index
+	jsEl.Set("remove", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			// If called with no arguments, remove the select element itself
+			el.Remove()
+			return goja.Undefined()
+		}
+		idx := int(call.Arguments[0].ToInteger())
+		options := el.SelectOptions()
+		if idx >= 0 && idx < options.Length() {
+			opt := options.Item(idx)
+			if opt != nil {
+				opt.Remove()
+			}
+		}
+		return goja.Undefined()
+	}))
+
+	// type property - returns "select-one" or "select-multiple"
+	jsEl.DefineAccessorProperty("type", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if el.Multiple() {
+			return vm.ToValue("select-multiple")
+		}
+		return vm.ToValue("select-one")
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+}
+
+// bindTextAreaElementProperties adds HTMLTextAreaElement-specific properties.
+// Per HTML spec: https://html.spec.whatwg.org/multipage/form-elements.html#the-textarea-element
+func (b *DOMBinder) bindTextAreaElementProperties(jsEl *goja.Object, el *dom.Element) {
+	vm := b.runtime.vm
+
+	// value property
+	jsEl.DefineAccessorProperty("value", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.TextAreaValue())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetTextAreaValue(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// defaultValue property
+	jsEl.DefineAccessorProperty("defaultValue", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.TextAreaDefaultValue())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetTextAreaDefaultValue(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// textLength property
+	jsEl.DefineAccessorProperty("textLength", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.TextLength())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// rows property
+	jsEl.DefineAccessorProperty("rows", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.Rows())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetRows(int(call.Arguments[0].ToInteger()))
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// cols property
+	jsEl.DefineAccessorProperty("cols", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.Cols())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetCols(int(call.Arguments[0].ToInteger()))
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// form property
+	jsEl.DefineAccessorProperty("form", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		formEl := el.Form()
+		if formEl == nil {
+			return goja.Null()
+		}
+		return b.BindElement(formEl)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// type property - always returns "textarea"
+	jsEl.DefineAccessorProperty("type", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue("textarea")
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// validity property
+	jsEl.DefineAccessorProperty("validity", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.bindValidityState(el.Validity())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// validationMessage property
+	jsEl.DefineAccessorProperty("validationMessage", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.ValidationMessage())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// willValidate property
+	jsEl.DefineAccessorProperty("willValidate", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.WillValidate())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// checkValidity method
+	jsEl.Set("checkValidity", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.CheckValidity())
+	}))
+
+	// reportValidity method
+	jsEl.Set("reportValidity", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.ReportValidity())
+	}))
+
+	// setCustomValidity method
+	jsEl.Set("setCustomValidity", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetCustomValidity(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}))
+
+	// placeholder property
+	jsEl.DefineAccessorProperty("placeholder", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.GetAttribute("placeholder"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("placeholder", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// readOnly property
+	jsEl.DefineAccessorProperty("readOnly", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.HasAttribute("readonly"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			if call.Arguments[0].ToBoolean() {
+				el.SetAttribute("readonly", "")
+			} else {
+				el.RemoveAttribute("readonly")
+			}
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// required property
+	jsEl.DefineAccessorProperty("required", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.HasAttribute("required"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			if call.Arguments[0].ToBoolean() {
+				el.SetAttribute("required", "")
+			} else {
+				el.RemoveAttribute("required")
+			}
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// wrap property
+	jsEl.DefineAccessorProperty("wrap", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		wrap := el.GetAttribute("wrap")
+		if wrap == "hard" {
+			return vm.ToValue("hard")
+		}
+		return vm.ToValue("soft") // Default
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("wrap", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+}
+
+// bindOptionElementProperties adds HTMLOptionElement-specific properties.
+// Per HTML spec: https://html.spec.whatwg.org/multipage/form-elements.html#the-option-element
+func (b *DOMBinder) bindOptionElementProperties(jsEl *goja.Object, el *dom.Element) {
+	vm := b.runtime.vm
+
+	// value property
+	jsEl.DefineAccessorProperty("value", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.OptionValue())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetOptionValue(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// text property
+	jsEl.DefineAccessorProperty("text", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.OptionText())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetOptionText(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// selected property
+	jsEl.DefineAccessorProperty("selected", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.Selected())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetSelected(call.Arguments[0].ToBoolean())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// defaultSelected property - reflects the selected attribute
+	jsEl.DefineAccessorProperty("defaultSelected", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.HasAttribute("selected"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			if call.Arguments[0].ToBoolean() {
+				el.SetAttribute("selected", "")
+			} else {
+				el.RemoveAttribute("selected")
+			}
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// index property
+	jsEl.DefineAccessorProperty("index", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.OptionIndex())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// disabled property
+	jsEl.DefineAccessorProperty("disabled", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.Disabled())
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetDisabled(call.Arguments[0].ToBoolean())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// label property
+	jsEl.DefineAccessorProperty("label", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// If label attribute is present, use it; otherwise use text content
+		if el.HasAttribute("label") {
+			return vm.ToValue(el.GetAttribute("label"))
+		}
+		return vm.ToValue(strings.TrimSpace(el.TextContent()))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("label", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// form property - returns the select's form, not the option's
+	jsEl.DefineAccessorProperty("form", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Find parent select
+		for node := el.AsNode().ParentNode(); node != nil; node = node.ParentNode() {
+			if node.NodeType() == dom.ElementNode {
+				parentEl := (*dom.Element)(node)
+				if strings.ToLower(parentEl.LocalName()) == "select" {
+					formEl := parentEl.Form()
+					if formEl == nil {
+						return goja.Null()
+					}
+					return b.BindElement(formEl)
+				}
+			}
+		}
+		return goja.Null()
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+}
+
 // bindCanvasProperties adds HTMLCanvasElement-specific properties.
 // Per HTML spec: https://html.spec.whatwg.org/multipage/canvas.html
 func (b *DOMBinder) bindCanvasProperties(jsEl *goja.Object, el *dom.Element) {
@@ -5060,6 +5694,138 @@ func (b *DOMBinder) bindInputProperties(jsEl *goja.Object, el *dom.Element) {
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// name property - the name of the form control
+	jsEl.DefineAccessorProperty("name", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.GetAttribute("name"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("name", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// form property - returns the form element that owns this input
+	jsEl.DefineAccessorProperty("form", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		formEl := el.Form()
+		if formEl == nil {
+			return goja.Null()
+		}
+		return b.BindElement(formEl)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// validity property - returns a ValidityState object
+	jsEl.DefineAccessorProperty("validity", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.bindValidityState(el.Validity())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// validationMessage property
+	jsEl.DefineAccessorProperty("validationMessage", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.ValidationMessage())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// willValidate property
+	jsEl.DefineAccessorProperty("willValidate", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.WillValidate())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// checkValidity method
+	jsEl.Set("checkValidity", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.CheckValidity())
+	}))
+
+	// reportValidity method
+	jsEl.Set("reportValidity", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.ReportValidity())
+	}))
+
+	// setCustomValidity method
+	jsEl.Set("setCustomValidity", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetCustomValidity(call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}))
+
+	// readOnly property
+	jsEl.DefineAccessorProperty("readOnly", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.HasAttribute("readonly"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			if call.Arguments[0].ToBoolean() {
+				el.SetAttribute("readonly", "")
+			} else {
+				el.RemoveAttribute("readonly")
+			}
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// required property
+	jsEl.DefineAccessorProperty("required", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.HasAttribute("required"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			if call.Arguments[0].ToBoolean() {
+				el.SetAttribute("required", "")
+			} else {
+				el.RemoveAttribute("required")
+			}
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// placeholder property
+	jsEl.DefineAccessorProperty("placeholder", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(el.GetAttribute("placeholder"))
+	}), vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) > 0 {
+			el.SetAttribute("placeholder", call.Arguments[0].String())
+		}
+		return goja.Undefined()
+	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+}
+
+// bindValidityState binds a ValidityState object to JavaScript.
+func (b *DOMBinder) bindValidityState(validity *dom.ValidityState) goja.Value {
+	vm := b.runtime.vm
+
+	obj := vm.NewObject()
+	obj.DefineAccessorProperty("valueMissing", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(validity.ValueMissing)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	obj.DefineAccessorProperty("typeMismatch", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(validity.TypeMismatch)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	obj.DefineAccessorProperty("patternMismatch", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(validity.PatternMismatch)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	obj.DefineAccessorProperty("tooLong", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(validity.TooLong)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	obj.DefineAccessorProperty("tooShort", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(validity.TooShort)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	obj.DefineAccessorProperty("rangeUnderflow", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(validity.RangeUnderflow)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	obj.DefineAccessorProperty("rangeOverflow", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(validity.RangeOverflow)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	obj.DefineAccessorProperty("stepMismatch", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(validity.StepMismatch)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	obj.DefineAccessorProperty("badInput", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(validity.BadInput)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	obj.DefineAccessorProperty("customError", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(validity.CustomError)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	obj.DefineAccessorProperty("valid", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(validity.Valid)
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	return obj
 }
 
 // bindHTMLGlobalAttributes adds HTMLElement global attributes.
