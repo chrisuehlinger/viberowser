@@ -10393,6 +10393,50 @@ func (b *DOMBinder) IsMainDocument(doc *dom.Document) bool {
 	return b.mainDocument != nil && b.mainDocument == doc
 }
 
+// CreateTextConstructorForDocument creates a Text constructor that uses a specific document.
+// This is used for iframe windows so that new Text() uses the iframe's document.
+func (b *DOMBinder) CreateTextConstructorForDocument(doc *dom.Document) *goja.Object {
+	vm := b.runtime.vm
+	textConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		data := ""
+		if len(call.Arguments) > 0 && !goja.IsUndefined(call.Arguments[0]) {
+			data = call.Arguments[0].String()
+		}
+		var textNode *dom.Node
+		if doc != nil {
+			textNode = doc.CreateTextNode(data)
+		} else {
+			textNode = dom.NewTextNode(data)
+		}
+		return b.BindTextNode(textNode, call.This.Prototype())
+	})
+	textConstructorObj := textConstructor.ToObject(vm)
+	textConstructorObj.Set("prototype", b.textProto)
+	return textConstructorObj
+}
+
+// CreateCommentConstructorForDocument creates a Comment constructor that uses a specific document.
+// This is used for iframe windows so that new Comment() uses the iframe's document.
+func (b *DOMBinder) CreateCommentConstructorForDocument(doc *dom.Document) *goja.Object {
+	vm := b.runtime.vm
+	commentConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		data := ""
+		if len(call.Arguments) > 0 && !goja.IsUndefined(call.Arguments[0]) {
+			data = call.Arguments[0].String()
+		}
+		var commentNode *dom.Node
+		if doc != nil {
+			commentNode = doc.CreateComment(data)
+		} else {
+			commentNode = dom.NewCommentNode(data)
+		}
+		return b.BindCommentNode(commentNode, call.This.Prototype())
+	})
+	commentConstructorObj := commentConstructor.ToObject(vm)
+	commentConstructorObj.Set("prototype", b.commentProto)
+	return commentConstructorObj
+}
+
 // GetComputedStyle returns the computed style for an element.
 // This implements window.getComputedStyle().
 func (b *DOMBinder) GetComputedStyle(el *dom.Element, pseudoElt string) *goja.Object {

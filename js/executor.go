@@ -874,9 +874,10 @@ func (se *ScriptExecutor) getIframeContent(iframe *dom.Element) (goja.Value, goj
 	// Copy DOM constructors from parent window so instanceof checks work
 	// These need to be available on every Window object in a browser
 	if parentWindowObj := parentWindow.ToObject(vm); parentWindowObj != nil {
+		// Constructors that can be safely copied (they don't create nodes with ownerDocument)
 		constructorsToCopy := []string{
 			"Element", "Node", "Document", "DocumentType", "DocumentFragment",
-			"Text", "Comment", "CDATASection", "ProcessingInstruction",
+			"CDATASection", "ProcessingInstruction",
 			"Attr", "HTMLElement", "HTMLDocument", "XMLDocument",
 			"CharacterData", "DOMException", "DOMTokenList", "NamedNodeMap",
 			"NodeList", "HTMLCollection",
@@ -887,6 +888,11 @@ func (se *ScriptExecutor) getIframeContent(iframe *dom.Element) (goja.Value, goj
 			}
 		}
 	}
+
+	// Create new Text and Comment constructors that use this iframe's document
+	// This ensures new Text() and new Comment() in the iframe context use the iframe's document
+	contentWindow.Set("Text", se.domBinder.CreateTextConstructorForDocument(iframeDoc))
+	contentWindow.Set("Comment", se.domBinder.CreateCommentConstructorForDocument(iframeDoc))
 
 	// Cache both
 	se.iframeContents[iframe] = &iframeContent{
