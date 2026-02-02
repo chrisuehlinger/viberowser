@@ -140,6 +140,46 @@ func utf16ToString(codeUnits []uint16) string {
 	return string(buf)
 }
 
+// toUnsignedShort converts a JavaScript value to a WebIDL unsigned short.
+// Per WebIDL spec: https://webidl.spec.whatwg.org/#es-unsigned-short
+// The conversion follows these steps:
+// 1. Convert to Number
+// 2. If NaN, 0, Infinity, or -Infinity, return 0
+// 3. Otherwise, floor towards 0 and take modulo 65536
+func toUnsignedShort(v goja.Value) int {
+	// Step 1: Get the float64 value (equivalent to ToNumber in JS)
+	f := v.ToFloat()
+
+	// Step 2: Handle special cases
+	if f != f { // NaN
+		return 0
+	}
+	if f == 0 || f > 1.7976931348623157e+308 || f < -1.7976931348623157e+308 {
+		// 0, Infinity, or -Infinity (Go represents Infinity as very large floats)
+		return 0
+	}
+	// Check for actual infinity
+	if f == f+1 && f != 0 { // Infinity check: x == x + 1 only for inf
+		return 0
+	}
+
+	// Step 3: Convert to integer by truncating towards 0
+	var posInt int64
+	if f < 0 {
+		posInt = -int64(-f) // Truncate towards 0
+	} else {
+		posInt = int64(f) // Truncate towards 0
+	}
+
+	// Step 4: Modulo 65536
+	result := posInt % 65536
+	if result < 0 {
+		result += 65536
+	}
+
+	return int(result)
+}
+
 // utf16Substring extracts a substring using UTF-16 code unit offsets.
 // This matches JavaScript's String.substring behavior for proper Unicode handling.
 // Unpaired surrogates are preserved if the substring splits a surrogate pair.
@@ -6656,7 +6696,8 @@ func (b *DOMBinder) BindRange(r *dom.Range) *goja.Object {
 		if len(call.Arguments) < 2 {
 			panic(vm.NewTypeError("Failed to execute 'compareBoundaryPoints' on 'Range': 2 arguments required."))
 		}
-		how := int(call.Arguments[0].ToInteger())
+		// Convert to unsigned short per WebIDL spec
+		how := toUnsignedShort(call.Arguments[0])
 		rangeArg := call.Arguments[1]
 		if goja.IsNull(rangeArg) || goja.IsUndefined(rangeArg) {
 			panic(vm.NewTypeError("Failed to execute 'compareBoundaryPoints' on 'Range': parameter 2 is not of type 'Range'."))

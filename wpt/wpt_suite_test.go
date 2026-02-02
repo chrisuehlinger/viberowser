@@ -290,6 +290,7 @@ func DOMRangesPassingTests() []string {
 		"Range-collapse.html",
 		"Range-commonAncestorContainer-2.html",
 		"Range-commonAncestorContainer.html",
+		"Range-compareBoundaryPoints.html",
 		"Range-comparePoint-2.html",
 		"Range-constructor.html",
 		"Range-deleteContents.html",

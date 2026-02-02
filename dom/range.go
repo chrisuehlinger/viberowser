@@ -251,11 +251,7 @@ func (r *Range) CompareBoundaryPoints(how int, sourceRange *Range) (int, error) 
 		return 0, ErrNotFound("Source range is null")
 	}
 
-	// Check if ranges are in different documents
-	if r.ownerDocument != sourceRange.ownerDocument {
-		return 0, ErrWrongDocument("The two Ranges are not in the same tree.")
-	}
-
+	// Validate the comparison type first (per spec, this check comes before the root check)
 	var thisContainer, sourceContainer *Node
 	var thisOffset, sourceOffset int
 
@@ -282,6 +278,14 @@ func (r *Range) CompareBoundaryPoints(how int, sourceRange *Range) (int, error) 
 		sourceOffset = sourceRange.endOffset
 	default:
 		return 0, ErrNotSupported("Invalid comparison type")
+	}
+
+	// Check if ranges share the same root (tree)
+	// This is the correct check per DOM spec - ranges in different trees cannot be compared
+	thisRoot := r.startContainer.GetRootNode()
+	sourceRoot := sourceRange.startContainer.GetRootNode()
+	if thisRoot != sourceRoot {
+		return 0, ErrWrongDocument("The two Ranges are not in the same tree.")
 	}
 
 	return r.comparePoints(thisContainer, thisOffset, sourceContainer, sourceOffset), nil
