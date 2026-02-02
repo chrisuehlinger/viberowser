@@ -257,7 +257,7 @@ func DOMNodesPassingTests() []string {
 }
 
 // DOMTraversalPassingTests returns the list of DOM traversal tests that are expected to pass.
-// This list is based on actual passing tests as of 2026-02-01.
+// This list is based on actual passing tests as of 2026-02-02.
 func DOMTraversalPassingTests() []string {
 	return []string{
 		"NodeFilter-constants.html",
@@ -267,6 +267,7 @@ func DOMTraversalPassingTests() []string {
 		"TreeWalker-basic.html",
 		"TreeWalker-currentNode.html",
 		"TreeWalker-acceptNode-filter.html",
+		"TreeWalker-acceptNode-filter-cross-realm.html",
 		"TreeWalker-previousNodeLastChildReject.html",
 		"TreeWalker-previousSiblingLastChildSkip.html",
 		"TreeWalker-realm.html",

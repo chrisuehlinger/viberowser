@@ -453,6 +453,9 @@ func (se *ScriptExecutor) SetupDocument(doc *dom.Document) {
 
 	// Setup fetch API with the document's URL as the base
 	se.setupFetch(doc)
+
+	// Set up named iframe access so iframes with name attributes are accessible as globals
+	se.setupNamedIframeAccess()
 }
 
 // setupXMLHttpRequest sets up the XMLHttpRequest constructor with the document's URL.
@@ -538,6 +541,106 @@ func (se *ScriptExecutor) setupWindowFrames(doc *dom.Document, window *goja.Obje
 			return se.getIframeContentWindow(iframe, doc)
 		}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 	}
+
+	// Store the doc reference for use in the named access callback
+	se.currentDocument = doc
+}
+
+// setupNamedIframeAccess sets up named iframe access after scripts are parsed.
+// This is called after the document is fully loaded so we can find all named iframes.
+// Named iframes should be accessible as window[name] and as global variables.
+func (se *ScriptExecutor) setupNamedIframeAccess() {
+	if se.currentDocument == nil {
+		return
+	}
+
+	vm := se.runtime.vm
+	doc := se.currentDocument
+	window := vm.Get("window").ToObject(vm)
+	if window == nil {
+		return
+	}
+
+	// Find all iframes with name attributes and register them
+	iframes := doc.GetElementsByTagName("iframe")
+	for i := 0; i < iframes.Length(); i++ {
+		iframe := iframes.Item(i)
+		if iframe == nil {
+			continue
+		}
+		name := iframe.GetAttribute("name")
+		if name == "" {
+			continue
+		}
+
+		// Create a getter for this named iframe on both window and global scope.
+		// We need to capture iframe by value for the closure.
+		iframeElement := iframe
+		getter := vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			return se.getIframeContentWindow(iframeElement, doc)
+		})
+
+		// Set on window
+		window.DefineAccessorProperty(name, getter, nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+		// Also set as global variable (for direct access without window. prefix)
+		vm.GlobalObject().DefineAccessorProperty(name, getter, nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	}
+
+	// Set up named access for elements with id attributes.
+	// Per HTML spec, elements with id attributes should be accessible as window[id].
+	// This is a simplified implementation that covers common use cases.
+	se.setupNamedElementAccess()
+}
+
+// setupNamedElementAccess sets up named access for elements with id attributes.
+// Per HTML spec, elements with id attributes should be accessible on the window object.
+func (se *ScriptExecutor) setupNamedElementAccess() {
+	if se.currentDocument == nil {
+		return
+	}
+
+	vm := se.runtime.vm
+	doc := se.currentDocument
+	window := vm.Get("window").ToObject(vm)
+	if window == nil {
+		return
+	}
+
+	globalObj := vm.GlobalObject()
+
+	// Find all elements with id attributes
+	// This is a simplified approach - in a full implementation, we'd need to
+	// handle dynamic DOM changes with mutation observers.
+	allElements := doc.GetElementsByTagName("*")
+	for i := 0; i < allElements.Length(); i++ {
+		element := allElements.Item(i)
+		if element == nil {
+			continue
+		}
+
+		// Skip iframes as they're handled separately in setupNamedIframeAccess
+		tagName := element.TagName()
+		if tagName == "IFRAME" || tagName == "iframe" {
+			continue
+		}
+
+		id := element.GetAttribute("id")
+		if id == "" {
+			continue
+		}
+
+		// Create a getter for this named element.
+		// Capture element by value for the closure.
+		el := element
+		getter := vm.ToValue(func(call goja.FunctionCall) goja.Value {
+			return se.domBinder.BindElement(el)
+		})
+
+		// Set on window and global scope
+		window.DefineAccessorProperty(id, getter, nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+		globalObj.DefineAccessorProperty(id, getter, nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+	}
 }
 
 // getIframeContent returns the contentWindow and contentDocument for an iframe element.
@@ -605,6 +708,28 @@ func (se *ScriptExecutor) getIframeContent(iframe *dom.Element) (goja.Value, goj
 	location := vm.NewObject()
 	location.Set("href", src)
 	contentWindow.Set("location", location)
+
+	// Copy JavaScript builtin constructors from the global object.
+	// These are needed for cross-realm tests that access Object, TypeError, Proxy, etc.
+	// on iframe contentWindows.
+	globalObj := vm.GlobalObject()
+	jsBuiltins := []string{
+		"Object", "Array", "Function", "String", "Number", "Boolean",
+		"Symbol", "Error", "TypeError", "ReferenceError", "SyntaxError",
+		"RangeError", "URIError", "EvalError", "Promise", "Proxy", "Reflect",
+		"Map", "Set", "WeakMap", "WeakSet", "Date", "RegExp", "JSON", "Math",
+		"parseInt", "parseFloat", "isNaN", "isFinite", "encodeURI", "decodeURI",
+		"encodeURIComponent", "decodeURIComponent", "escape", "unescape",
+		"eval", "Infinity", "NaN", "undefined", "ArrayBuffer", "DataView",
+		"Int8Array", "Uint8Array", "Uint8ClampedArray", "Int16Array",
+		"Uint16Array", "Int32Array", "Uint32Array", "Float32Array", "Float64Array",
+		"BigInt", "BigInt64Array", "BigUint64Array",
+	}
+	for _, name := range jsBuiltins {
+		if val := globalObj.Get(name); val != nil && !goja.IsUndefined(val) {
+			contentWindow.Set(name, val)
+		}
+	}
 
 	// Copy DOM constructors from parent window so instanceof checks work
 	// These need to be available on every Window object in a browser

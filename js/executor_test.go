@@ -395,6 +395,137 @@ func TestScriptExecutorMultipleIframes(t *testing.T) {
 	}
 }
 
+func TestScriptExecutorNamedIframes(t *testing.T) {
+	r := NewRuntime()
+	executor := NewScriptExecutor(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body>
+	<iframe name="myFrame" src="about:blank"></iframe>
+	<iframe name="anotherFrame" src="about:blank"></iframe>
+</body>
+</html>`)
+
+	executor.SetupDocument(doc)
+
+	// Test named iframe access as global variable
+	result, err := r.Execute(`typeof myFrame`)
+	if err != nil {
+		t.Fatalf("Execute typeof myFrame failed: %v", err)
+	}
+	if result.String() != "object" {
+		t.Errorf("Expected typeof myFrame === 'object', got %v", result.String())
+	}
+
+	// Test named iframe has a document
+	result, err = r.Execute(`typeof myFrame.document`)
+	if err != nil {
+		t.Fatalf("Execute typeof myFrame.document failed: %v", err)
+	}
+	if result.String() != "object" {
+		t.Errorf("Expected typeof myFrame.document === 'object', got %v", result.String())
+	}
+
+	// Test named iframe has JavaScript builtins
+	result, err = r.Execute(`typeof myFrame.Object`)
+	if err != nil {
+		t.Fatalf("Execute typeof myFrame.Object failed: %v", err)
+	}
+	if result.String() != "function" {
+		t.Errorf("Expected typeof myFrame.Object === 'function', got %v", result.String())
+	}
+
+	// Test named iframe has TypeError (for cross-realm tests)
+	result, err = r.Execute(`typeof myFrame.TypeError`)
+	if err != nil {
+		t.Fatalf("Execute typeof myFrame.TypeError failed: %v", err)
+	}
+	if result.String() != "function" {
+		t.Errorf("Expected typeof myFrame.TypeError === 'function', got %v", result.String())
+	}
+
+	// Test named iframe has Proxy (for cross-realm tests)
+	result, err = r.Execute(`typeof myFrame.Proxy`)
+	if err != nil {
+		t.Fatalf("Execute typeof myFrame.Proxy failed: %v", err)
+	}
+	if result.String() != "function" {
+		t.Errorf("Expected typeof myFrame.Proxy === 'function', got %v", result.String())
+	}
+
+	// Test multiple named iframes are distinct
+	result, err = r.Execute(`myFrame !== anotherFrame && myFrame.document !== anotherFrame.document`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Expected myFrame and anotherFrame to be distinct windows with distinct documents")
+	}
+
+	// Test window[name] access
+	result, err = r.Execute(`window['myFrame'] === myFrame`)
+	if err != nil {
+		t.Fatalf("Execute window['myFrame'] failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Expected window['myFrame'] === myFrame")
+	}
+}
+
+func TestScriptExecutorNamedElementAccess(t *testing.T) {
+	r := NewRuntime()
+	executor := NewScriptExecutor(r)
+
+	doc, _ := dom.ParseHTML(`<!DOCTYPE html>
+<html>
+<head></head>
+<body>
+	<div id="myDiv">Hello</div>
+	<span id="mySpan">World</span>
+</body>
+</html>`)
+
+	executor.SetupDocument(doc)
+
+	// Test named element access as global variable
+	result, err := r.Execute(`typeof myDiv`)
+	if err != nil {
+		t.Fatalf("Execute typeof myDiv failed: %v", err)
+	}
+	if result.String() != "object" {
+		t.Errorf("Expected typeof myDiv === 'object', got %v", result.String())
+	}
+
+	// Test named element text content
+	result, err = r.Execute(`myDiv.textContent`)
+	if err != nil {
+		t.Fatalf("Execute myDiv.textContent failed: %v", err)
+	}
+	if result.String() != "Hello" {
+		t.Errorf("Expected myDiv.textContent === 'Hello', got %v", result.String())
+	}
+
+	// Test multiple named elements are distinct
+	result, err = r.Execute(`myDiv !== mySpan`)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Expected myDiv and mySpan to be distinct elements")
+	}
+
+	// Test window[id] access
+	result, err = r.Execute(`window['myDiv'] === myDiv`)
+	if err != nil {
+		t.Fatalf("Execute window['myDiv'] failed: %v", err)
+	}
+	if !result.ToBoolean() {
+		t.Error("Expected window['myDiv'] === myDiv")
+	}
+}
+
 func TestGetComputedStyle(t *testing.T) {
 	r := NewRuntime()
 	executor := NewScriptExecutor(r)
