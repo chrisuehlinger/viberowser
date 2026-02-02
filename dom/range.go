@@ -93,12 +93,18 @@ func (r *Range) SetStart(node *Node, offset int) error {
 		return ErrIndexSize("The offset is out of range.")
 	}
 
+	// Check if node is in a different tree than the current end container
+	// If so, the range should collapse to the new start point
+	nodeRoot := node.GetRootNode()
+	endRoot := r.endContainer.GetRootNode()
+	differentTree := nodeRoot != endRoot
+
 	// Set the start boundary point
 	r.startContainer = node
 	r.startOffset = offset
 
-	// If start is after end, collapse to start
-	if r.comparePoints(r.startContainer, r.startOffset, r.endContainer, r.endOffset) > 0 {
+	// If in different tree OR if start is after end, collapse to start
+	if differentTree || r.comparePoints(r.startContainer, r.startOffset, r.endContainer, r.endOffset) > 0 {
 		r.endContainer = r.startContainer
 		r.endOffset = r.startOffset
 	}
@@ -123,12 +129,18 @@ func (r *Range) SetEnd(node *Node, offset int) error {
 		return ErrIndexSize("The offset is out of range.")
 	}
 
+	// Check if node is in a different tree than the current start container
+	// If so, the range should collapse to the new end point
+	nodeRoot := node.GetRootNode()
+	startRoot := r.startContainer.GetRootNode()
+	differentTree := nodeRoot != startRoot
+
 	// Set the end boundary point
 	r.endContainer = node
 	r.endOffset = offset
 
-	// If end is before start, collapse to end
-	if r.comparePoints(r.startContainer, r.startOffset, r.endContainer, r.endOffset) > 0 {
+	// If in different tree OR if end is before start, collapse to end
+	if differentTree || r.comparePoints(r.startContainer, r.startOffset, r.endContainer, r.endOffset) > 0 {
 		r.startContainer = r.endContainer
 		r.startOffset = r.endOffset
 	}

@@ -907,3 +907,36 @@ func TestWPTEventGlobal(t *testing.T) {
 		t.Errorf("Expected some test results, got none")
 	}
 }
+
+// TestWPTRangeSet tests the Range set* methods WPT test
+func TestWPTRangeSet(t *testing.T) {
+	wptPath := "/workspaces/wpt"
+
+	// Check if WPT exists
+	if _, err := os.Stat(wptPath); os.IsNotExist(err) {
+		t.Skip("WPT not available")
+	}
+
+	runner := NewRunner(wptPath)
+	runner.Timeout = 60 * time.Second
+
+	result := runner.RunTestFile("/dom/ranges/Range-set.html")
+
+	t.Logf("HarnessStatus: %s", result.HarnessStatus)
+	t.Logf("Error: %s", result.Error)
+	t.Logf("Duration: %v", result.Duration)
+	t.Logf("Tests: %d", len(result.Tests))
+
+	passed := 0
+	failed := 0
+	for _, test := range result.Tests {
+		if test.Status == StatusPass {
+			passed++
+		} else {
+			failed++
+			t.Logf("  [FAIL] %s: %s", test.Name, test.Message)
+		}
+	}
+
+	t.Logf("Summary: %d passed, %d failed", passed, failed)
+}

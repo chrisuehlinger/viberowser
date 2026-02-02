@@ -279,7 +279,7 @@ func DOMTraversalPassingTests() []string {
 }
 
 // DOMRangesPassingTests returns the list of DOM range tests that are expected to pass.
-// This list is based on actual passing tests as of 2026-02-01.
+// This list is based on actual passing tests as of 2026-02-02.
 func DOMRangesPassingTests() []string {
 	return []string{
 		"Range-attributes.html",
@@ -294,8 +294,7 @@ func DOMRangesPassingTests() []string {
 		"Range-detach.html",
 		"Range-extractContents.html",
 		"Range-selectNode.html",
-		"Range-stringifier.html",
-		"StaticRange-constructor.html",
+		"Range-set.html",
 	}
 }
 
