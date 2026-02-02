@@ -343,6 +343,7 @@ type DOMBinder struct {
 	shadowRootCache              map[*dom.ShadowRoot]*goja.Object
 	selectionProto               *goja.Object
 	selectionCache               map[*dom.Selection]*goja.Object
+	domStringMapProto            *goja.Object
 
 	// Event handler storage: maps JS object -> event type -> handler function
 	eventHandlers                map[*goja.Object]map[string]goja.Value
@@ -1114,6 +1115,28 @@ func (b *DOMBinder) setupPrototypes() {
 	_, _ = vm.RunString(`
 		Object.defineProperty(DOMTokenList.prototype, Symbol.toStringTag, {
 			value: "DOMTokenList",
+			writable: false,
+			enumerable: false,
+			configurable: true
+		});
+	`)
+
+	// Create DOMStringMap prototype and constructor (for HTMLElement.dataset)
+	b.domStringMapProto = vm.NewObject()
+	domStringMapConstructor := vm.ToValue(func(call goja.ConstructorCall) *goja.Object {
+		panic(vm.NewTypeError("Illegal constructor"))
+	})
+	domStringMapConstructorObj := domStringMapConstructor.ToObject(vm)
+	domStringMapConstructorObj.Set("prototype", b.domStringMapProto)
+	// Set constructor as non-enumerable (writable=true, configurable=true, enumerable=false)
+	b.domStringMapProto.DefineDataProperty("constructor", domStringMapConstructorObj,
+		goja.FLAG_TRUE, goja.FLAG_TRUE, goja.FLAG_FALSE)
+	vm.Set("DOMStringMap", domStringMapConstructorObj)
+
+	// Set Symbol.toStringTag for DOMStringMap
+	_, _ = vm.RunString(`
+		Object.defineProperty(DOMStringMap.prototype, Symbol.toStringTag, {
+			value: "DOMStringMap",
 			writable: false,
 			enumerable: false,
 			configurable: true
@@ -4054,6 +4077,9 @@ func (b *DOMBinder) BindElement(el *dom.Element) *goja.Object {
 		b.processEventHandlerContentAttributes(jsEl, el)
 		// Add HTML global attributes (title, lang, hidden, dir, tabIndex, etc.)
 		b.bindHTMLGlobalAttributes(jsEl, el)
+	} else if ns == dom.SVGNamespace {
+		// SVG elements also get the dataset property per HTML spec
+		b.bindSVGDataset(jsEl, el)
 	}
 
 	// Cache the binding
@@ -4603,6 +4629,34 @@ func (b *DOMBinder) bindHTMLGlobalAttributes(jsEl *goja.Object, el *dom.Element)
 		}
 		return goja.Undefined()
 	}), goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	// dataset - provides access to custom data attributes (data-*)
+	// Returns a DOMStringMap that is a live view of data-* attributes
+	var datasetObj *goja.Object
+	jsEl.DefineAccessorProperty("dataset", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Create the DOMStringMap lazily on first access
+		if datasetObj == nil {
+			datasetObj = b.BindDOMStringMap(el)
+		}
+		return datasetObj
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+}
+
+// bindSVGDataset adds the dataset property for SVG elements.
+// Per HTML spec, SVGElement interface also includes the dataset property.
+func (b *DOMBinder) bindSVGDataset(jsEl *goja.Object, el *dom.Element) {
+	vm := b.runtime.vm
+
+	// dataset - provides access to custom data attributes (data-*)
+	// Returns a DOMStringMap that is a live view of data-* attributes
+	var datasetObj *goja.Object
+	jsEl.DefineAccessorProperty("dataset", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		// Create the DOMStringMap lazily on first access
+		if datasetObj == nil {
+			datasetObj = b.BindDOMStringMap(el)
+		}
+		return datasetObj
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 }
 
 // BindNode creates a JavaScript object from a DOM node.
@@ -10717,4 +10771,223 @@ func (b *DOMBinder) processEventHandlerContentAttributes(jsEl *goja.Object, el *
 		// Set the event handler via the IDL property (e.g., element.oninput = handlerVal)
 		jsEl.Set(attrName, handlerVal)
 	}
+}
+
+// datasetAttrToProperty converts a data-* attribute name to its dataset property name.
+// Per HTML spec: remove "data-" prefix, then for each hyphen followed by a lowercase letter,
+// remove the hyphen and uppercase the letter.
+// Examples:
+//   - "data-foo" -> "foo"
+//   - "data-foo-bar" -> "fooBar"
+//   - "data--" -> "-"
+//   - "data--foo" -> "Foo" (hyphen followed by hyphen becomes capital)
+//   - "data---foo" -> "-Foo"
+//   - "data-Foo" -> "foo" (uppercase letters stay as is after conversion)
+func datasetAttrToProperty(attrName string) (string, bool) {
+	// Must start with "data-"
+	if len(attrName) < 6 || attrName[:5] != "data-" {
+		return "", false
+	}
+
+	name := attrName[5:] // Remove "data-" prefix
+
+	// If the name contains any uppercase ASCII letters after "data-", it's invalid
+	// per HTML spec (such attributes don't get dataset entries)
+	for i := 0; i < len(name); i++ {
+		if name[i] >= 'A' && name[i] <= 'Z' {
+			return "", false
+		}
+	}
+
+	// Convert: remove hyphens followed by lowercase letters and uppercase those letters
+	result := make([]byte, 0, len(name))
+	i := 0
+	for i < len(name) {
+		if name[i] == '-' && i+1 < len(name) {
+			next := name[i+1]
+			if next >= 'a' && next <= 'z' {
+				// Convert to uppercase
+				result = append(result, next-32) // 'a'-'A' = 32
+				i += 2
+				continue
+			}
+		}
+		result = append(result, name[i])
+		i++
+	}
+
+	return string(result), true
+}
+
+// datasetPropertyToAttr converts a dataset property name to its data-* attribute name.
+// Per HTML spec: For each uppercase ASCII letter, insert a hyphen before it and lowercase it.
+// Then prepend "data-".
+// Examples:
+//   - "foo" -> "data-foo"
+//   - "fooBar" -> "data-foo-bar"
+//   - "-" -> "data--"
+//   - "Foo" -> "data--foo" (capital at start means insert hyphen before)
+//   - "-Foo" -> "data---foo"
+func datasetPropertyToAttr(propName string) (string, error) {
+	// Check for invalid property names per HTML spec
+	// A name is invalid if it contains a hyphen followed by a lowercase ASCII letter
+	for i := 0; i < len(propName)-1; i++ {
+		if propName[i] == '-' && propName[i+1] >= 'a' && propName[i+1] <= 'z' {
+			return "", fmt.Errorf("SyntaxError")
+		}
+	}
+
+	// Build the attribute name
+	result := make([]byte, 0, len(propName)+5) // "data-" + extra for hyphens
+	result = append(result, "data-"...)
+
+	for i := 0; i < len(propName); i++ {
+		c := propName[i]
+		if c >= 'A' && c <= 'Z' {
+			// Insert hyphen and lowercase
+			result = append(result, '-', c+32) // 'A'+'a'-'A' = 'a'
+		} else {
+			result = append(result, c)
+		}
+	}
+
+	return string(result), nil
+}
+
+// isValidAttrName checks if a string is a valid XML attribute name.
+// Per XML spec, names must start with a letter, underscore, or colon,
+// and can contain letters, digits, hyphens, underscores, periods, and colons.
+// We use a simplified check here that rejects control characters and spaces.
+func isValidAttrName(name string) bool {
+	if len(name) == 0 {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		// Reject ASCII control characters (< 0x20), space (0x20), and DEL (0x7F)
+		if c <= 0x20 || c == 0x7F {
+			return false
+		}
+	}
+	return true
+}
+
+// BindDOMStringMap creates a DOMStringMap proxy for the given element's dataset.
+func (b *DOMBinder) BindDOMStringMap(el *dom.Element) *goja.Object {
+	vm := b.runtime.vm
+
+	// Create the base object with DOMStringMap prototype
+	jsMap := vm.NewObject()
+	jsMap.SetPrototype(b.domStringMapProto)
+
+	// Create a proxy to intercept property access
+	proxy := vm.NewProxy(jsMap, &goja.ProxyTrapConfig{
+		// Get a property by name
+		Get: func(target *goja.Object, property string, receiver goja.Value) goja.Value {
+			// Per HTML spec, dataset properties shadow inherited properties like toString
+			// First check if there's a corresponding data-* attribute
+			attrName, err := datasetPropertyToAttr(property)
+			if err == nil && el.HasAttribute(attrName) {
+				return vm.ToValue(el.GetAttribute(attrName))
+			}
+
+			// No matching data-* attribute - fall through to prototype chain
+			// This allows inherited properties like toString to work
+			return target.Get(property)
+		},
+
+		// Set a property
+		Set: func(target *goja.Object, property string, value goja.Value, receiver goja.Value) bool {
+			// Convert property name to attribute name
+			attrName, err := datasetPropertyToAttr(property)
+			if err != nil {
+				// SyntaxError - property contains hyphen followed by lowercase
+				// Per HTML spec, throw a DOMException with name "SyntaxError"
+				exc := b.createDOMException("SyntaxError", fmt.Sprintf("Failed to set a named property on 'DOMStringMap': '%s' is not a valid property name.", property))
+				panic(vm.ToValue(exc))
+			}
+
+			// Check if the resulting attribute name is valid (contains no spaces or control characters)
+			if !isValidAttrName(attrName) {
+				// InvalidCharacterError per HTML spec
+				exc := b.createDOMException("InvalidCharacterError", fmt.Sprintf("Failed to set a named property on 'DOMStringMap': '%s' is not a valid attribute name.", property))
+				panic(vm.ToValue(exc))
+			}
+
+			// Set the attribute
+			el.SetAttribute(attrName, value.String())
+			return true
+		},
+
+		// Delete a property
+		DeleteProperty: func(target *goja.Object, property string) bool {
+			// Convert property name to attribute name
+			attrName, err := datasetPropertyToAttr(property)
+			if err != nil {
+				// Invalid property name - just return true (no-op)
+				return true
+			}
+
+			// Remove the attribute
+			el.RemoveAttribute(attrName)
+			return true
+		},
+
+		// Check if property exists
+		Has: func(target *goja.Object, property string) bool {
+			// First check if there's a corresponding data-* attribute
+			attrName, err := datasetPropertyToAttr(property)
+			if err == nil && el.HasAttribute(attrName) {
+				return true
+			}
+
+			// Fall through to prototype chain for inherited properties
+			// Use Reflect.has semantics to check the prototype chain
+			return target.Get(property) != nil && !goja.IsUndefined(target.Get(property))
+		},
+
+		// Get own keys (for enumeration)
+		OwnKeys: func(target *goja.Object) *goja.Object {
+			keys := make([]interface{}, 0)
+
+			// Iterate over all attributes and find data-* ones
+			attrs := el.Attributes()
+			for i := 0; i < attrs.Length(); i++ {
+				attr := attrs.Item(i)
+				if attr != nil {
+					propName, ok := datasetAttrToProperty(attr.Name())
+					if ok {
+						keys = append(keys, propName)
+					}
+				}
+			}
+
+			return vm.ToValue(keys).ToObject(vm)
+		},
+
+		// Get property descriptor (needed for proper enumeration)
+		GetOwnPropertyDescriptor: func(target *goja.Object, property string) goja.PropertyDescriptor {
+			// Convert property name to attribute name
+			attrName, err := datasetPropertyToAttr(property)
+			if err != nil {
+				return goja.PropertyDescriptor{}
+			}
+
+			if !el.HasAttribute(attrName) {
+				return goja.PropertyDescriptor{}
+			}
+
+			return goja.PropertyDescriptor{
+				Value:        vm.ToValue(el.GetAttribute(attrName)),
+				Writable:     goja.FLAG_TRUE,
+				Enumerable:   goja.FLAG_TRUE,
+				Configurable: goja.FLAG_TRUE,
+			}
+		},
+	})
+
+	// Get the proxy object
+	proxyObj := vm.ToValue(proxy).ToObject(vm)
+
+	return proxyObj
 }
