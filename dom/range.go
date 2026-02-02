@@ -534,44 +534,245 @@ func (r *Range) InsertNode(node *Node) error {
 		return ErrNotFound("Node is null")
 	}
 
-	// Check if start container is a Text node (includes CDATASection)
-	// Per DOM spec, CDATASection inherits from Text
-	if r.startContainer.nodeType == TextNode || r.startContainer.nodeType == CDATASectionNode {
-		parent := r.startContainer.parentNode
-		if parent == nil {
-			return ErrHierarchyRequest("Cannot insert into an orphan text node")
-		}
+	// Step 1: "If range's start node is a ProcessingInstruction or Comment node, or is
+	// a Text node whose parent is null, or is node, throw a HierarchyRequestError."
+	startType := r.startContainer.nodeType
+	if startType == ProcessingInstructionNode || startType == CommentNode {
+		return ErrHierarchyRequest("Cannot insert into a ProcessingInstruction or Comment node")
+	}
 
-		// Split the text node if needed
-		textLen := UTF16Length(r.startContainer.NodeValue())
-		if r.startOffset > 0 && r.startOffset < textLen {
-			text := r.startContainer.NodeValue()
-			// Use UTF-16 aware slicing
-			r.startContainer.SetNodeValue(UTF16SliceTo(text, r.startOffset))
-			// Create appropriate node type for the split
-			var newText *Node
-			if r.startContainer.nodeType == CDATASectionNode {
-				newText = r.ownerDocument.CreateCDATASection(UTF16SliceFrom(text, r.startOffset))
-			} else {
-				newText = r.ownerDocument.CreateTextNode(UTF16SliceFrom(text, r.startOffset))
-			}
-			if newText != nil {
-				parent.InsertBefore(newText, r.startContainer.nextSibling)
-			}
-		}
+	isTextLikeStart := startType == TextNode || startType == CDATASectionNode
+	if isTextLikeStart && r.startContainer.parentNode == nil {
+		return ErrHierarchyRequest("Cannot insert into an orphan text node")
+	}
 
-		// Insert the node after the start container
-		parent.InsertBefore(node, r.startContainer.nextSibling)
+	if r.startContainer == node {
+		return ErrHierarchyRequest("Cannot insert a node into itself")
+	}
+
+	// Step 2: "Let referenceNode be null."
+	var referenceNode *Node
+
+	// Step 3: "If range's start node is a Text node, set referenceNode to that Text node."
+	// Step 4: "Otherwise, set referenceNode to the child of start node whose index is
+	// start offset, and null if there is no such child."
+	if isTextLikeStart {
+		referenceNode = r.startContainer
 	} else {
-		// Insert at the offset position
-		refChild := r.startContainer.firstChild
-		for i := 0; i < r.startOffset && refChild != nil; i++ {
-			refChild = refChild.nextSibling
+		referenceNode = r.startContainer.firstChild
+		for i := 0; i < r.startOffset && referenceNode != nil; i++ {
+			referenceNode = referenceNode.nextSibling
 		}
-		r.startContainer.InsertBefore(node, refChild)
+	}
+
+	// Step 5: "Let parent be range's start node if referenceNode is null, and
+	// referenceNode's parent otherwise."
+	var parent *Node
+	if referenceNode == nil {
+		parent = r.startContainer
+	} else {
+		parent = referenceNode.parentNode
+	}
+
+	// Step 6: "Ensure pre-insertion validity of node into parent before referenceNode."
+	if err := r.ensurePreInsertionValidity(node, parent, referenceNode); err != nil {
+		return err
+	}
+
+	// Step 7: "If range's start node is a Text node, set referenceNode to the result
+	// of splitting it with offset range's start offset."
+	if isTextLikeStart {
+		// Split the text node at startOffset using the Text.splitText method
+		text := (*Text)(r.startContainer)
+		newText := text.SplitText(r.startOffset)
+		if newText != nil {
+			referenceNode = newText.AsNode()
+		} else {
+			// If split returns nil (e.g., offset at end), referenceNode is nextSibling
+			referenceNode = r.startContainer.nextSibling
+		}
+	}
+
+	// Step 8: "If node is referenceNode, set referenceNode to its next sibling."
+	if node == referenceNode {
+		referenceNode = referenceNode.nextSibling
+	}
+
+	// Step 9: "If node's parent is not null, remove node from its parent."
+	if node.parentNode != nil {
+		node.parentNode.RemoveChild(node)
+	}
+
+	// Step 10: "Let newOffset be parent's length if referenceNode is null, and
+	// referenceNode's index otherwise."
+	var newOffset int
+	if referenceNode == nil {
+		newOffset = nodeLength(parent)
+	} else {
+		newOffset = indexOfChild(parent, referenceNode)
+	}
+
+	// Step 11: "Increase newOffset by node's length if node is a DocumentFragment node,
+	// and one otherwise."
+	if node.nodeType == DocumentFragmentNode {
+		newOffset += nodeLength(node)
+	} else {
+		newOffset += 1
+	}
+
+	// Step 12: "Pre-insert node into parent before referenceNode."
+	parent.InsertBefore(node, referenceNode)
+
+	// Step 13: "If range's start and end are the same, set range's end to (parent, newOffset)."
+	if r.startContainer == r.endContainer && r.startOffset == r.endOffset {
+		r.endContainer = parent
+		r.endOffset = newOffset
 	}
 
 	return nil
+}
+
+// ensurePreInsertionValidity checks if inserting node into parent before child is valid.
+// Returns an error if the insertion would be invalid.
+func (r *Range) ensurePreInsertionValidity(node, parent, child *Node) error {
+	// "If parent is not a Document, DocumentFragment, or Element node, throw a HierarchyRequestError."
+	parentType := parent.nodeType
+	if parentType != DocumentNode && parentType != DocumentFragmentNode && parentType != ElementNode {
+		return ErrHierarchyRequest("Parent must be a Document, DocumentFragment, or Element node")
+	}
+
+	// "If node is a host-including inclusive ancestor of parent, throw a HierarchyRequestError."
+	if isInclusiveAncestorOrHost(node, parent) {
+		return ErrHierarchyRequest("Cannot insert a node into its own descendant")
+	}
+
+	// "If child is not null and its parent is not parent, throw a NotFoundError."
+	if child != nil && child.parentNode != parent {
+		return ErrNotFound("Reference child's parent does not match")
+	}
+
+	// "If node is not a DocumentFragment, DocumentType, Element, or CharacterData node,
+	// then throw a HierarchyRequestError."
+	nodeType := node.nodeType
+	if nodeType != DocumentFragmentNode && nodeType != DocumentTypeNode && nodeType != ElementNode &&
+		nodeType != TextNode && nodeType != CDATASectionNode &&
+		nodeType != ProcessingInstructionNode && nodeType != CommentNode {
+		return ErrHierarchyRequest("Invalid node type for insertion")
+	}
+
+	// "If either node is a Text node and parent is a document, or node is a
+	// doctype and parent is not a document, throw a HierarchyRequestError."
+	if (nodeType == TextNode || nodeType == CDATASectionNode) && parentType == DocumentNode {
+		return ErrHierarchyRequest("Cannot insert Text node into Document")
+	}
+	if nodeType == DocumentTypeNode && parentType != DocumentNode {
+		return ErrHierarchyRequest("DocumentType can only be inserted into Document")
+	}
+
+	// Additional checks for Document parent
+	if parentType == DocumentNode {
+		switch nodeType {
+		case DocumentFragmentNode:
+			// Check if fragment has more than one element child or any text child
+			elementCount := 0
+			for c := node.firstChild; c != nil; c = c.nextSibling {
+				if c.nodeType == ElementNode {
+					elementCount++
+				}
+				if c.nodeType == TextNode || c.nodeType == CDATASectionNode {
+					return ErrHierarchyRequest("DocumentFragment with Text cannot be inserted into Document")
+				}
+			}
+			if elementCount > 1 {
+				return ErrHierarchyRequest("DocumentFragment with multiple elements cannot be inserted into Document")
+			}
+			if elementCount == 1 {
+				// Check if parent already has an element child
+				for c := parent.firstChild; c != nil; c = c.nextSibling {
+					if c.nodeType == ElementNode {
+						return ErrHierarchyRequest("Document already has an element child")
+					}
+				}
+				// Check if child is a doctype
+				if child != nil && child.nodeType == DocumentTypeNode {
+					return ErrHierarchyRequest("Cannot insert element before doctype")
+				}
+				// Check if there's a doctype after child
+				if child != nil {
+					for c := child.nextSibling; c != nil; c = c.nextSibling {
+						if c.nodeType == DocumentTypeNode {
+							return ErrHierarchyRequest("Cannot insert element before a following doctype")
+						}
+					}
+				}
+			}
+		case ElementNode:
+			// Check if parent already has an element child
+			for c := parent.firstChild; c != nil; c = c.nextSibling {
+				if c.nodeType == ElementNode {
+					return ErrHierarchyRequest("Document already has an element child")
+				}
+			}
+			// Check if child is a doctype
+			if child != nil && child.nodeType == DocumentTypeNode {
+				return ErrHierarchyRequest("Cannot insert element before doctype")
+			}
+			// Check if there's a doctype after child
+			if child != nil {
+				for c := child.nextSibling; c != nil; c = c.nextSibling {
+					if c.nodeType == DocumentTypeNode {
+						return ErrHierarchyRequest("Cannot insert element before a following doctype")
+					}
+				}
+			}
+		case DocumentTypeNode:
+			// Check if parent already has a doctype child
+			for c := parent.firstChild; c != nil; c = c.nextSibling {
+				if c.nodeType == DocumentTypeNode {
+					return ErrHierarchyRequest("Document already has a doctype child")
+				}
+			}
+			// Check if there's an element before child
+			if child != nil {
+				for c := parent.firstChild; c != child; c = c.nextSibling {
+					if c.nodeType == ElementNode {
+						return ErrHierarchyRequest("Cannot insert doctype after an element")
+					}
+				}
+			}
+			// Check if child is null and parent has an element child
+			if child == nil {
+				for c := parent.firstChild; c != nil; c = c.nextSibling {
+					if c.nodeType == ElementNode {
+						return ErrHierarchyRequest("Cannot insert doctype after an element")
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// isInclusiveAncestorOrHost checks if ancestor is an inclusive ancestor of node,
+// including through shadow DOM host boundaries.
+func isInclusiveAncestorOrHost(ancestor, node *Node) bool {
+	for n := node; n != nil; {
+		if n == ancestor {
+			return true
+		}
+		if n.parentNode != nil {
+			n = n.parentNode
+		} else {
+			// Reached a root - check if it's a shadow root
+			// Shadow roots have a host element that acts as their parent
+			// For now, we don't have a way to traverse shadow host boundaries here
+			// since ShadowRoot is a separate type. This would need to be enhanced
+			// to properly support shadow DOM in Range operations.
+			break
+		}
+	}
+	return false
 }
 
 // SurroundContents wraps the range contents with a new parent element.
