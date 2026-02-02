@@ -607,3 +607,72 @@ func TestWPT_DiscoverAll(t *testing.T) {
 		})
 	}
 }
+
+// HTMLDOMGlobalAttributesPassingTests returns the list of HTML/dom global attribute tests that pass.
+// This list is based on actual passing tests as of 2026-02-02.
+func HTMLDOMGlobalAttributesPassingTests() []string {
+	return []string{
+		// Dataset tests (6 tests)
+		"dataset.html",
+		"dataset-delete.html",
+		"dataset-enumeration.html",
+		"dataset-get.html",
+		"dataset-prototype.html",
+		"dataset-set.html",
+	}
+}
+
+// HTMLDOMDocumentTreeAccessorsPassingTests returns the list of HTML/dom document tree accessor tests that pass.
+// This list is based on actual passing tests as of 2026-02-02.
+func HTMLDOMDocumentTreeAccessorsPassingTests() []string {
+	return []string{
+		// Document collection tests
+		"document.embeds-document.plugins-01.html",
+		"document.head-01.html",
+		"document.images.html",
+		"document.links.html",
+		"document.scripts.html",
+	}
+}
+
+// TestWPT_HTMLDOMGlobalAttributes runs all passing HTML/dom/elements/global-attributes tests.
+func TestWPT_HTMLDOMGlobalAttributes(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping WPT tests in short mode")
+	}
+
+	wptPath := getWPTPath(t)
+	runner := NewRunner(wptPath)
+	runner.Timeout = 30 * time.Second
+
+	tests := HTMLDOMGlobalAttributesPassingTests()
+	t.Logf("Running %d HTML/dom global attributes tests", len(tests))
+
+	for _, testFile := range tests {
+		testPath := "/html/dom/elements/global-attributes/" + testFile
+		t.Run(testFile, func(t *testing.T) {
+			runWPTTest(t, runner, testPath)
+		})
+	}
+}
+
+// TestWPT_HTMLDOMDocumentTreeAccessors runs all passing HTML/dom/documents/dom-tree-accessors tests.
+func TestWPT_HTMLDOMDocumentTreeAccessors(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping WPT tests in short mode")
+	}
+
+	wptPath := getWPTPath(t)
+	runner := NewRunner(wptPath)
+	runner.Timeout = 30 * time.Second
+
+	tests := HTMLDOMDocumentTreeAccessorsPassingTests()
+	t.Logf("Running %d HTML/dom document tree accessor tests", len(tests))
+
+	for _, testFile := range tests {
+		testPath := "/html/dom/documents/dom-tree-accessors/" + testFile
+		t.Run(testFile, func(t *testing.T) {
+			runWPTTest(t, runner, testPath)
+		})
+	}
+}

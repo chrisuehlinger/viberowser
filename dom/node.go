@@ -115,6 +115,15 @@ type documentData struct {
 	characterSet    string             // The document's character encoding (defaults to "UTF-8")
 	selection       *Selection         // The document's Selection object
 	nodeIterators   []*NodeIterator    // Active NodeIterators for pre-removal steps
+
+	// Cached HTMLCollections for document properties
+	// These must be cached to ensure document.forms === document.forms, etc.
+	formsCollection   *HTMLCollection
+	imagesCollection  *HTMLCollection
+	linksCollection   *HTMLCollection
+	scriptsCollection *HTMLCollection
+	embedsCollection  *HTMLCollection // Also used for plugins
+	anchorsCollection *HTMLCollection
 }
 
 // docTypeData holds data specific to DocumentType nodes.

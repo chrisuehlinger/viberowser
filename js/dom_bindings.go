@@ -329,6 +329,7 @@ type DOMBinder struct {
 	domImplementationCache       map[*dom.DOMImplementation]*goja.Object
 	styleDeclarationCache        map[*dom.CSSStyleDeclaration]*goja.Object
 	htmlCollectionMap            map[*goja.Object]*dom.HTMLCollection
+	htmlCollectionCache          map[*dom.HTMLCollection]*goja.Object
 	namedNodeMapMap              map[*goja.Object]*dom.NamedNodeMap
 	nodeListCache                map[*dom.NodeList]*goja.Object
 	domTokenListCache            map[*dom.DOMTokenList]*goja.Object
@@ -357,6 +358,7 @@ func NewDOMBinder(runtime *Runtime) *DOMBinder {
 		domImplementationCache: make(map[*dom.DOMImplementation]*goja.Object),
 		styleDeclarationCache:  make(map[*dom.CSSStyleDeclaration]*goja.Object),
 		htmlCollectionMap:      make(map[*goja.Object]*dom.HTMLCollection),
+		htmlCollectionCache:    make(map[*dom.HTMLCollection]*goja.Object),
 		namedNodeMapMap:        make(map[*goja.Object]*dom.NamedNodeMap),
 		htmlElementProtoMap:    make(map[string]*goja.Object),
 		nodeListCache:          make(map[*dom.NodeList]*goja.Object),
@@ -1824,6 +1826,35 @@ func (b *DOMBinder) BindDocument(doc *dom.Document) *goja.Object {
 	jsDoc.Set("nodeType", int(dom.DocumentNode))
 	jsDoc.Set("nodeName", "#document")
 
+	// HTML document collection properties (per HTML spec)
+	jsDoc.DefineAccessorProperty("forms", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindHTMLCollection(doc.Forms())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("images", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindHTMLCollection(doc.Images())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("links", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindHTMLCollection(doc.Links())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("scripts", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindHTMLCollection(doc.Scripts())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("embeds", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindHTMLCollection(doc.Embeds())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("plugins", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindHTMLCollection(doc.Plugins())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("anchors", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindHTMLCollection(doc.Anchors())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
 	// Document accessors
 	jsDoc.DefineAccessorProperty("doctype", vm.ToValue(func(call goja.FunctionCall) goja.Value {
 		doctype := doc.Doctype()
@@ -2457,6 +2488,35 @@ func (b *DOMBinder) bindDocumentInternal(doc *dom.Document) *goja.Object {
 	// Document properties
 	jsDoc.Set("nodeType", int(dom.DocumentNode))
 	jsDoc.Set("nodeName", "#document")
+
+	// HTML document collection properties (per HTML spec)
+	jsDoc.DefineAccessorProperty("forms", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindHTMLCollection(doc.Forms())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("images", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindHTMLCollection(doc.Images())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("links", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindHTMLCollection(doc.Links())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("scripts", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindHTMLCollection(doc.Scripts())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("embeds", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindHTMLCollection(doc.Embeds())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("plugins", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindHTMLCollection(doc.Plugins())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
+
+	jsDoc.DefineAccessorProperty("anchors", vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		return b.BindHTMLCollection(doc.Anchors())
+	}), nil, goja.FLAG_FALSE, goja.FLAG_TRUE)
 
 	// Document accessors
 	jsDoc.DefineAccessorProperty("doctype", vm.ToValue(func(call goja.FunctionCall) goja.Value {
@@ -8987,7 +9047,14 @@ func (b *DOMBinder) bindStaticNodeList(nodes []*dom.Node) *goja.Object {
 
 // BindHTMLCollection creates a JavaScript HTMLCollection object.
 // Uses a Proxy to provide live access to elements (HTMLCollection is a live collection).
+// Collections are cached so that the same Go collection returns the same JS object
+// (e.g., document.forms === document.forms).
 func (b *DOMBinder) BindHTMLCollection(collection *dom.HTMLCollection) *goja.Object {
+	// Check cache first - ensure same Go collection returns same JS object
+	if cached, ok := b.htmlCollectionCache[collection]; ok {
+		return cached
+	}
+
 	vm := b.runtime.vm
 	jsCol := vm.NewObject()
 
@@ -9408,6 +9475,9 @@ func (b *DOMBinder) BindHTMLCollection(collection *dom.HTMLCollection) *goja.Obj
 
 	// Update the map to point to the proxy
 	b.htmlCollectionMap[proxyObj] = collection
+
+	// Cache the proxy so same Go collection returns same JS object
+	b.htmlCollectionCache[collection] = proxyObj
 
 	return proxyObj
 }

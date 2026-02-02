@@ -232,6 +232,105 @@ func (d *Document) SetTitle(title string) {
 	head.AsNode().AppendChild(titleEl.AsNode())
 }
 
+// Forms returns a live HTMLCollection of all form elements in the document.
+// Per HTML spec, this includes only <form> elements in the HTML namespace.
+// The collection is cached to ensure document.forms === document.forms.
+func (d *Document) Forms() *HTMLCollection {
+	if d.AsNode().documentData.formsCollection == nil {
+		d.AsNode().documentData.formsCollection = newHTMLCollection(d.AsNode(), func(el *Element) bool {
+			return el.NamespaceURI() == HTMLNamespace &&
+				strings.EqualFold(el.LocalName(), "form")
+		})
+	}
+	return d.AsNode().documentData.formsCollection
+}
+
+// Images returns a live HTMLCollection of all img elements in the document.
+// Per HTML spec, this includes only <img> elements in the HTML namespace.
+// The collection is cached to ensure document.images === document.images.
+func (d *Document) Images() *HTMLCollection {
+	if d.AsNode().documentData.imagesCollection == nil {
+		d.AsNode().documentData.imagesCollection = newHTMLCollection(d.AsNode(), func(el *Element) bool {
+			return el.NamespaceURI() == HTMLNamespace &&
+				strings.EqualFold(el.LocalName(), "img")
+		})
+	}
+	return d.AsNode().documentData.imagesCollection
+}
+
+// Links returns a live HTMLCollection of all <a> and <area> elements with href attributes.
+// Per HTML spec, this includes only elements in the HTML namespace that have href attributes.
+// The collection is cached to ensure document.links === document.links.
+func (d *Document) Links() *HTMLCollection {
+	if d.AsNode().documentData.linksCollection == nil {
+		d.AsNode().documentData.linksCollection = newHTMLCollection(d.AsNode(), func(el *Element) bool {
+			if el.NamespaceURI() != HTMLNamespace {
+				return false
+			}
+			localName := strings.ToLower(el.LocalName())
+			if localName != "a" && localName != "area" {
+				return false
+			}
+			// Only include if they have an href attribute
+			return el.HasAttribute("href")
+		})
+	}
+	return d.AsNode().documentData.linksCollection
+}
+
+// Scripts returns a live HTMLCollection of all script elements in the document.
+// Per HTML spec, this includes only <script> elements in the HTML namespace.
+// The collection is cached to ensure document.scripts === document.scripts.
+func (d *Document) Scripts() *HTMLCollection {
+	if d.AsNode().documentData.scriptsCollection == nil {
+		d.AsNode().documentData.scriptsCollection = newHTMLCollection(d.AsNode(), func(el *Element) bool {
+			return el.NamespaceURI() == HTMLNamespace &&
+				strings.EqualFold(el.LocalName(), "script")
+		})
+	}
+	return d.AsNode().documentData.scriptsCollection
+}
+
+// Embeds returns a live HTMLCollection of all embed elements in the document.
+// Per HTML spec, this includes only <embed> elements in the HTML namespace.
+// The collection is cached to ensure document.embeds === document.embeds.
+// Note: Plugins() also returns this same collection per spec.
+func (d *Document) Embeds() *HTMLCollection {
+	if d.AsNode().documentData.embedsCollection == nil {
+		d.AsNode().documentData.embedsCollection = newHTMLCollection(d.AsNode(), func(el *Element) bool {
+			return el.NamespaceURI() == HTMLNamespace &&
+				strings.EqualFold(el.LocalName(), "embed")
+		})
+	}
+	return d.AsNode().documentData.embedsCollection
+}
+
+// Plugins returns a live HTMLCollection of all embed elements in the document.
+// Per HTML spec, this is an alias for Embeds() and returns the same collection object.
+func (d *Document) Plugins() *HTMLCollection {
+	return d.Embeds()
+}
+
+// Anchors returns a live HTMLCollection of all <a> elements with name attributes.
+// Per HTML spec, this includes only <a> elements in the HTML namespace with name attributes.
+// Note: This is a legacy API; Links() is preferred for finding hyperlinks.
+// The collection is cached to ensure document.anchors === document.anchors.
+func (d *Document) Anchors() *HTMLCollection {
+	if d.AsNode().documentData.anchorsCollection == nil {
+		d.AsNode().documentData.anchorsCollection = newHTMLCollection(d.AsNode(), func(el *Element) bool {
+			if el.NamespaceURI() != HTMLNamespace {
+				return false
+			}
+			if !strings.EqualFold(el.LocalName(), "a") {
+				return false
+			}
+			// Only include if they have a name attribute
+			return el.HasAttribute("name")
+		})
+	}
+	return d.AsNode().documentData.anchorsCollection
+}
+
 // CreateElement creates a new element with the given tag name.
 // Per DOM spec, the element's namespace is the HTML namespace when document is an
 // HTML document or document's content type is "application/xhtml+xml"; otherwise null.
