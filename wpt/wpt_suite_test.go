@@ -308,6 +308,8 @@ func DOMRangesPassingTests() []string {
 		"Range-mutations-splitText.html",
 		"Range-selectNode.html",
 		// "Range-set.html", // Times out due to large number of test cases
+		"Range-stringifier.html",
+		"StaticRange-constructor.html",
 	}
 }
 
@@ -379,7 +381,10 @@ func DOMEventsPassingTests() []string {
 		"EventTarget-this-of-listener.html",
 		"Event-type.html",
 		"Event-type-empty.html",
+		"event-global.html",
 		"event-src-element-nullable.html",
+		"Event-subclasses-constructors.html",
+		"KeyEvent-initKeyEvent.html",
 		"label-default-action.html",
 		"remove-all-listeners.html",
 	}
