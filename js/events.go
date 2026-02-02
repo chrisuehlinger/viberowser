@@ -520,10 +520,23 @@ func (eb *EventBinder) SetListenerErrorHandler(handler ListenerErrorHandler) {
 }
 
 // GetOrCreateTarget gets or creates an EventTarget for a JS object.
+// For proxy-wrapped objects (like documents with named property access),
+// we store the EventTarget on the object itself so both the proxy and
+// inner object share the same target.
 func (eb *EventBinder) GetOrCreateTarget(obj *goja.Object) *EventTarget {
 	eb.mu.Lock()
 	defer eb.mu.Unlock()
 
+	// First check if the object already has an _eventTarget property.
+	// This handles the case where obj is a proxy - the Get will delegate
+	// to the inner object, so both proxy and inner object share the target.
+	if existingTarget := obj.Get("_eventTarget"); existingTarget != nil && !goja.IsUndefined(existingTarget) && !goja.IsNull(existingTarget) {
+		if target, ok := existingTarget.Export().(*EventTarget); ok && target != nil {
+			return target
+		}
+	}
+
+	// Check the legacy map as well (for backward compatibility)
 	if target, ok := eb.targetMap[obj]; ok {
 		return target
 	}
@@ -533,6 +546,11 @@ func (eb *EventBinder) GetOrCreateTarget(obj *goja.Object) *EventTarget {
 	if eb.listenerErrorHandler != nil {
 		target.SetErrorHandler(eb.listenerErrorHandler)
 	}
+
+	// Store the target on the object itself so proxies can find it
+	obj.Set("_eventTarget", target)
+
+	// Also store in the map for backward compatibility
 	eb.targetMap[obj] = target
 	return target
 }
