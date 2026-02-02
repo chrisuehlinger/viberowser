@@ -641,9 +641,16 @@ func HTMLDOMDocumentTreeAccessorsPassingTests() []string {
 		// Document collection tests
 		"document.embeds-document.plugins-01.html",
 		"document.head-01.html",
-		"document.images.html",
-		"document.links.html",
 		"document.scripts.html",
+		// Document.title tests
+		"document.title-01.html",
+		"document.title-03.html",
+		"document.title-05.html",
+		"document.title-06.html",
+		"document.title-07.html",
+		"document.title-08.html",
+		"document.title-09.html",
+		"document.title-not-in-html-svg.html",
 	}
 }
 

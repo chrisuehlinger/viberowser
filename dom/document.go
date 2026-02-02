@@ -30,6 +30,33 @@ func toASCIILowercase(s string) string {
 	return string(result)
 }
 
+// stripAndCollapseASCIIWhitespace implements the "strip and collapse ASCII whitespace"
+// algorithm from the WHATWG Infra spec.
+// It replaces sequences of ASCII whitespace with a single space and strips
+// leading/trailing whitespace.
+// Note: Uses isASCIIWhitespace from htmlcollection.go
+func stripAndCollapseASCIIWhitespace(s string) string {
+	var result strings.Builder
+	inWhitespace := true // Start true to strip leading whitespace
+	for _, r := range s {
+		if isASCIIWhitespace(r) {
+			if !inWhitespace {
+				result.WriteRune(' ')
+				inWhitespace = true
+			}
+		} else {
+			result.WriteRune(r)
+			inWhitespace = false
+		}
+	}
+	// Strip trailing whitespace (if ends with space, remove it)
+	str := result.String()
+	if len(str) > 0 && str[len(str)-1] == ' ' {
+		str = str[:len(str)-1]
+	}
+	return str
+}
+
 // toASCIIUppercase converts ASCII letters a-z to uppercase A-Z.
 // Non-ASCII characters and other characters are left unchanged.
 // This implements the "ASCII uppercase" algorithm from the DOM spec.
@@ -191,45 +218,131 @@ func (d *Document) Body() *Element {
 	return nil
 }
 
-// Title returns the document title.
+// Title returns the document title per the HTML spec.
+// For SVG documents, it returns the text content of the first SVG title element
+// that is a direct child of the documentElement.
+// For HTML documents, it returns the text content of the first title element
+// in the document.
+// The result has ASCII whitespace stripped and collapsed.
 func (d *Document) Title() string {
-	head := d.Head()
-	if head == nil {
+	docElement := d.DocumentElement()
+	if docElement == nil {
 		return ""
 	}
-	for child := head.AsNode().firstChild; child != nil; child = child.nextSibling {
+
+	var value string
+
+	// Check if this is an SVG document (documentElement is svg in SVG namespace)
+	// Note: localName comparison is case-sensitive per spec ("svg" not "SVG")
+	if docElement.NamespaceURI() == SVGNamespace &&
+		docElement.LocalName() == "svg" {
+		// For SVG: find first SVG title child of documentElement
+		for child := docElement.AsNode().firstChild; child != nil; child = child.nextSibling {
+			if child.nodeType == ElementNode {
+				el := (*Element)(child)
+				if el.NamespaceURI() == SVGNamespace &&
+					strings.EqualFold(el.LocalName(), "title") {
+					value = el.TextContent()
+					break
+				}
+			}
+		}
+	} else {
+		// For HTML: find first title element in the document (any namespace check is implicit)
+		// The spec says "the first title element in the document, if there is one"
+		titleEl := d.findFirstTitleElement(d.AsNode())
+		if titleEl != nil {
+			value = titleEl.TextContent()
+		}
+	}
+
+	// Strip and collapse ASCII whitespace
+	return stripAndCollapseASCIIWhitespace(value)
+}
+
+// findFirstTitleElement finds the first title element in HTML namespace
+// in a depth-first traversal starting from the given node.
+func (d *Document) findFirstTitleElement(node *Node) *Element {
+	for child := node.firstChild; child != nil; child = child.nextSibling {
 		if child.nodeType == ElementNode {
 			el := (*Element)(child)
-			if strings.EqualFold(el.TagName(), "TITLE") {
-				return el.TextContent()
+			if el.NamespaceURI() == HTMLNamespace &&
+				strings.EqualFold(el.LocalName(), "title") {
+				return el
+			}
+			// Recursively search children
+			if found := d.findFirstTitleElement(child); found != nil {
+				return found
 			}
 		}
 	}
-	return ""
+	return nil
 }
 
-// SetTitle sets the document title.
+// SetTitle sets the document title per the HTML spec.
+// For SVG documents, it sets/creates an SVG title element as first child of documentElement.
+// For HTML documents, it sets/creates an HTML title element in the head.
 func (d *Document) SetTitle(title string) {
+	docElement := d.DocumentElement()
+	if docElement == nil {
+		return
+	}
+
+	// Check if this is an SVG document (documentElement is svg in SVG namespace)
+	// Note: localName comparison is case-sensitive per spec ("svg" not "SVG")
+	if docElement.NamespaceURI() == SVGNamespace &&
+		docElement.LocalName() == "svg" {
+		// For SVG: find or create SVG title as first child of documentElement
+		var existingTitle *Element
+		for child := docElement.AsNode().firstChild; child != nil; child = child.nextSibling {
+			if child.nodeType == ElementNode {
+				el := (*Element)(child)
+				if el.NamespaceURI() == SVGNamespace &&
+					strings.EqualFold(el.LocalName(), "title") {
+					existingTitle = el
+					break
+				}
+			}
+		}
+
+		if existingTitle != nil {
+			// Update existing title
+			d.setTitleElementContent(existingTitle, title)
+		} else {
+			// Create new SVG title element and insert as first child
+			titleEl := d.CreateElementNS(SVGNamespace, "title")
+			d.setTitleElementContent(titleEl, title)
+			docElement.AsNode().InsertBefore(titleEl.AsNode(), docElement.AsNode().firstChild)
+		}
+		return
+	}
+
+	// For HTML documents
 	head := d.Head()
 	if head == nil {
 		return
 	}
 
-	// Find existing title element
-	for child := head.AsNode().firstChild; child != nil; child = child.nextSibling {
-		if child.nodeType == ElementNode {
-			el := (*Element)(child)
-			if strings.EqualFold(el.TagName(), "TITLE") {
-				el.SetTextContent(title)
-				return
-			}
-		}
+	// Find existing title element in document
+	existingTitle := d.findFirstTitleElement(d.AsNode())
+	if existingTitle != nil {
+		d.setTitleElementContent(existingTitle, title)
+		return
 	}
 
-	// Create new title element
+	// Create new title element in head
 	titleEl := d.CreateElement("title")
-	titleEl.SetTextContent(title)
+	d.setTitleElementContent(titleEl, title)
 	head.AsNode().AppendChild(titleEl.AsNode())
+}
+
+// setTitleElementContent sets the text content of a title element.
+// If the title is empty, it removes all children. Otherwise, it sets
+// a single text node with the title content.
+func (d *Document) setTitleElementContent(el *Element, title string) {
+	// Per spec, setting string replaces all children with a single text node
+	// (or no text node if empty)
+	el.SetTextContent(title)
 }
 
 // Forms returns a live HTMLCollection of all form elements in the document.
