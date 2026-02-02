@@ -340,16 +340,22 @@ func (r *Runner) loadIframeContent(ctx context.Context, src, baseURL string) (*d
 	}
 
 	// Resolve the URL relative to baseURL
-	// baseURL is the WPT root directory (file:///path/to/wpt or http://host:port)
+	// baseURL is the test file URL (e.g., file:///path/to/wpt/dom/nodes/test.html)
+	// For absolute paths (starting with /), we need to use the WPT root instead
 	var fullURL string
 	if strings.HasPrefix(src, "/") {
-		// Absolute path - append to base URL directly
-		// baseURL is already the WPT root, so just append the absolute path
-		fullURL = strings.TrimSuffix(baseURL, "/") + src
+		// Absolute path - use WPT root directory, not the test file URL
+		if r.WPTPath != "" {
+			fullURL = "file://" + filepath.Join(r.WPTPath, src)
+		} else if r.BaseURL != "" {
+			fullURL = strings.TrimSuffix(r.BaseURL, "/") + src
+		} else {
+			return nil, ""
+		}
 	} else if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") || strings.HasPrefix(src, "file://") {
 		fullURL = src
 	} else {
-		// Relative path - resolve against baseURL
+		// Relative path - resolve against baseURL (test file URL)
 		parsedBase, err := url.Parse(baseURL)
 		if err != nil {
 			return nil, ""

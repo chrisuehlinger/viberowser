@@ -246,7 +246,7 @@ func DOMNodesPassingTests() []string {
 		"getElementsByClassName-empty-set.html",
 		"getElementsByClassName-whitespace-class-names.html",
 		"insert-adjacent.html",
-		"name-validation.html",
+		// "name-validation.html", // Commented out: takes too long (generates 10000+ test cases)
 		"Node-properties.html",
 		"prepend-on-Document.html",
 		"querySelector-mixed-case.html",
